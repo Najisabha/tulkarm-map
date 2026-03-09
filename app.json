@@ -1,0 +1,71 @@
+{
+  "expo": {
+    "name": "طولكرم - Tulkarm",
+    "slug": "tulkarm-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "tulkarmapp",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "نحتاج موقعك لإظهار المتاجر القريبة منك في طولكرم",
+        "NSLocationAlwaysUsageDescription": "نحتاج موقعك لإعلامك عند دخول أو مغادرة طولكرم",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "نحتاج موقعك لإعلامك عند دخول أو مغادرة طولكرم"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#2E86AB"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ],
+      "package": "com.tulkarm.app"
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "نحتاج موقعك لإعلامك عند دخول أو مغادرة طولكرم",
+          "locationAlwaysPermission": "نحتاج موقعك في الخلفية لإعلامك عند دخول أو مغادرة طولكرم",
+          "locationWhenInUsePermission": "نحتاج موقعك لإظهار المتاجر القريبة منك في طولكرم",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#2E86AB",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#2E86AB"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
