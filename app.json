@@ -10,6 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.tulkarm.app",
+      "config": {
+        "googleMapsApiKey": "YOUR_IOS_GOOGLE_MAPS_API_KEY"
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "نحتاج موقعك لإظهار المتاجر القريبة منك في طولكرم",
         "NSLocationAlwaysUsageDescription": "نحتاج موقعك لإعلامك عند دخول أو مغادرة طولكرم",
@@ -28,7 +32,12 @@
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
       ],
-      "package": "com.tulkarm.app"
+      "package": "com.tulkarm.app",
+      "config": {
+        "googleMaps": {
+          "apiKey": "YOUR_ANDROID_GOOGLE_MAPS_API_KEY"
+        }
+      }
     },
     "web": {
       "output": "static",
@@ -52,6 +61,12 @@
           "icon": "./assets/images/icon.png",
           "color": "#2E86AB",
           "sounds": []
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "نحتاج الوصول للصور لإضافة صور الأماكن"
         }
       ],
       [

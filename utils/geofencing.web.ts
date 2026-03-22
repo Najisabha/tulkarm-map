@@ -1,10 +1,18 @@
 export const GEOFENCING_TASK = 'TULKARM_GEOFENCING_TASK';
 
+/** محافظة طولكرم - حدود كاملة (المدينة + واد الشعير + الشعراوية + كل القرى) */
+export const TULKARM_BOUNDS = {
+  minLat: 32.19,
+  maxLat: 32.47,
+  minLng: 35.0,
+  maxLng: 35.18,
+};
+
 export const TULKARM_REGION = {
-  identifier: 'tulkarm-city',
-  latitude: 32.3104,
-  longitude: 35.0288,
-  radius: 5000,
+  identifier: 'tulkarm-governorate',
+  latitude: 32.327,
+  longitude: 35.088,
+  radius: 20_000,
   notifyOnEnter: true,
   notifyOnExit: true,
 };
@@ -22,8 +30,11 @@ export async function stopGeofencing(): Promise<void> {
 }
 
 export function isInsideTulkarm(latitude: number, longitude: number): boolean {
-  const dx = latitude - TULKARM_REGION.latitude;
-  const dy = longitude - TULKARM_REGION.longitude;
-  const distanceKm = Math.sqrt(dx * dx + dy * dy) * 111;
-  return distanceKm * 1000 <= TULKARM_REGION.radius;
+  const { minLat, maxLat, minLng, maxLng } = TULKARM_BOUNDS;
+  return (
+    latitude >= minLat &&
+    latitude <= maxLat &&
+    longitude >= minLng &&
+    longitude <= maxLng
+  );
 }

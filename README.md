@@ -25,6 +25,15 @@ In the output, you'll find options to open the app in a
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
+## Google Maps API
+
+The app uses Google Maps and hides built-in POIs so only your custom places appear. To enable it:
+
+1. Create a [Google Cloud](https://console.cloud.google.com) project and enable **Maps SDK for Android** and **Maps SDK for iOS**.
+2. Create API keys (one for Android, one for iOS) in Credentials.
+3. In `app.json`, replace `YOUR_ANDROID_GOOGLE_MAPS_API_KEY` and `YOUR_IOS_GOOGLE_MAPS_API_KEY` with your keys.
+4. Rebuild the native app (Expo Go uses its own maps; a development build is required for your API keys).
+
 ## Get a fresh project
 
 When you're ready, run:

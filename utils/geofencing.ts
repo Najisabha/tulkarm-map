@@ -1,14 +1,27 @@
+import Constants from 'expo-constants';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 
+/** Geofencing requires a dev build; Expo Go lacks required Info.plist keys */
+const isExpoGo = Constants.appOwnership === 'expo';
+
 export const GEOFENCING_TASK = 'TULKARM_GEOFENCING_TASK';
 
+/** محافظة طولكرم - حدود من OpenStreetMap/ويكيبيديا (تضم المدينة + كل القرى والمناطق) */
+export const TULKARM_BOUNDS = {
+  minLat: 32.19,
+  maxLat: 32.47,
+  minLng: 35.0,
+  maxLng: 35.18,
+};
+
+/** دائرة للـ geofencing تغطي كل المحافظة (مركز تقريبي + نصف قطر 20 كم) */
 export const TULKARM_REGION = {
-  identifier: 'tulkarm-city',
-  latitude: 32.3104,
-  longitude: 35.0288,
-  radius: 5000,
+  identifier: 'tulkarm-governorate',
+  latitude: 32.327,
+  longitude: 35.088,
+  radius: 20_000,
   notifyOnEnter: true,
   notifyOnExit: true,
 };
@@ -20,7 +33,7 @@ TaskManager.defineTask(GEOFENCING_TASK, async ({ data, error }: any) => {
   }
   if (data) {
     const { eventType, region } = data;
-    if (region.identifier === 'tulkarm-city') {
+    if (region.identifier === 'tulkarm-governorate') {
       if (eventType === Location.GeofencingEventType.Enter) {
         sendGeofenceNotification(
           'مرحباً في طولكرم! 🌟',
@@ -61,6 +74,7 @@ export async function requestPermissions(): Promise<boolean> {
 }
 
 export async function startGeofencing(): Promise<void> {
+  if (isExpoGo) return;
   try {
     const hasPermissions = await requestPermissions();
     if (!hasPermissions) return;
@@ -86,8 +100,11 @@ export async function stopGeofencing(): Promise<void> {
 }
 
 export function isInsideTulkarm(latitude: number, longitude: number): boolean {
-  const dx = latitude - TULKARM_REGION.latitude;
-  const dy = longitude - TULKARM_REGION.longitude;
-  const distanceKm = Math.sqrt(dx * dx + dy * dy) * 111;
-  return distanceKm * 1000 <= TULKARM_REGION.radius;
+  const { minLat, maxLat, minLng, maxLng } = TULKARM_BOUNDS;
+  return (
+    latitude >= minLat &&
+    latitude <= maxLat &&
+    longitude >= minLng &&
+    longitude <= maxLng
+  );
 }

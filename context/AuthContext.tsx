@@ -10,11 +10,21 @@ export interface User {
   createdAt: string;
 }
 
+const GUEST_USER: User = {
+  id: 'guest',
+  name: 'زائر',
+  email: '',
+  password: '',
+  isAdmin: false,
+  createdAt: new Date().toISOString(),
+};
+
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; message: string }>;
   register: (name: string, email: string, password: string) => Promise<{ success: boolean; message: string }>;
+  loginAsGuest: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -128,13 +138,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const loginAsGuest = async () => {
+    await AsyncStorage.setItem('currentUser', JSON.stringify(GUEST_USER));
+    setUser(GUEST_USER);
+  };
+
   const logout = async () => {
     await AsyncStorage.removeItem('currentUser');
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, register, loginAsGuest, logout }}>
       {children}
     </AuthContext.Provider>
   );

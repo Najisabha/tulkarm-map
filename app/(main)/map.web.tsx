@@ -7,37 +7,30 @@ import {
   Modal,
   ScrollView,
   Platform,
+  Alert,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { useStores, Store } from '../../context/StoreContext';
-import { TULKARM_REGION } from '../../utils/geofencing.web';
+import { useCategories } from '../../context/CategoryContext';
+import { AddPlaceModal } from '../../components/AddPlaceModal';
+import { TULKARM_BOUNDS, TULKARM_REGION } from '../../utils/geofencing.web';
+import { shadow } from '../../utils/shadowStyles';
 import { useRouter } from 'expo-router';
 
-const CATEGORY_COLORS: Record<string, string> = {
-  تسوق: '#F59E0B',
-  مطاعم: '#EF4444',
-  صحة: '#10B981',
-  خدمات: '#8B5CF6',
-  ترفيه: '#EC4899',
-  تعليم: '#3B82F6',
-};
-
-const CATEGORY_EMOJI: Record<string, string> = {
-  تسوق: '🛍️',
-  مطاعم: '🍽️',
-  صحة: '💊',
-  خدمات: '🔧',
-  ترفيه: '🎭',
-  تعليم: '📚',
-};
+function getCategoryStyle(cats: { name: string; emoji: string; color: string }[], name: string) {
+  const c = cats.find((x) => x.name === name);
+  return { emoji: c?.emoji ?? '📍', color: c?.color ?? '#2E86AB' };
+}
 
 export default function MapScreenWeb() {
   const { user, logout } = useAuth();
-  const { stores } = useStores();
+  const { categories: categoryList } = useCategories();
+  const { stores, addPlaceRequest, deleteStore } = useStores();
   const router = useRouter();
   const [selectedStore, setSelectedStore] = useState<Store | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [showAddPlaceModal, setShowAddPlaceModal] = useState(false);
 
   const categories = Array.from(new Set(stores.map((s) => s.category)));
   const categoryStores = stores.filter((s) => s.category === selectedCategory);
@@ -48,12 +41,10 @@ export default function MapScreenWeb() {
   };
 
   const osmUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${
-    TULKARM_REGION.longitude - 0.07
-  }%2C${TULKARM_REGION.latitude - 0.05}%2C${
-    TULKARM_REGION.longitude + 0.07
-  }%2C${TULKARM_REGION.latitude + 0.05}&layer=mapnik&marker=${
-    TULKARM_REGION.latitude
-  }%2C${TULKARM_REGION.longitude}`;
+    TULKARM_BOUNDS.minLng
+  }%2C${TULKARM_BOUNDS.minLat}%2C${TULKARM_BOUNDS.maxLng}%2C${
+    TULKARM_BOUNDS.maxLat
+  }&layer=mapnik&marker=${TULKARM_REGION.latitude}%2C${TULKARM_REGION.longitude}`;
 
   return (
     <View style={styles.container}>
@@ -83,6 +74,27 @@ export default function MapScreenWeb() {
         </Text>
       </View>
 
+      {/* Suggest place button */}
+      <TouchableOpacity
+        style={styles.suggestPlaceBtn}
+        onPress={() => setShowAddPlaceModal(true)}
+      >
+        <Text style={styles.suggestPlaceBtnText}>➕ اقترح مكاناً</Text>
+      </TouchableOpacity>
+
+      {showAddPlaceModal && (
+        <AddPlaceModal
+          visible={showAddPlaceModal}
+          onClose={() => setShowAddPlaceModal(false)}
+          onSubmit={async (data) => {
+            await addPlaceRequest(data);
+            setShowAddPlaceModal(false);
+          }}
+          latitude={TULKARM_REGION.latitude}
+          longitude={TULKARM_REGION.longitude}
+        />
+      )}
+
       {/* OpenStreetMap Embed */}
       <View style={styles.mapContainer}>
         <iframe
@@ -98,7 +110,7 @@ export default function MapScreenWeb() {
           {categories.map((cat) => {
             const count = stores.filter((s) => s.category === cat).length;
             const active = selectedCategory === cat;
-            const color = CATEGORY_COLORS[cat] || '#2E86AB';
+            const color = getCategoryStyle(categoryList, cat).color;
             return (
               <TouchableOpacity
                 key={cat}
@@ -108,7 +120,7 @@ export default function MapScreenWeb() {
                 ]}
                 onPress={() => setSelectedCategory(active ? null : cat)}
               >
-                <Text style={styles.categoryChipEmoji}>{CATEGORY_EMOJI[cat] || '📍'}</Text>
+                <Text style={styles.categoryChipEmoji}>{getCategoryStyle(categoryList, cat).emoji}</Text>
                 <Text style={[styles.categoryChipText, active && { color: '#fff' }]}>{cat}</Text>
                 <View style={[styles.categoryChipBadge, { backgroundColor: active ? 'rgba(255,255,255,0.3)' : color + '22' }]}>
                   <Text style={[styles.categoryChipBadgeText, { color: active ? '#fff' : color }]}>{count}</Text>
@@ -129,7 +141,7 @@ export default function MapScreenWeb() {
               <Text style={styles.sheetCloseBtnText}>✕</Text>
             </TouchableOpacity>
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
-              <Text style={{ fontSize: 28 }}>{CATEGORY_EMOJI[selectedCategory ?? ''] ?? '📍'}</Text>
+              <Text style={{ fontSize: 28 }}>{getCategoryStyle(categoryList, selectedCategory ?? '').emoji}</Text>
               <View>
                 <Text style={styles.sheetTitle}>{selectedCategory}</Text>
                 <Text style={styles.sheetSubtitle}>{categoryStores.length} مكان</Text>
@@ -148,7 +160,7 @@ export default function MapScreenWeb() {
                   <Text style={styles.catStoreDesc}>{store.description}</Text>
                   {store.phone ? <Text style={styles.catStorePhone}>📞 {store.phone}</Text> : null}
                 </View>
-                <Text style={{ fontSize: 26, marginLeft: 12 }}>{CATEGORY_EMOJI[store.category] || '📍'}</Text>
+                <Text style={{ fontSize: 26, marginLeft: 12 }}>{getCategoryStyle(categoryList, store.category).emoji}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -164,7 +176,7 @@ export default function MapScreenWeb() {
               <Text style={styles.avatarText}>{user?.name?.charAt(0) || 'م'}</Text>
             </View>
             <Text style={styles.sidebarName}>{user?.name}</Text>
-            <Text style={styles.sidebarEmail}>{user?.email}</Text>
+            <Text style={styles.sidebarEmail}>{user?.id === 'guest' ? 'دخول كضيف' : user?.email}</Text>
             {user?.isAdmin && (
               <View style={styles.adminBadge}>
                 <Text style={styles.adminBadgeText}>مدير النظام 👑</Text>
@@ -183,7 +195,7 @@ export default function MapScreenWeb() {
                   setShowSidebar(false);
                 }}
               >
-                <Text style={styles.storeItemEmoji}>{CATEGORY_EMOJI[store.category] || '📍'}</Text>
+                <Text style={styles.storeItemEmoji}>{getCategoryStyle(categoryList, store.category).emoji}</Text>
                 <View style={styles.storeItemInfo}>
                   <Text style={styles.storeItemName}>{store.name}</Text>
                   <Text style={styles.storeItemCategory}>{store.category}</Text>
@@ -211,8 +223,8 @@ export default function MapScreenWeb() {
         <TouchableOpacity style={styles.storeModalOverlay} onPress={() => setSelectedStore(null)} />
         {selectedStore && (
           <View style={styles.storeModal}>
-            <View style={[styles.storeModalHeader, { backgroundColor: CATEGORY_COLORS[selectedStore.category] || '#2E86AB' }]}>
-              <Text style={styles.storeModalEmoji}>{CATEGORY_EMOJI[selectedStore.category] || '📍'}</Text>
+            <View style={[styles.storeModalHeader, { backgroundColor: getCategoryStyle(categoryList, selectedStore.category).color }]}>
+              <Text style={styles.storeModalEmoji}>{getCategoryStyle(categoryList, selectedStore.category).emoji}</Text>
               <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedStore(null)}>
                 <Text style={styles.closeBtnText}>✕</Text>
               </TouchableOpacity>
@@ -229,6 +241,42 @@ export default function MapScreenWeb() {
               <Text style={styles.storeCoords}>
                 📌 {selectedStore.latitude.toFixed(4)}, {selectedStore.longitude.toFixed(4)}
               </Text>
+              {user?.isAdmin && (
+                <View style={styles.storeModalActions}>
+                  <TouchableOpacity
+                    style={styles.storeModalEditBtn}
+                    onPress={() => {
+                      setSelectedStore(null);
+                      router.push({ pathname: '/(main)/admin', params: { editStoreId: selectedStore.id } });
+                    }}
+                  >
+                    <Text style={styles.storeModalEditBtnText}>✏️ تعديل البيانات</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.storeModalDeleteBtn}
+                    onPress={() => {
+                      Alert.alert(
+                        'حذف المتجر',
+                        `هل أنت متأكد من حذف "${selectedStore.name}"؟`,
+                        [
+                          { text: 'إلغاء', style: 'cancel' },
+                          {
+                            text: 'حذف',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await deleteStore(selectedStore.id);
+                              setSelectedStore(null);
+                              Alert.alert('تم', 'تم حذف المتجر');
+                            },
+                          },
+                        ]
+                      );
+                    }}
+                  >
+                    <Text style={styles.storeModalDeleteBtnText}>🗑️ حذف المتجر</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -271,6 +319,18 @@ const styles = StyleSheet.create({
   },
   webNoticeText: { color: '#92400E', fontSize: 12, textAlign: 'center' },
   mapContainer: { flex: 1, minHeight: 300 },
+  suggestPlaceBtn: {
+    position: 'absolute',
+    bottom: 100,
+    left: 16,
+    backgroundColor: '#2E86AB',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    zIndex: 10,
+    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 4 }, opacity: 0.3, radius: 8, elevation: 4 }),
+  },
+  suggestPlaceBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   storesSection: {
     backgroundColor: '#fff',
     paddingVertical: 12,
@@ -324,7 +384,7 @@ const styles = StyleSheet.create({
   sidebar: {
     position: 'absolute', right: 0, top: 0, bottom: 0, width: '80%',
     backgroundColor: '#fff',
-    shadowColor: '#000', shadowOffset: { width: -4, height: 0 }, shadowOpacity: 0.2, shadowRadius: 12, elevation: 20,
+    ...shadow({ offset: { width: -4, height: 0 }, opacity: 0.2, radius: 12, elevation: 20 }),
   },
   sidebarHeader: {
     backgroundColor: '#2E86AB', padding: 24, paddingTop: 48, alignItems: 'center',
@@ -388,5 +448,16 @@ const styles = StyleSheet.create({
   categoryPillText: { color: '#2E86AB', fontSize: 13, fontWeight: '600' },
   storeModalDesc: { fontSize: 15, color: '#4B5563', textAlign: 'right', lineHeight: 22, marginBottom: 12 },
   storePhone: { fontSize: 15, color: '#374151', fontWeight: '600', marginBottom: 6 },
-  storeCoords: { fontSize: 12, color: '#9CA3AF' },
+  storeCoords: { fontSize: 12, color: '#9CA3AF', marginBottom: 8 },
+  storeModalActions: { flexDirection: 'row', gap: 10, marginTop: 16, alignSelf: 'stretch', justifyContent: 'flex-start' },
+  storeModalEditBtn: {
+    flex: 1, backgroundColor: '#2E86AB', borderRadius: 12,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  storeModalEditBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  storeModalDeleteBtn: {
+    flex: 1, backgroundColor: '#FEE2E2', borderRadius: 12,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  storeModalDeleteBtnText: { color: '#DC2626', fontSize: 14, fontWeight: '700' },
 });

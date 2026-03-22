@@ -13,10 +13,11 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
+import { shadow } from '../../utils/shadowStyles';
 
 export default function RegisterScreen() {
   const router = useRouter();
-  const { register } = useAuth();
+  const { register, loginAsGuest } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -147,6 +148,16 @@ export default function RegisterScreen() {
           >
             <Text style={styles.loginLinkText}>لديك حساب بالفعل؟ تسجيل الدخول</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.guestButton}
+            onPress={async () => {
+              await loginAsGuest();
+              router.replace('/(main)/map');
+            }}
+          >
+            <Text style={styles.guestButtonText}>زائر</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -183,11 +194,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
-    shadowColor: '#2E86AB',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 4 }, opacity: 0.3, radius: 8, elevation: 6 }),
   },
   logoEmoji: {
     fontSize: 32,
@@ -206,11 +213,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 20,
     padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
+    ...shadow({ offset: { width: 0, height: 4 }, opacity: 0.1, radius: 12, elevation: 5 }),
   },
   inputGroup: {
     marginBottom: 16,
@@ -247,11 +250,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 8,
-    shadowColor: '#2E86AB',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 4 }, opacity: 0.3, radius: 8, elevation: 4 }),
   },
   buttonDisabled: {
     opacity: 0.7,
@@ -269,6 +268,18 @@ const styles = StyleSheet.create({
   loginLinkText: {
     color: '#2E86AB',
     fontSize: 14,
+    fontWeight: '600',
+  },
+  guestButton: {
+    marginTop: 16,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  guestButtonText: {
+    color: '#64748B',
+    fontSize: 15,
     fontWeight: '600',
   },
 });

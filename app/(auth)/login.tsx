@@ -14,12 +14,13 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
+import { shadow } from '../../utils/shadowStyles';
 
 I18nManager.allowRTL(true);
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, loginAsGuest } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -117,6 +118,16 @@ export default function LoginScreen() {
           >
             <Text style={styles.registerButtonText}>إنشاء حساب جديد</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.guestButton}
+            onPress={async () => {
+              await loginAsGuest();
+              router.replace('/(main)/map');
+            }}
+          >
+            <Text style={styles.guestButtonText}>زائر</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.adminHint}>
@@ -149,11 +160,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
-    shadowColor: '#2E86AB',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 8,
+    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 6 }, opacity: 0.35, radius: 10, elevation: 8 }),
   },
   logoEmoji: {
     fontSize: 42,
@@ -173,11 +180,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 20,
     padding: 28,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
+    ...shadow({ offset: { width: 0, height: 4 }, opacity: 0.1, radius: 12, elevation: 5 }),
   },
   cardTitle: {
     fontSize: 22,
@@ -221,11 +224,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 8,
-    shadowColor: '#2E86AB',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 4 }, opacity: 0.3, radius: 8, elevation: 4 }),
   },
   loginButtonDisabled: {
     opacity: 0.7,
@@ -262,6 +261,18 @@ const styles = StyleSheet.create({
     color: '#2E86AB',
     fontSize: 16,
     fontWeight: '700',
+  },
+  guestButton: {
+    marginTop: 12,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  guestButtonText: {
+    color: '#64748B',
+    fontSize: 15,
+    fontWeight: '600',
   },
   adminHint: {
     marginTop: 20,

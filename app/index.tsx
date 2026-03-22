@@ -1,21 +1,33 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../context/AuthContext';
+
+const ONBOARDING_SEEN_KEY = 'onboarding_seen';
 
 export default function IndexScreen() {
   const { user, isLoading } = useAuth();
   const router = useRouter();
+  const [onboardingSeen, setOnboardingSeen] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!isLoading) {
-      if (user) {
-        router.replace('/(main)/map');
-      } else {
-        router.replace('/(auth)/login');
-      }
+    AsyncStorage.getItem(ONBOARDING_SEEN_KEY).then((seen) => {
+      setOnboardingSeen(!!seen);
+      if (!seen) router.replace('/onboarding');
+    });
+  }, []);
+
+  useEffect(() => {
+    if (onboardingSeen === false) return;
+    if (onboardingSeen === null || isLoading) return;
+
+    if (user) {
+      router.replace('/(main)/map');
+    } else {
+      router.replace('/(auth)/login');
     }
-  }, [user, isLoading]);
+  }, [user, isLoading, onboardingSeen]);
 
   return (
     <View style={styles.container}>

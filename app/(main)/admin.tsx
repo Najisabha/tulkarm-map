@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,27 +11,39 @@ import {
   Platform,
   KeyboardAvoidingView,
   ActivityIndicator,
+  Image,
 } from 'react-native';
-import { MapView, Marker, PROVIDER_DEFAULT } from '../../components/MapWrapper';
-import { useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
+import { MapView, Marker, PROVIDER_GOOGLE } from '../../components/MapWrapper';
+import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
-import { useStores, Store } from '../../context/StoreContext';
+import { useStores, Store, PlaceRequest } from '../../context/StoreContext';
+import { useCategories, Category } from '../../context/CategoryContext';
 import { TULKARM_REGION } from '../../utils/geofencing';
+import { shadow } from '../../utils/shadowStyles';
+import { PRESET_COLORS } from '../../constants/categoryColors';
 
-const CATEGORIES = ['تسوق', 'مطاعم', 'صحة', 'خدمات', 'ترفيه', 'تعليم'];
-const CATEGORY_EMOJI: Record<string, string> = {
-  تسوق: '🛍️',
-  مطاعم: '🍽️',
-  صحة: '💊',
-  خدمات: '🔧',
-  ترفيه: '🎭',
-  تعليم: '📚',
-};
+function catEmoji(categories: Category[], name: string) {
+  return categories.find((c) => c.name === name)?.emoji || '📍';
+}
 
 export default function AdminScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ editStoreId?: string }>();
   const { user } = useAuth();
-  const { stores, addStore, deleteStore } = useStores();
+  const { categories, addCategory, updateCategory, deleteCategory } = useCategories();
+  const {
+    stores,
+    placeRequests,
+    addStore,
+    updateStore,
+    deleteStore,
+    updateStoresCategory,
+    updatePlaceRequestsCategory,
+    acceptPlaceRequest,
+    rejectPlaceRequest,
+  } = useStores();
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -44,6 +56,37 @@ export default function AdminScreen() {
     phone: '',
   });
 
+  const [acceptingRequest, setAcceptingRequest] = useState<PlaceRequest | null>(null);
+  const [acceptPhotos, setAcceptPhotos] = useState<string[]>([]);
+  const [acceptVideos, setAcceptVideos] = useState<string[]>([]);
+
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [categoryForm, setCategoryForm] = useState({ name: '', emoji: '📍', color: '#2E86AB' });
+
+  const [editingStore, setEditingStore] = useState<Store | null>(null);
+  const [editStoreForm, setEditStoreForm] = useState({ name: '', description: '', category: '', phone: '' });
+  const [editStoreLocation, setEditStoreLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+
+  useEffect(() => {
+    if (!user?.isAdmin) return;
+    const id = params.editStoreId;
+    if (id && stores.length > 0) {
+      const store = stores.find((s) => s.id === id);
+      if (store) {
+        setEditingStore(store);
+        setEditStoreForm({
+          name: store.name,
+          description: store.description,
+          category: store.category,
+          phone: store.phone ?? '',
+        });
+        setEditStoreLocation({ latitude: store.latitude, longitude: store.longitude });
+        router.setParams({ editStoreId: undefined });
+      }
+    }
+  }, [user?.isAdmin, params.editStoreId, stores]);
+
   if (!user?.isAdmin) {
     return (
       <View style={styles.unauthorized}>
@@ -55,9 +98,74 @@ export default function AdminScreen() {
     );
   }
 
+  const defaultCategory = categories[0]?.name ?? 'تسوق';
+
   const resetForm = () => {
-    setForm({ name: '', description: '', category: 'تسوق', phone: '' });
+    setForm({ name: '', description: '', category: defaultCategory, phone: '' });
     setPickedLocation(null);
+  };
+
+  const openAddCategory = () => {
+    setEditingCategory(null);
+    setCategoryForm({ name: '', emoji: '📍', color: '#2E86AB' });
+    setShowCategoryModal(true);
+  };
+
+  const openEditCategory = (cat: Category) => {
+    setEditingCategory(cat);
+    setCategoryForm({ name: cat.name, emoji: cat.emoji, color: cat.color });
+    setShowCategoryModal(true);
+  };
+
+  const saveCategory = async () => {
+    if (!categoryForm.name.trim()) {
+      Alert.alert('تنبيه', 'أدخل اسم الفئة');
+      return;
+    }
+    if (editingCategory) {
+      const oldName = editingCategory.name;
+      const newName = categoryForm.name.trim();
+      await updateCategory(editingCategory.id, {
+        name: newName,
+        emoji: categoryForm.emoji || '📍',
+        color: categoryForm.color,
+      });
+      if (oldName !== newName) {
+        await updateStoresCategory(oldName, newName);
+        await updatePlaceRequestsCategory(oldName, newName);
+      }
+      Alert.alert('✅ تم', 'تم تحديث الفئة');
+    } else {
+      if (categories.some((c) => c.name === categoryForm.name.trim())) {
+        Alert.alert('تنبيه', 'الفئة موجودة مسبقاً');
+        return;
+      }
+      await addCategory({
+        name: categoryForm.name.trim(),
+        emoji: categoryForm.emoji || '📍',
+        color: categoryForm.color,
+      });
+      Alert.alert('✅ تم', 'تمت إضافة الفئة');
+    }
+    setShowCategoryModal(false);
+  };
+
+  const handleDeleteCategory = async (cat: Category) => {
+    const storeCount = stores.filter((s) => s.category === cat.name).length;
+    const reqCount = placeRequests.filter((r) => r.category === cat.name).length;
+    if (storeCount > 0 || reqCount > 0) {
+      Alert.alert(
+        'لا يمكن الحذف',
+        `هذه الفئة مستخدمة في ${storeCount} متجر و${reqCount} طلب. غيّر تصنيفها أولاً ثم احذف.`
+      );
+      return;
+    }
+    const result = await deleteCategory(cat.id);
+    if (result.success) {
+      Alert.alert('✅ تم', 'تم حذف الفئة');
+    } else {
+      Alert.alert('تنبيه', result.message);
+    }
   };
 
   const handleSave = async () => {
@@ -85,7 +193,40 @@ export default function AdminScreen() {
     Alert.alert('✅ تم', 'تمت إضافة المتجر بنجاح!');
   };
 
-  const handleDelete = (store: Store) => {
+  const openEditStore = (store: Store) => {
+    setEditingStore(store);
+    setEditStoreForm({
+      name: store.name,
+      description: store.description,
+      category: store.category,
+      phone: store.phone ?? '',
+    });
+    setEditStoreLocation({ latitude: store.latitude, longitude: store.longitude });
+  };
+
+  const saveEditStore = async () => {
+    if (!editingStore) return;
+    if (!editStoreForm.name.trim() || !editStoreForm.description.trim()) {
+      Alert.alert('تنبيه', 'يرجى تعبئة الاسم والوصف');
+      return;
+    }
+    if (!editStoreLocation) {
+      Alert.alert('تنبيه', 'يرجى تحديد الموقع على الخريطة');
+      return;
+    }
+    await updateStore(editingStore.id, {
+      name: editStoreForm.name.trim(),
+      description: editStoreForm.description.trim(),
+      category: editStoreForm.category,
+      phone: editStoreForm.phone.trim() || undefined,
+      latitude: editStoreLocation.latitude,
+      longitude: editStoreLocation.longitude,
+    });
+    setEditingStore(null);
+    Alert.alert('✅ تم', 'تم تحديث بيانات المتجر');
+  };
+
+  const handleDeleteStore = (store: Store) => {
     Alert.alert(
       'حذف المتجر',
       `هل أنت متأكد من حذف "${store.name}"؟`,
@@ -96,6 +237,8 @@ export default function AdminScreen() {
           style: 'destructive',
           onPress: async () => {
             await deleteStore(store.id);
+            setEditingStore(null);
+            Alert.alert('تم', 'تم حذف المتجر');
           },
         },
       ]
@@ -117,15 +260,107 @@ export default function AdminScreen() {
 
       {/* Stats */}
       <View style={styles.statsRow}>
-        <View style={styles.statCard}>
+        <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-stores')} activeOpacity={0.7}>
           <Text style={styles.statNumber}>{stores.length}</Text>
           <Text style={styles.statLabel}>إجمالي المتاجر</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statNumber}>
-            {new Set(stores.map((s) => s.category)).size}
-          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-categories')} activeOpacity={0.7}>
+          <Text style={styles.statNumber}>{categories.length}</Text>
           <Text style={styles.statLabel}>الفئات</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-place-requests')} activeOpacity={0.7}>
+          <Text style={styles.statNumber}>
+            {placeRequests.filter((r) => r.status === 'pending').length}
+          </Text>
+          <Text style={styles.statLabel}>طلبات الأماكن</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Place Requests */}
+      {placeRequests.filter((r) => r.status === 'pending').length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>طلبات الأماكن</Text>
+          {placeRequests
+            .filter((r) => r.status === 'pending')
+            .map((req) => (
+              <View key={req.id} style={styles.requestCard}>
+                <View style={styles.requestInfo}>
+                  <Text style={styles.requestName}>{req.name}</Text>
+                  <Text style={styles.requestDesc}>{req.description}</Text>
+                  <Text style={styles.requestMeta}>
+                    {catEmoji(categories, req.category)} {req.category}
+                    {req.phone ? ` • 📞 ${req.phone}` : ''}
+                  </Text>
+                  <Text style={styles.requestCoords}>
+                    📌 {req.latitude.toFixed(5)}, {req.longitude.toFixed(5)}
+                  </Text>
+                </View>
+                <View style={styles.requestActions}>
+                  <TouchableOpacity
+                    style={styles.acceptBtn}
+                    onPress={() => {
+                      setAcceptPhotos(req.photos ?? []);
+                      setAcceptVideos(req.videos ?? []);
+                      setAcceptingRequest(req);
+                    }}
+                  >
+                    <Text style={styles.acceptBtnText}>✓ قبول</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.rejectBtn}
+                    onPress={() => {
+                      rejectPlaceRequest(req.id);
+                      Alert.alert('تم', 'تم رفض الطلب');
+                    }}
+                  >
+                    <Text style={styles.rejectBtnText}>✕ رفض</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+        </View>
+      )}
+
+      {/* Categories */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>إدارة الفئات</Text>
+          <TouchableOpacity style={styles.addCategoryBtn} onPress={openAddCategory}>
+            <Text style={styles.addCategoryBtnText}>+ إضافة فئة</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.categoriesRow}>
+          {categories.map((cat) => {
+            const storeCount = stores.filter((s) => s.category === cat.name).length;
+            return (
+              <View key={cat.id} style={[styles.categoryCard, { borderColor: cat.color + '44' }]}>
+                <View style={[styles.categoryCardIcon, { backgroundColor: cat.color + '22' }]}>
+                  <Text style={styles.categoryCardEmoji}>{cat.emoji}</Text>
+                </View>
+                <Text style={styles.categoryCardName}>{cat.name}</Text>
+                <Text style={styles.categoryCardCount}>{storeCount} مكان</Text>
+                <View style={styles.categoryCardActions}>
+                  <TouchableOpacity
+                    style={[styles.categoryActionBtn, { backgroundColor: cat.color + '22' }]}
+                    onPress={() => openEditCategory(cat)}
+                  >
+                    <Text style={[styles.categoryActionText, { color: cat.color }]}>تعديل</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.categoryActionBtnDel}
+                    onPress={() =>
+                      Alert.alert('حذف الفئة', `حذف "${cat.name}"؟`, [
+                        { text: 'إلغاء', style: 'cancel' },
+                        { text: 'حذف', style: 'destructive', onPress: () => handleDeleteCategory(cat) },
+                      ])
+                    }
+                  >
+                    <Text style={styles.categoryActionTextDel}>حذف</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })}
         </View>
       </View>
 
@@ -139,21 +374,18 @@ export default function AdminScreen() {
           </View>
         ) : (
           stores.map((store) => (
-            <View key={store.id} style={styles.storeCard}>
-              <View style={styles.storeCardLeft}>
-                <TouchableOpacity
-                  style={styles.deleteBtn}
-                  onPress={() => handleDelete(store)}
-                >
-                  <Text style={styles.deleteBtnText}>🗑️</Text>
-                </TouchableOpacity>
-              </View>
+            <TouchableOpacity
+              key={store.id}
+              style={styles.storeCard}
+              onPress={() => openEditStore(store)}
+              activeOpacity={0.7}
+            >
               <View style={styles.storeCardInfo}>
                 <Text style={styles.storeCardName}>{store.name}</Text>
                 <Text style={styles.storeCardDesc}>{store.description}</Text>
                 <View style={styles.storeCardMeta}>
                   <Text style={styles.storeCardCategory}>
-                    {CATEGORY_EMOJI[store.category]} {store.category}
+                    {catEmoji(categories, store.category)} {store.category}
                   </Text>
                   {store.phone ? (
                     <Text style={styles.storeCardPhone}>📞 {store.phone}</Text>
@@ -161,12 +393,274 @@ export default function AdminScreen() {
                 </View>
               </View>
               <Text style={styles.storeCardEmoji}>
-                {CATEGORY_EMOJI[store.category] || '📍'}
+                {catEmoji(categories, store.category)}
               </Text>
-            </View>
+              <Text style={styles.editHint}>✏️ تعديل</Text>
+            </TouchableOpacity>
           ))
         )}
       </ScrollView>
+
+      {/* Accept Request Modal */}
+      <Modal visible={!!acceptingRequest} transparent animationType="slide">
+        <View style={styles.acceptModalOverlay}>
+          <View style={styles.acceptModal}>
+            <Text style={styles.acceptModalTitle}>تأكيد قبول الطلب</Text>
+            {acceptingRequest && (
+              <>
+                <Text style={styles.acceptModalName}>{acceptingRequest.name}</Text>
+                <Text style={styles.acceptModalDesc}>{acceptingRequest.description}</Text>
+                <View style={styles.acceptMediaRow}>
+                  {acceptPhotos.map((uri, i) => (
+                    <View key={i} style={styles.acceptThumbWrap}>
+                      <Image source={{ uri }} style={styles.acceptThumb} />
+                      <TouchableOpacity
+                        style={styles.acceptRemoveThumb}
+                        onPress={() => setAcceptPhotos((p) => p.filter((_, j) => j !== i))}
+                      >
+                        <Text style={styles.acceptRemoveText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                  {acceptPhotos.length < 5 && (
+                    <TouchableOpacity
+                      style={styles.acceptAddMedia}
+                      onPress={async () => {
+                        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                        if (status !== 'granted') {
+                          Alert.alert('تنبيه', 'نحتاج إذن الوصول للصور');
+                          return;
+                        }
+                        const r = await ImagePicker.launchImageLibraryAsync({
+                          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                          allowsEditing: true,
+                          quality: 0.6,
+                        });
+                        if (!r.canceled) setAcceptPhotos((p) => [...p, r.assets[0].uri].slice(0, 5));
+                      }}
+                    >
+                      <Text style={styles.acceptAddMediaText}>📷 إضافة صورة</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {acceptVideos.length < 1 && (
+                  <TouchableOpacity
+                    style={styles.acceptAddMedia}
+                    onPress={async () => {
+                      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                      if (status !== 'granted') return;
+                      const r = await ImagePicker.launchImageLibraryAsync({
+                        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+                        videoMaxDuration: 30,
+                      });
+                      if (!r.canceled) setAcceptVideos([r.assets[0].uri]);
+                    }}
+                  >
+                    <Text style={styles.acceptAddMediaText}>🎬 إضافة فيديو</Text>
+                  </TouchableOpacity>
+                )}
+                <View style={styles.acceptModalActions}>
+                  <TouchableOpacity
+                    style={styles.acceptConfirmBtn}
+                    onPress={() => {
+                      if (acceptingRequest) {
+                        acceptPlaceRequest(acceptingRequest.id, {
+                          photos: acceptPhotos.length ? acceptPhotos : undefined,
+                          videos: acceptVideos.length ? acceptVideos : undefined,
+                        });
+                        setAcceptingRequest(null);
+                        setAcceptPhotos([]);
+                        setAcceptVideos([]);
+                        Alert.alert('✅ تم', 'تمت إضافة المكان للمتاجر');
+                      }
+                    }}
+                  >
+                    <Text style={styles.acceptConfirmBtnText}>تأكيد القبول</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.acceptCancelBtn}
+                    onPress={() => {
+                      setAcceptingRequest(null);
+                      setAcceptPhotos([]);
+                      setAcceptVideos([]);
+                    }}
+                  >
+                    <Text style={styles.acceptCancelBtnText}>إلغاء</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Category Modal */}
+      <Modal visible={showCategoryModal} transparent animationType="fade">
+        <View style={styles.acceptModalOverlay}>
+          <View style={styles.acceptModal}>
+            <Text style={styles.acceptModalTitle}>
+              {editingCategory ? 'تعديل الفئة' : 'إضافة فئة جديدة'}
+            </Text>
+            <Text style={styles.formLabel}>الاسم</Text>
+            <TextInput
+              style={[styles.formInput, { marginBottom: 12 }]}
+              placeholder="مثال: صيدليات"
+              value={categoryForm.name}
+              onChangeText={(t) => setCategoryForm((p) => ({ ...p, name: t }))}
+              textAlign="right"
+            />
+            <Text style={styles.formLabel}>الأيقونة (إيموجي)</Text>
+            <TextInput
+              style={[styles.formInput, { marginBottom: 12 }]}
+              placeholder="📍"
+              value={categoryForm.emoji}
+              onChangeText={(t) => setCategoryForm((p) => ({ ...p, emoji: t || '📍' }))}
+              textAlign="center"
+            />
+            <Text style={styles.formLabel}>اللون</Text>
+            <View style={styles.colorRow}>
+              {PRESET_COLORS.map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  style={[
+                    styles.colorDot,
+                    { backgroundColor: c },
+                    categoryForm.color === c && styles.colorDotSelected,
+                  ]}
+                  onPress={() => setCategoryForm((p) => ({ ...p, color: c }))}
+                />
+              ))}
+            </View>
+            <View style={styles.acceptModalActions}>
+              <TouchableOpacity style={styles.acceptConfirmBtn} onPress={saveCategory}>
+                <Text style={styles.acceptConfirmBtnText}>حفظ</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.acceptCancelBtn}
+                onPress={() => setShowCategoryModal(false)}
+              >
+                <Text style={styles.acceptCancelBtnText}>إلغاء</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit Store Modal */}
+      <Modal visible={!!editingStore} animationType="slide">
+        <KeyboardAvoidingView
+          style={styles.modalContainer}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setEditingStore(null)}>
+              <Text style={styles.modalCancelText}>إلغاء</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>تعديل البيانات</Text>
+            <TouchableOpacity onPress={saveEditStore}>
+              <Text style={styles.modalSaveText}>حفظ</Text>
+            </TouchableOpacity>
+          </View>
+          {editingStore && (
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>اسم المتجر *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="مثال: مطعم الزيتون"
+                  value={editStoreForm.name}
+                  onChangeText={(t) => setEditStoreForm((p) => ({ ...p, name: t }))}
+                  textAlign="right"
+                />
+              </View>
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>الوصف *</Text>
+                <TextInput
+                  style={[styles.formInput, styles.formTextarea]}
+                  placeholder="وصف مختصر للمتجر"
+                  value={editStoreForm.description}
+                  onChangeText={(t) => setEditStoreForm((p) => ({ ...p, description: t }))}
+                  multiline
+                  numberOfLines={3}
+                  textAlign="right"
+                  textAlignVertical="top"
+                />
+              </View>
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>رقم الهاتف</Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="09-XXXXXXX"
+                  value={editStoreForm.phone}
+                  onChangeText={(t) => setEditStoreForm((p) => ({ ...p, phone: t }))}
+                  keyboardType="phone-pad"
+                  textAlign="right"
+                />
+              </View>
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>الفئة</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {categories.map((cat) => (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[
+                        styles.categoryChip,
+                        editStoreForm.category === cat.name && [styles.categoryChipActive, { backgroundColor: cat.color }],
+                      ]}
+                      onPress={() => setEditStoreForm((p) => ({ ...p, category: cat.name }))}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryChipText,
+                          editStoreForm.category === cat.name && styles.categoryChipTextActive,
+                        ]}
+                      >
+                        {cat.emoji} {cat.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>تحديد الموقع على الخريطة</Text>
+                <View style={styles.mapPicker}>
+                  <MapView
+                    style={styles.mapPickerMap}
+                    provider={PROVIDER_GOOGLE}
+                    customMapStyle={MAP_STYLE_NO_POI}
+                    initialRegion={{
+                      latitude: editStoreLocation?.latitude ?? editingStore.latitude,
+                      longitude: editStoreLocation?.longitude ?? editingStore.longitude,
+                      latitudeDelta: 0.06,
+                      longitudeDelta: 0.06,
+                    }}
+                    onPress={(e) => setEditStoreLocation(e.nativeEvent.coordinate)}
+                  >
+                    {editStoreLocation && (
+                      <Marker coordinate={editStoreLocation}>
+                        <View style={styles.pickedMarker}>
+                          <Text style={{ fontSize: 24 }}>{catEmoji(categories, editStoreForm.category)}</Text>
+                        </View>
+                      </Marker>
+                    )}
+                  </MapView>
+                </View>
+                {editStoreLocation && (
+                  <Text style={styles.coordsText}>
+                    📌 {editStoreLocation.latitude.toFixed(5)}, {editStoreLocation.longitude.toFixed(5)}
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity
+                style={styles.deleteStoreBtn}
+                onPress={() => editingStore && handleDeleteStore(editingStore)}
+              >
+                <Text style={styles.deleteStoreBtnText}>🗑️ حذف المتجر</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* FAB */}
       <TouchableOpacity style={styles.fab} onPress={() => setShowAddModal(true)}>
@@ -243,22 +737,22 @@ export default function AdminScreen() {
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>الفئة</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {CATEGORIES.map((cat) => (
+                {categories.map((cat) => (
                   <TouchableOpacity
-                    key={cat}
+                    key={cat.id}
                     style={[
                       styles.categoryChip,
-                      form.category === cat && styles.categoryChipActive,
+                      form.category === cat.name && [styles.categoryChipActive, { backgroundColor: cat.color }],
                     ]}
-                    onPress={() => setForm((p) => ({ ...p, category: cat }))}
+                    onPress={() => setForm((p) => ({ ...p, category: cat.name }))}
                   >
                     <Text
                       style={[
                         styles.categoryChipText,
-                        form.category === cat && styles.categoryChipTextActive,
+                        form.category === cat.name && styles.categoryChipTextActive,
                       ]}
                     >
-                      {CATEGORY_EMOJI[cat]} {cat}
+                      {cat.emoji} {cat.name}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -274,7 +768,8 @@ export default function AdminScreen() {
               <View style={styles.mapPicker}>
                 <MapView
                   style={styles.mapPickerMap}
-                  provider={PROVIDER_DEFAULT}
+                  provider={PROVIDER_GOOGLE}
+                  customMapStyle={MAP_STYLE_NO_POI}
                   initialRegion={{
                     latitude: TULKARM_REGION.latitude,
                     longitude: TULKARM_REGION.longitude,
@@ -289,7 +784,7 @@ export default function AdminScreen() {
                     <Marker coordinate={pickedLocation}>
                       <View style={styles.pickedMarker}>
                         <Text style={{ fontSize: 24 }}>
-                          {CATEGORY_EMOJI[form.category]}
+                          {catEmoji(categories, form.category)}
                         </Text>
                       </View>
                     </Marker>
@@ -351,11 +846,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 16,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 3,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.08, radius: 6, elevation: 3 }),
   },
   statNumber: { fontSize: 30, fontWeight: '800', color: '#2E86AB' },
   statLabel: { fontSize: 13, color: '#6B7280', marginTop: 4 },
@@ -368,6 +859,123 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginBottom: 12,
   },
+  section: { paddingHorizontal: 16, marginBottom: 16 },
+  requestCard: {
+    flexDirection: 'row',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.08, radius: 6, elevation: 2 }),
+  },
+  requestInfo: { flex: 1, alignItems: 'flex-end' },
+  requestName: { fontSize: 15, fontWeight: '700', color: '#1F2937', textAlign: 'right' },
+  requestDesc: { fontSize: 13, color: '#6B7280', textAlign: 'right', marginTop: 4 },
+  requestMeta: { fontSize: 12, color: '#2E86AB', marginTop: 6 },
+  requestCoords: { fontSize: 11, color: '#9CA3AF', marginTop: 4 },
+  requestActions: { flexDirection: 'row', gap: 8, alignItems: 'center', marginRight: 12 },
+  acceptBtn: {
+    backgroundColor: '#10B981',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  acceptBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  rejectBtn: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  rejectBtnText: { color: '#EF4444', fontSize: 14, fontWeight: '700' },
+  acceptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  acceptModal: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 360,
+    ...shadow({ offset: { width: 0, height: 4 }, opacity: 0.15, radius: 12, elevation: 10 }),
+  },
+  acceptModalTitle: { fontSize: 18, fontWeight: '700', color: '#1A3A5C', textAlign: 'center', marginBottom: 12 },
+  acceptModalName: { fontSize: 16, fontWeight: '600', color: '#1F2937', textAlign: 'right', marginBottom: 4 },
+  acceptModalDesc: { fontSize: 14, color: '#6B7280', textAlign: 'right', marginBottom: 16 },
+  acceptMediaRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  acceptThumbWrap: { position: 'relative' },
+  acceptThumb: { width: 60, height: 60, borderRadius: 10 },
+  acceptRemoveThumb: {
+    position: 'absolute', top: -4, right: -4,
+    width: 22, height: 22, borderRadius: 11, backgroundColor: '#EF4444',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  acceptRemoveText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  acceptAddMedia: {
+    width: 60, height: 60, borderRadius: 10,
+    backgroundColor: '#F3F4F6', borderWidth: 2, borderColor: '#E5E7EB', borderStyle: 'dashed',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  acceptAddMediaText: { fontSize: 10, color: '#6B7280' },
+  acceptModalActions: { flexDirection: 'row-reverse', gap: 12, marginTop: 16 },
+  acceptConfirmBtn: {
+    flex: 1, backgroundColor: '#10B981', borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center',
+  },
+  acceptConfirmBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  acceptCancelBtn: {
+    flex: 1, backgroundColor: '#F3F4F6', borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center',
+  },
+  acceptCancelBtnText: { color: '#6B7280', fontSize: 16, fontWeight: '600' },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  addCategoryBtn: {
+    backgroundColor: '#2E86AB',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  addCategoryBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  categoriesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  categoryCard: {
+    width: '48%',
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 2,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.08, radius: 6, elevation: 2 }),
+  },
+  categoryCardIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  categoryCardEmoji: { fontSize: 24 },
+  categoryCardName: { fontSize: 15, fontWeight: '700', color: '#1F2937', textAlign: 'right' },
+  categoryCardCount: { fontSize: 12, color: '#6B7280', marginTop: 2, textAlign: 'right' },
+  categoryCardActions: { flexDirection: 'row-reverse', gap: 8, marginTop: 10 },
+  categoryActionBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
+  categoryActionText: { fontSize: 13, fontWeight: '600' },
+  categoryActionBtnDel: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, backgroundColor: '#FEE2E2' },
+  categoryActionTextDel: { fontSize: 13, fontWeight: '600', color: '#EF4444' },
+  colorRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  colorDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 3,
+    borderColor: 'transparent',
+  },
+  colorDotSelected: { borderColor: '#1F2937' },
   emptyState: { alignItems: 'center', paddingVertical: 40 },
   emptyStateEmoji: { fontSize: 50, marginBottom: 12 },
   emptyStateText: { color: '#9CA3AF', fontSize: 16 },
@@ -378,11 +986,7 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 10,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 6,
-    elevation: 2,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.07, radius: 6, elevation: 2 }),
   },
   storeCardLeft: { marginRight: 10 },
   storeCardInfo: { flex: 1, alignItems: 'flex-end' },
@@ -392,6 +996,16 @@ const styles = StyleSheet.create({
   storeCardCategory: { fontSize: 12, color: '#2E86AB', fontWeight: '600' },
   storeCardPhone: { fontSize: 12, color: '#6B7280' },
   storeCardEmoji: { fontSize: 28, marginLeft: 12 },
+  editHint: { fontSize: 11, color: '#6B7280', marginTop: 4, textAlign: 'right' },
+  deleteStoreBtn: {
+    marginTop: 24,
+    marginBottom: 20,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  deleteStoreBtnText: { color: '#EF4444', fontSize: 16, fontWeight: '700' },
   deleteBtn: {
     width: 36,
     height: 36,
@@ -411,11 +1025,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#2E86AB',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#2E86AB',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
+    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 6 }, opacity: 0.4, radius: 10, elevation: 8 }),
   },
   fabText: { color: '#fff', fontSize: 32, fontWeight: '300', marginTop: -2 },
   modalContainer: { flex: 1, backgroundColor: '#F0F4F8' },
@@ -483,11 +1093,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.3, radius: 4, elevation: 4 }),
   },
   coordsText: {
     fontSize: 12,

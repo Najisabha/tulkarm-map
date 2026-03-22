@@ -9,31 +9,24 @@ import {
   Animated,
   Platform,
   FlatList,
+  Alert,
+  Linking,
 } from 'react-native';
-import { MapView, Marker, Circle, PROVIDER_DEFAULT } from '../../components/MapWrapper';
+import { MapView, Marker, Circle, PROVIDER_GOOGLE } from '../../components/MapWrapper';
+import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
 import * as Location from 'expo-location';
 import { useAuth } from '../../context/AuthContext';
 import { useStores, Store } from '../../context/StoreContext';
+import { useCategories } from '../../context/CategoryContext';
+import { AddPlaceModal } from '../../components/AddPlaceModal';
 import { startGeofencing, isInsideTulkarm, TULKARM_REGION } from '../../utils/geofencing';
+import { shadow } from '../../utils/shadowStyles';
 import { useRouter } from 'expo-router';
 
-const CATEGORY_COLORS: Record<string, string> = {
-  تسوق: '#F59E0B',
-  مطاعم: '#EF4444',
-  صحة: '#10B981',
-  خدمات: '#8B5CF6',
-  ترفيه: '#EC4899',
-  تعليم: '#3B82F6',
-};
-
-const CATEGORY_EMOJI: Record<string, string> = {
-  تسوق: '🛍️',
-  مطاعم: '🍽️',
-  صحة: '💊',
-  خدمات: '🔧',
-  ترفيه: '🎭',
-  تعليم: '📚',
-};
+function getCategoryStyle(categories: { name: string; emoji: string; color: string }[], name: string) {
+  const c = categories.find((x) => x.name === name);
+  return { emoji: c?.emoji ?? '📍', color: c?.color ?? '#2E86AB' };
+}
 
 interface UserLocation {
   latitude: number;
@@ -62,7 +55,8 @@ function formatDistance(meters: number): string {
 
 export default function MapScreen() {
   const { user, logout } = useAuth();
-  const { stores } = useStores();
+  const { categories: categoryList } = useCategories();
+  const { stores, addPlaceRequest, deleteStore } = useStores();
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
 
@@ -72,6 +66,8 @@ export default function MapScreen() {
   const [selectedStore, setSelectedStore] = useState<Store | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [tappedCoord, setTappedCoord] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [addPlaceCoord, setAddPlaceCoord] = useState<{ latitude: number; longitude: number } | null>(null);
 
   const bannerAnim = useRef(new Animated.Value(-100)).current;
   const [bannerMessage, setBannerMessage] = useState('');
@@ -103,7 +99,17 @@ export default function MapScreen() {
 
   const setupLocation = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted') {
+      Alert.alert(
+        'السماح بالوصول للموقع',
+        'نحتاج إذن الموقع لإظهار موقعك على الخريطة وإظهار الأماكن القريبة منك في طولكرم.',
+        [
+          { text: 'إلغاء', style: 'cancel' },
+          { text: 'فتح الإعدادات', onPress: () => Linking.openSettings() },
+        ]
+      );
+      return;
+    }
 
     setLocationGranted(true);
     await startGeofencing();
@@ -114,6 +120,11 @@ export default function MapScreen() {
     const { latitude, longitude } = location.coords;
     setUserLocation({ latitude, longitude });
     setInTulkarm(isInsideTulkarm(latitude, longitude));
+
+    mapRef.current?.animateToRegion(
+      { latitude, longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+      800
+    );
 
     Location.watchPositionAsync(
       { accuracy: Location.Accuracy.Balanced, distanceInterval: 20 },
@@ -151,6 +162,29 @@ export default function MapScreen() {
       },
       800
     );
+  };
+
+  const NEAR_STORE_METERS = 80;
+
+  const handleMapPress = useCallback(
+    (e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) => {
+      const { latitude, longitude } = e.nativeEvent.coordinate;
+      if (!isInsideTulkarm(latitude, longitude)) return;
+      const nearStore = stores.some(
+        (s) => haversineDistance(latitude, longitude, s.latitude, s.longitude) < NEAR_STORE_METERS
+      );
+      if (!nearStore) {
+        setTappedCoord({ latitude, longitude });
+      }
+    },
+    [stores]
+  );
+
+  const handleNavigateToArea = () => {
+    if (!tappedCoord) return;
+    const url = `https://www.google.com/maps?q=${tappedCoord.latitude},${tappedCoord.longitude}`;
+    Linking.openURL(url);
+    setTappedCoord(null);
   };
 
   const handleCategoryPress = useCallback(
@@ -240,7 +274,7 @@ export default function MapScreen() {
         ) : null}
       </View>
       <Text style={styles.catStoreEmoji}>
-        {CATEGORY_EMOJI[item.category] || '📍'}
+        {getCategoryStyle(categoryList, item.category).emoji}
       </Text>
     </TouchableOpacity>
   );
@@ -250,7 +284,9 @@ export default function MapScreen() {
       <MapView
         ref={mapRef}
         style={styles.map}
-        provider={PROVIDER_DEFAULT}
+        provider={PROVIDER_GOOGLE}
+        customMapStyle={MAP_STYLE_NO_POI}
+        onPress={handleMapPress}
         initialRegion={{
           latitude: TULKARM_REGION.latitude,
           longitude: TULKARM_REGION.longitude,
@@ -288,14 +324,14 @@ export default function MapScreen() {
                   styles.markerContainer,
                   {
                     backgroundColor:
-                      CATEGORY_COLORS[store.category] || '#2E86AB',
+                      getCategoryStyle(categoryList, store.category).color,
                     opacity: isActive ? 1 : 0.35,
                     transform: [{ scale: isActive ? 1 : 0.8 }],
                   },
                 ]}
               >
                 <Text style={styles.markerEmoji}>
-                  {CATEGORY_EMOJI[store.category] || '📍'}
+                  {getCategoryStyle(categoryList, store.category).emoji}
                 </Text>
               </View>
             </Marker>
@@ -352,6 +388,46 @@ export default function MapScreen() {
         <Text style={styles.centerBtnText}>🎯</Text>
       </TouchableOpacity>
 
+      {/* Tap options: Add place / Navigate */}
+      <Modal visible={!!tappedCoord} transparent animationType="slide">
+        <TouchableOpacity style={styles.sheetOverlay} onPress={() => setTappedCoord(null)} />
+        <View style={styles.tapOptionsSheet}>
+          <View style={styles.tapOptionsHandle} />
+          <Text style={styles.tapOptionsTitle}>مكان فارغ</Text>
+          <TouchableOpacity
+            style={styles.tapOptionBtn}
+            onPress={() => {
+              if (tappedCoord) setAddPlaceCoord(tappedCoord);
+              setTappedCoord(null);
+            }}
+          >
+            <Text style={styles.tapOptionBtnText}>➕ إضافة مكان</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tapOptionBtn, styles.tapOptionBtnSecondary]}
+            onPress={handleNavigateToArea}
+          >
+            <Text style={styles.tapOptionBtnTextSecondary}>🧭 التوجه إلى هذه المنطقة</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tapOptionCancel} onPress={() => setTappedCoord(null)}>
+            <Text style={styles.tapOptionCancelText}>إلغاء</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {addPlaceCoord && (
+        <AddPlaceModal
+          visible={!!addPlaceCoord}
+          onClose={() => setAddPlaceCoord(null)}
+          onSubmit={async (data) => {
+            await addPlaceRequest(data);
+            setAddPlaceCoord(null);
+          }}
+          latitude={addPlaceCoord.latitude}
+          longitude={addPlaceCoord.longitude}
+        />
+      )}
+
       {/* ── Category Bar (Bottom) ── */}
       <View style={styles.categoryBar}>
         <ScrollView
@@ -362,7 +438,7 @@ export default function MapScreen() {
           {categories.map((cat) => {
             const count = stores.filter((s) => s.category === cat).length;
             const active = selectedCategory === cat;
-            const color = CATEGORY_COLORS[cat] || '#2E86AB';
+            const color = getCategoryStyle(categoryList, cat).color;
             return (
               <TouchableOpacity
                 key={cat}
@@ -377,7 +453,7 @@ export default function MapScreen() {
                 }
               >
                 <Text style={styles.categoryChipEmoji}>
-                  {CATEGORY_EMOJI[cat] || '📍'}
+                  {getCategoryStyle(categoryList, cat).emoji}
                 </Text>
                 <Text
                   style={[
@@ -435,7 +511,7 @@ export default function MapScreen() {
             </TouchableOpacity>
             <View style={styles.sheetTitleRow}>
               <Text style={styles.sheetTitleEmoji}>
-                {CATEGORY_EMOJI[selectedCategory ?? ''] ?? '📍'}
+                {getCategoryStyle(categoryList, selectedCategory ?? '').emoji}
               </Text>
               <View>
                 <Text style={styles.sheetTitle}>{selectedCategory}</Text>
@@ -480,7 +556,7 @@ export default function MapScreen() {
               </Text>
             </View>
             <Text style={styles.sidebarName}>{user?.name}</Text>
-            <Text style={styles.sidebarEmail}>{user?.email}</Text>
+            <Text style={styles.sidebarEmail}>{user?.id === 'guest' ? 'دخول كضيف' : user?.email}</Text>
             {user?.isAdmin && (
               <View style={styles.adminBadge}>
                 <Text style={styles.adminBadgeText}>مدير النظام 👑</Text>
@@ -506,13 +582,13 @@ export default function MapScreen() {
                   <View
                     style={[
                       styles.sidebarCatCount,
-                      { backgroundColor: (CATEGORY_COLORS[cat] || '#2E86AB') + '22' },
+                      { backgroundColor: (getCategoryStyle(categoryList, cat).color) + '22' },
                     ]}
                   >
                     <Text
                       style={[
                         styles.sidebarCatCountText,
-                        { color: CATEGORY_COLORS[cat] || '#2E86AB' },
+                        { color: getCategoryStyle(categoryList, cat).color },
                       ]}
                     >
                       {catCount}
@@ -522,7 +598,7 @@ export default function MapScreen() {
                     <Text style={styles.sidebarCatName}>{cat}</Text>
                   </View>
                   <Text style={styles.sidebarCatEmoji}>
-                    {CATEGORY_EMOJI[cat] || '📍'}
+                    {getCategoryStyle(categoryList, cat).emoji}
                   </Text>
                 </TouchableOpacity>
               );
@@ -559,12 +635,12 @@ export default function MapScreen() {
                 styles.storeModalHeader,
                 {
                   backgroundColor:
-                    CATEGORY_COLORS[selectedStore.category] || '#2E86AB',
+                    getCategoryStyle(categoryList, selectedStore.category).color,
                 },
               ]}
             >
               <Text style={styles.storeModalEmoji}>
-                {CATEGORY_EMOJI[selectedStore.category] || '📍'}
+                {getCategoryStyle(categoryList, selectedStore.category).emoji}
               </Text>
               <TouchableOpacity
                 style={styles.closeModalBtn}
@@ -605,6 +681,45 @@ export default function MapScreen() {
                   📞 {selectedStore.phone}
                 </Text>
               )}
+              {user?.isAdmin && (
+                <View style={styles.storeModalActions}>
+                  <TouchableOpacity
+                    style={styles.storeModalEditBtn}
+                    onPress={() => {
+                      setSelectedStore(null);
+                      router.push({
+                        pathname: '/(main)/admin',
+                        params: { editStoreId: selectedStore.id },
+                      });
+                    }}
+                  >
+                    <Text style={styles.storeModalEditBtnText}>✏️ تعديل البيانات</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.storeModalDeleteBtn}
+                    onPress={() => {
+                      Alert.alert(
+                        'حذف المتجر',
+                        `هل أنت متأكد من حذف "${selectedStore.name}"؟`,
+                        [
+                          { text: 'إلغاء', style: 'cancel' },
+                          {
+                            text: 'حذف',
+                            style: 'destructive',
+                            onPress: async () => {
+                              await deleteStore(selectedStore.id);
+                              setSelectedStore(null);
+                              Alert.alert('تم', 'تم حذف المتجر');
+                            },
+                          },
+                        ]
+                      );
+                    }}
+                  >
+                    <Text style={styles.storeModalDeleteBtnText}>🗑️ حذف المتجر</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -622,8 +737,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#2E86AB',
     paddingVertical: 14, paddingHorizontal: 20,
     alignItems: 'center', zIndex: 100,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2, shadowRadius: 6, elevation: 8,
+    ...shadow({ offset: { width: 0, height: 3 }, opacity: 0.2, radius: 6, elevation: 8 }),
   },
   bannerText: { color: '#fff', fontSize: 18, fontWeight: '700', textAlign: 'center' },
 
@@ -636,16 +750,14 @@ const styles = StyleSheet.create({
   iconBtn: {
     width: 44, height: 44, borderRadius: 22,
     backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15, shadowRadius: 6, elevation: 4,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
   },
   menuIcon: { fontSize: 22, color: '#1A3A5C' },
   statusPill: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#fff', borderRadius: 20,
     paddingHorizontal: 14, paddingVertical: 8,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15, shadowRadius: 6, elevation: 4,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
   },
   statusDot: { width: 9, height: 9, borderRadius: 5, marginLeft: 6 },
   statusText: { fontSize: 13, color: '#1A3A5C', fontWeight: '600' },
@@ -654,16 +766,14 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: 110, right: 14,
     width: 46, height: 46, borderRadius: 23,
     backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15, shadowRadius: 6, elevation: 4,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
   },
   centerBtnText: { fontSize: 22 },
 
   markerContainer: {
     width: 38, height: 38, borderRadius: 19,
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3, shadowRadius: 4, elevation: 4,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.3, radius: 4, elevation: 4 }),
     borderWidth: 2, borderColor: '#fff',
   },
   markerEmoji: { fontSize: 18 },
@@ -674,8 +784,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     paddingVertical: 12,
     paddingBottom: Platform.OS === 'ios' ? 28 : 14,
-    shadowColor: '#000', shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.1, shadowRadius: 8, elevation: 10,
+    ...shadow({ offset: { width: 0, height: -3 }, opacity: 0.1, radius: 8, elevation: 10 }),
   },
   categoryBarContent: { paddingHorizontal: 14, gap: 8 },
   categoryChip: {
@@ -698,12 +807,56 @@ const styles = StyleSheet.create({
   sheetOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.3)',
   },
+  tapOptionsSheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 40,
+    ...shadow({ offset: { width: 0, height: -4 }, opacity: 0.15, radius: 12, elevation: 20 }),
+  },
+  tapOptionsHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D5DB',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  tapOptionsTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1A3A5C',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  tapOptionBtn: {
+    backgroundColor: '#2E86AB',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  tapOptionBtnSecondary: {
+    backgroundColor: '#F3F4F6',
+  },
+  tapOptionBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  tapOptionBtnTextSecondary: { color: '#1A3A5C', fontSize: 16, fontWeight: '600' },
+  tapOptionCancel: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  tapOptionCancelText: { color: '#6B7280', fontSize: 14 },
   sheet: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     maxHeight: '65%',
-    shadowColor: '#000', shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15, shadowRadius: 12, elevation: 20,
+    ...shadow({ offset: { width: 0, height: -4 }, opacity: 0.15, radius: 12, elevation: 20 }),
   },
   sheetHandle: {
     width: 40, height: 4, borderRadius: 2,
@@ -733,8 +886,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#F8FAFC', borderRadius: 14,
     padding: 14, marginBottom: 10,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
+    ...shadow({ offset: { width: 0, height: 1 }, opacity: 0.06, radius: 4, elevation: 2 }),
   },
   catStoreLeft: { marginLeft: 12 },
   catStoreDistanceBadge: {
@@ -756,8 +908,7 @@ const styles = StyleSheet.create({
   sidebar: {
     position: 'absolute', right: 0, top: 0, bottom: 0, width: '80%',
     backgroundColor: '#fff',
-    shadowColor: '#000', shadowOffset: { width: -4, height: 0 },
-    shadowOpacity: 0.2, shadowRadius: 12, elevation: 20,
+    ...shadow({ offset: { width: -4, height: 0 }, opacity: 0.2, radius: 12, elevation: 20 }),
   },
   sidebarHeader: {
     backgroundColor: '#2E86AB', padding: 24,
@@ -810,8 +961,7 @@ const styles = StyleSheet.create({
   storeModal: {
     backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
     overflow: 'hidden',
-    shadowColor: '#000', shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15, shadowRadius: 12, elevation: 20,
+    ...shadow({ offset: { width: 0, height: -4 }, opacity: 0.15, radius: 12, elevation: 20 }),
   },
   storeModalHeader: {
     height: 90, alignItems: 'center', justifyContent: 'center', position: 'relative',
@@ -845,4 +995,15 @@ const styles = StyleSheet.create({
     lineHeight: 22, marginBottom: 10,
   },
   storeModalPhone: { fontSize: 14, color: '#374151', fontWeight: '600' },
+  storeModalActions: { flexDirection: 'row', gap: 10, marginTop: 16, alignSelf: 'stretch', justifyContent: 'flex-start' },
+  storeModalEditBtn: {
+    flex: 1, backgroundColor: '#2E86AB', borderRadius: 12,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  storeModalEditBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  storeModalDeleteBtn: {
+    flex: 1, backgroundColor: '#FEE2E2', borderRadius: 12,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  storeModalDeleteBtnText: { color: '#DC2626', fontSize: 14, fontWeight: '700' },
 });
