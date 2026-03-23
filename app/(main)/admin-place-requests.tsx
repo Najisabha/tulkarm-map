@@ -272,7 +272,9 @@ export default function AdminPlaceRequestsScreen() {
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>الفئة</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {categories.map((cat) => (
+                {[...categories]
+                  .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+                  .map((cat) => (
                   <TouchableOpacity key={cat.id} style={[styles.categoryChip, form.category === cat.name && styles.categoryChipActive]} onPress={() => setForm((p) => ({ ...p, category: cat.name }))}>
                     <Text style={[styles.categoryChipText, form.category === cat.name && styles.categoryChipTextActive]}>{cat.emoji} {cat.name}</Text>
                   </TouchableOpacity>
@@ -319,7 +321,9 @@ export default function AdminPlaceRequestsScreen() {
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>الفئة</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {categories.map((cat) => (
+                  {[...categories]
+                  .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+                  .map((cat) => (
                     <TouchableOpacity key={cat.id} style={[styles.categoryChip, editForm.category === cat.name && styles.categoryChipActive]} onPress={() => setEditForm((p) => ({ ...p, category: cat.name }))}>
                       <Text style={[styles.categoryChipText, editForm.category === cat.name && styles.categoryChipTextActive]}>{cat.emoji} {cat.name}</Text>
                     </TouchableOpacity>

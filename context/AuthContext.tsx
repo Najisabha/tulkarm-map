@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api } from '../api/client';
+import { USE_API } from '../api/config';
 
 export interface User {
   id: string;
   name: string;
   email: string;
-  password: string;
+  password?: string;
   isAdmin: boolean;
   createdAt: string;
 }
@@ -45,7 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     loadCurrentUser();
-    ensureAdminExists();
+    if (!USE_API) ensureAdminExists();
   }, []);
 
   const ensureAdminExists = async () => {
@@ -66,7 +68,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const userJson = await AsyncStorage.getItem('currentUser');
       if (userJson) {
-        setUser(JSON.parse(userJson));
+        const u = JSON.parse(userJson);
+        setUser({ ...u, password: undefined });
       }
     } catch (error) {
       console.error('Error loading user:', error);
@@ -77,6 +80,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string): Promise<{ success: boolean; message: string }> => {
     try {
+      if (USE_API) {
+        const res = await api.login(email, password);
+        if (!res.success || !res.user) {
+          return { success: false, message: res.message || 'فشل تسجيل الدخول' };
+        }
+        const u = res.user as { id: string; name: string; email: string; isAdmin: boolean; createdAt: string };
+        const savedUser: User = {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          isAdmin: u.isAdmin,
+          createdAt: u.createdAt,
+        };
+        await AsyncStorage.setItem('currentUser', JSON.stringify(savedUser));
+        setUser(savedUser);
+        return { success: true, message: 'تم تسجيل الدخول بنجاح' };
+      }
       const usersJson = await AsyncStorage.getItem('users');
       const users: User[] = usersJson ? JSON.parse(usersJson) : [];
       const foundUser = users.find(
@@ -85,11 +105,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!foundUser) {
         return { success: false, message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' };
       }
-      await AsyncStorage.setItem('currentUser', JSON.stringify(foundUser));
-      setUser(foundUser);
+      const { password: _, ...safeUser } = foundUser;
+      await AsyncStorage.setItem('currentUser', JSON.stringify(safeUser));
+      setUser(safeUser);
       return { success: true, message: 'تم تسجيل الدخول بنجاح' };
-    } catch (error) {
-      return { success: false, message: 'حدث خطأ، يرجى المحاولة مرة أخرى' };
+    } catch (error: any) {
+      return { success: false, message: error?.message || 'حدث خطأ، يرجى المحاولة مرة أخرى' };
     }
   };
 
@@ -110,14 +131,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: false, message: 'صيغة البريد الإلكتروني غير صحيحة' };
       }
 
+      if (USE_API) {
+        const res = await api.register(name, email, password);
+        if (!res.success || !res.user) {
+          return { success: false, message: res.message || 'فشل إنشاء الحساب' };
+        }
+        const u = res.user as { id: string; name: string; email: string; isAdmin: boolean; createdAt: string };
+        const savedUser: User = {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          isAdmin: u.isAdmin,
+          createdAt: u.createdAt,
+        };
+        await AsyncStorage.setItem('currentUser', JSON.stringify(savedUser));
+        setUser(savedUser);
+        return { success: true, message: 'تم إنشاء الحساب بنجاح' };
+      }
+
       const usersJson = await AsyncStorage.getItem('users');
       const users: User[] = usersJson ? JSON.parse(usersJson) : [];
-
       const emailExists = users.some((u) => u.email.toLowerCase() === email.toLowerCase());
       if (emailExists) {
         return { success: false, message: 'هذا البريد الإلكتروني مسجل مسبقاً' };
       }
-
       const newUser: User = {
         id: `user-${Date.now()}`,
         name: name.trim(),
@@ -126,15 +163,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAdmin: false,
         createdAt: new Date().toISOString(),
       };
-
       users.push(newUser);
       await AsyncStorage.setItem('users', JSON.stringify(users));
-      await AsyncStorage.setItem('currentUser', JSON.stringify(newUser));
-      setUser(newUser);
-
+      const { password: _, ...safeUser } = newUser;
+      await AsyncStorage.setItem('currentUser', JSON.stringify(safeUser));
+      setUser(safeUser);
       return { success: true, message: 'تم إنشاء الحساب بنجاح' };
-    } catch (error) {
-      return { success: false, message: 'حدث خطأ، يرجى المحاولة مرة أخرى' };
+    } catch (error: any) {
+      return { success: false, message: error?.message || 'حدث خطأ، يرجى المحاولة مرة أخرى' };
     }
   };
 

@@ -1,27 +1,27 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  ScrollView,
-  Animated,
-  Platform,
-  FlatList,
-  Alert,
-  Linking,
-} from 'react-native';
-import { MapView, Marker, Circle, PROVIDER_GOOGLE } from '../../components/MapWrapper';
-import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
 import * as Location from 'expo-location';
-import { useAuth } from '../../context/AuthContext';
-import { useStores, Store } from '../../context/StoreContext';
-import { useCategories } from '../../context/CategoryContext';
-import { AddPlaceModal } from '../../components/AddPlaceModal';
-import { startGeofencing, isInsideTulkarm, TULKARM_REGION } from '../../utils/geofencing';
-import { shadow } from '../../utils/shadowStyles';
 import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  Animated,
+  FlatList,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { AddPlaceModal } from '../../components/AddPlaceModal';
+import { Circle, MapView, Marker, PROVIDER_GOOGLE } from '../../components/MapWrapper';
+import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
+import { useAuth } from '../../context/AuthContext';
+import { useCategories } from '../../context/CategoryContext';
+import { Store, useStores } from '../../context/StoreContext';
+import { isInsideTulkarm, startGeofencing, TULKARM_REGION } from '../../utils/geofencing';
+import { shadow } from '../../utils/shadowStyles';
 
 function getCategoryStyle(categories: { name: string; emoji: string; color: string }[], name: string) {
   const c = categories.find((x) => x.name === name);
@@ -164,7 +164,7 @@ export default function MapScreen() {
     );
   };
 
-  const NEAR_STORE_METERS = 80;
+  const NEAR_STORE_METERS = 2; // الحد الأدنى بين المتاجر:2 أمتار
 
   const handleMapPress = useCallback(
     (e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) => {
@@ -688,7 +688,7 @@ export default function MapScreen() {
                     onPress={() => {
                       setSelectedStore(null);
                       router.push({
-                        pathname: '/(main)/admin',
+                        pathname: '/(main)/admin-stores',
                         params: { editStoreId: selectedStore.id },
                       });
                     }}

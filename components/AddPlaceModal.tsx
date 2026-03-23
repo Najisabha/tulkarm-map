@@ -173,8 +173,15 @@ export function AddPlaceModal({
             />
 
             <Text style={styles.label}>الفئة</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catRow}>
-              {categories.map((c) => (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.catRow}
+              contentContainerStyle={styles.catRowContent}
+            >
+              {[...categories]
+                .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+                .map((c) => (
                 <TouchableOpacity
                   key={c.id}
                   style={[styles.catChip, category === c.name && [styles.catChipActive, { backgroundColor: c.color }]]}
@@ -287,13 +294,13 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
   },
   textarea: { minHeight: 80 },
-  catRow: { marginBottom: 16, flexDirection: 'row-reverse' },
+  catRow: { marginBottom: 16 },
+  catRowContent: { flexDirection: 'row-reverse', gap: 8, paddingVertical: 4 },
   catChip: {
     backgroundColor: '#E5E7EB',
     borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    marginLeft: 8,
   },
   catChipActive: { backgroundColor: '#2E86AB' },
   catText: { fontSize: 14, fontWeight: '600', color: '#374151' },

@@ -1,21 +1,21 @@
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  ScrollView,
-  Alert,
-  Modal,
-  Platform,
+    Alert,
+    Modal,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { PRESET_COLORS } from '../../constants/categoryColors';
 import { useAuth } from '../../context/AuthContext';
-import { useCategories, Category } from '../../context/CategoryContext';
+import { Category, useCategories } from '../../context/CategoryContext';
 import { useStores } from '../../context/StoreContext';
 import { shadow } from '../../utils/shadowStyles';
-import { PRESET_COLORS } from '../../constants/categoryColors';
 
 export default function AdminCategoriesScreen() {
   const router = useRouter();
@@ -26,6 +26,7 @@ export default function AdminCategoriesScreen() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [categoryForm, setCategoryForm] = useState({ name: '', emoji: '📍', color: '#2E86AB' });
+  const [searchQuery, setSearchQuery] = useState('');
 
   if (!user?.isAdmin) {
     return (
@@ -113,22 +114,42 @@ export default function AdminCategoriesScreen() {
       <View style={styles.content}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>الفئات</Text>
-          <TouchableOpacity style={styles.addCategoryBtn} onPress={openAddCategory}>
-            <Text style={styles.addCategoryBtnText}>+ إضافة فئة</Text>
-          </TouchableOpacity>
-        </View>
-
-        {categories.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateEmoji}>📁</Text>
-            <Text style={styles.emptyStateText}>لا توجد فئات بعد</Text>
-            <TouchableOpacity style={styles.emptyStateBtn} onPress={openAddCategory}>
-              <Text style={styles.emptyStateBtnText}>إضافة أول فئة</Text>
+          <View style={styles.headerActions}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="بحث عن فئة..."
+              placeholderTextColor="#9CA3AF"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              textAlign="right"
+            />
+            <TouchableOpacity style={styles.addCategoryBtn} onPress={openAddCategory}>
+              <Text style={styles.addCategoryBtnText}>+ إضافة فئة</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-            {categories.map((cat) => {
+        </View>
+
+        {(() => {
+          const q = searchQuery.trim().toLowerCase();
+          const filtered = (q
+            ? categories.filter((c) => c.name.toLowerCase().includes(q))
+            : categories
+          ).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+          return filtered.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateEmoji}>{q ? '🔍' : '📁'}</Text>
+              <Text style={styles.emptyStateText}>
+                {q ? `لا توجد فئات تحتوي على "${searchQuery}"` : 'لا توجد فئات بعد'}
+              </Text>
+              {!q && (
+                <TouchableOpacity style={styles.emptyStateBtn} onPress={openAddCategory}>
+                  <Text style={styles.emptyStateBtnText}>إضافة أول فئة</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+              {filtered.map((cat) => {
               const storeCount = stores.filter((s) => s.category === cat.name).length;
               return (
                 <View
@@ -168,8 +189,9 @@ export default function AdminCategoriesScreen() {
                 </View>
               );
             })}
-          </ScrollView>
-        )}
+            </ScrollView>
+          );
+        })()}
       </View>
 
       {/* Category Modal */}
@@ -269,6 +291,19 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1A3A5C', textAlign: 'right' },
+  headerActions: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10, flex: 1 },
+  searchInput: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#1F2937',
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    minWidth: 120,
+  },
   addCategoryBtn: {
     backgroundColor: '#2E86AB',
     borderRadius: 10,
@@ -277,7 +312,12 @@ const styles = StyleSheet.create({
   },
   addCategoryBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   list: { flex: 1 },
-  listContent: { paddingBottom: 40 },
+  listContent: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingBottom: 40,
+  },
   emptyState: {
     flex: 1,
     alignItems: 'center',
@@ -294,11 +334,12 @@ const styles = StyleSheet.create({
   },
   emptyStateBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   categoryCard: {
+    width: '31%',
     backgroundColor: '#fff',
     borderRadius: 14,
     padding: 14,
-    marginBottom: 12,
     borderWidth: 2,
+    minWidth: 100,
     ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.08, radius: 6, elevation: 2 }),
   },
   categoryCardIcon: {
@@ -317,7 +358,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   categoryCardCount: { fontSize: 12, color: '#6B7280', marginTop: 2, textAlign: 'right' },
-  categoryCardActions: { flexDirection: 'row-reverse', gap: 8, marginTop: 10 },
+  categoryCardActions: { flexDirection: 'column', gap: 8, marginTop: 10, alignItems: 'stretch' },
   categoryActionBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
   categoryActionText: { fontSize: 13, fontWeight: '600' },
   categoryActionBtnDel: {

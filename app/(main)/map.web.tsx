@@ -247,7 +247,7 @@ export default function MapScreenWeb() {
                     style={styles.storeModalEditBtn}
                     onPress={() => {
                       setSelectedStore(null);
-                      router.push({ pathname: '/(main)/admin', params: { editStoreId: selectedStore.id } });
+                      router.push({ pathname: '/(main)/admin-stores', params: { editStoreId: selectedStore.id } });
                     }}
                   >
                     <Text style={styles.storeModalEditBtnText}>✏️ تعديل البيانات</Text>

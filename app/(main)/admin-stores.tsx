@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
   KeyboardAvoidingView,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { useStores, Store } from '../../context/StoreContext';
 import { useCategories } from '../../context/CategoryContext';
@@ -25,6 +25,7 @@ function catEmoji(cats: { name: string; emoji: string }[], name: string) {
 
 export default function AdminStoresScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ editStoreId?: string }>();
   const { user } = useAuth();
   const { categories } = useCategories();
   const { stores, addStore, updateStore, deleteStore } = useStores();
@@ -41,6 +42,25 @@ export default function AdminStoresScreen() {
     lat: String(TULKARM_REGION.latitude),
     lng: String(TULKARM_REGION.longitude),
   });
+
+  useEffect(() => {
+    const id = params.editStoreId;
+    if (id && stores.length > 0) {
+      const store = stores.find((s) => s.id === id);
+      if (store) {
+        setEditingStore(store);
+        setEditForm({
+          name: store.name,
+          description: store.description,
+          category: store.category,
+          phone: store.phone ?? '',
+          lat: String(store.latitude),
+          lng: String(store.longitude),
+        });
+        router.setParams({ editStoreId: undefined });
+      }
+    }
+  }, [params.editStoreId, stores]);
 
   if (!user?.isAdmin) {
     return (
@@ -204,7 +224,9 @@ export default function AdminStoresScreen() {
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>الفئة</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {categories.map((cat) => (
+                {[...categories]
+                  .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+                  .map((cat) => (
                   <TouchableOpacity key={cat.id} style={[styles.categoryChip, form.category === cat.name && styles.categoryChipActive]} onPress={() => setForm((p) => ({ ...p, category: cat.name }))}>
                     <Text style={[styles.categoryChipText, form.category === cat.name && styles.categoryChipTextActive]}>{cat.emoji} {cat.name}</Text>
                   </TouchableOpacity>
@@ -251,7 +273,9 @@ export default function AdminStoresScreen() {
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>الفئة</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {categories.map((cat) => (
+                  {[...categories]
+                  .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+                  .map((cat) => (
                     <TouchableOpacity key={cat.id} style={[styles.categoryChip, editForm.category === cat.name && styles.categoryChipActive]} onPress={() => setEditForm((p) => ({ ...p, category: cat.name }))}>
                       <Text style={[styles.categoryChipText, editForm.category === cat.name && styles.categoryChipTextActive]}>{cat.emoji} {cat.name}</Text>
                     </TouchableOpacity>

@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api } from '../api/client';
+import { USE_API } from '../api/config';
 
 export interface Category {
   id: string;
@@ -38,6 +40,18 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
 
   const loadCategories = async () => {
     try {
+      if (USE_API) {
+        const list = await api.getCategories();
+        setCategories(
+          list.map((c) => ({
+            id: c.id,
+            name: c.name,
+            emoji: c.emoji,
+            color: c.color,
+          }))
+        );
+        return;
+      }
       const json = await AsyncStorage.getItem(CATEGORIES_KEY);
       if (json) {
         const list = JSON.parse(json);
@@ -56,6 +70,18 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
   };
 
   const addCategory = async (cat: Omit<Category, 'id'>) => {
+    if (USE_API) {
+      const newCat = await api.addCategory({
+        name: cat.name,
+        emoji: cat.emoji,
+        color: cat.color,
+      });
+      setCategories((prev) => [
+        ...prev,
+        { id: newCat.id, name: newCat.name, emoji: newCat.emoji, color: newCat.color },
+      ]);
+      return;
+    }
     const newCat: Category = {
       ...cat,
       id: `cat-${Date.now()}`,
@@ -64,9 +90,14 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateCategory = async (id: string, updates: Partial<Omit<Category, 'id'>>) => {
-    const list = categories.map((c) =>
-      c.id === id ? { ...c, ...updates } : c
-    );
+    if (USE_API) {
+      const updated = await api.updateCategory(id, updates) as Category;
+      setCategories((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, ...updated } : c))
+      );
+      return;
+    }
+    const list = categories.map((c) => (c.id === id ? { ...c, ...updates } : c));
     await saveCategories(list);
   };
 
@@ -75,6 +106,15 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     if (!cat) return { success: false, message: 'الفئة غير موجودة' };
     if (categories.length <= 1) {
       return { success: false, message: 'يجب وجود فئة واحدة على الأقل' };
+    }
+    if (USE_API) {
+      try {
+        await api.deleteCategory(id);
+        setCategories((prev) => prev.filter((c) => c.id !== id));
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, message: e?.message };
+      }
     }
     await saveCategories(categories.filter((c) => c.id !== id));
     return { success: true };
