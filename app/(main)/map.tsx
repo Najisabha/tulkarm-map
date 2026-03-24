@@ -15,9 +15,11 @@ import {
   View,
 } from 'react-native';
 import { AddPlaceModal } from '../../components/AddPlaceModal';
+import { ReportModal } from '../../components/ReportModal';
 import { Circle, MapView, Marker, PROVIDER_GOOGLE } from '../../components/MapWrapper';
 import { LAYOUT } from '../../constants/layout';
 import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
+import { USE_API } from '../../api/config';
 import { useAuth } from '../../context/AuthContext';
 import { useCategories } from '../../context/CategoryContext';
 import { Store, useStores } from '../../context/StoreContext';
@@ -69,6 +71,7 @@ export default function MapScreen() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [tappedCoord, setTappedCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [addPlaceCoord, setAddPlaceCoord] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   const bannerAnim = useRef(new Animated.Value(-100)).current;
   const [bannerMessage, setBannerMessage] = useState('');
@@ -693,6 +696,14 @@ export default function MapScreen() {
                   📞 {selectedStore.phone}
                 </Text>
               )}
+              {USE_API && (
+                <TouchableOpacity
+                  style={styles.storeModalReportBtn}
+                  onPress={() => setShowReportModal(true)}
+                >
+                  <Text style={styles.storeModalReportBtnText}>⚠️ الإبلاغ عن هذا المكان</Text>
+                </TouchableOpacity>
+              )}
               {user?.isAdmin && (
                 <View style={styles.storeModalActions}>
                   <TouchableOpacity
@@ -736,6 +747,15 @@ export default function MapScreen() {
           </View>
         )}
       </Modal>
+
+      {selectedStore && (
+        <ReportModal
+          visible={showReportModal}
+          storeId={selectedStore.id}
+          storeName={selectedStore.name}
+          onClose={() => setShowReportModal(false)}
+        />
+      )}
     </View>
   );
 }
@@ -1014,6 +1034,14 @@ const styles = StyleSheet.create({
   },
   storeModalPhone: { fontSize: 14, color: '#374151', fontWeight: '600' },
   storeModalActions: { flexDirection: 'row', gap: 10, marginTop: 16, alignSelf: 'stretch', justifyContent: 'flex-start' },
+  storeModalReportBtn: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  storeModalReportBtnText: { color: '#B45309', fontSize: 14, fontWeight: '700' },
   storeModalEditBtn: {
     flex: 1, backgroundColor: '#2E86AB', borderRadius: 12,
     paddingVertical: 12, alignItems: 'center',

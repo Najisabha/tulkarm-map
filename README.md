@@ -85,6 +85,12 @@ PORT=3000
 npm run init-db
 ```
 
+إذا كانت لديك قاعدة بيانات قديمة، شغّل الترحيل لإضافة الجداول الجديدة:
+
+```bash
+npm run migrate
+```
+
 ثم شغّل الخادم:
 
 ```bash
@@ -118,6 +124,18 @@ npx expo start
 ```
 
 سيتصل التطبيق الآن بـ PostgreSQL عبر الخادم. حساب المدير الافتراضي: `admin@tulkarm.com` / `admin123`
+
+### نشر الخادم على Vercel (للوصول من أي جهاز)
+
+1. اربط المستودع بـ [Vercel](https://vercel.com) وأنشئ مشروعاً جديداً
+2. في إعدادات المشروع:
+   - **Root Directory:** `server`
+   - **Environment Variables:** أضف `DATABASE_URL` = رابط Neon من [لوحة Neon](https://console.neon.tech)
+3. بعد النشر، استخدم الرابط (مثل `https://tulkarm-map.vercel.app`) في `.env`:
+   ```
+   EXPO_PUBLIC_API_URL=https://tulkarm-map.vercel.app
+   EXPO_PUBLIC_USE_API=true
+   ```
 
 ---
 
@@ -169,6 +187,11 @@ npx expo start
 | `/(main)/admin-stores` | `admin-stores.tsx` | إدارة المتاجر |
 | `/(main)/admin-categories` | `admin-categories.tsx` | إدارة الفئات |
 | `/(main)/admin-place-requests` | `admin-place-requests.tsx` | إدارة طلبات الأماكن |
+| `/(main)/admin-users` | `admin-users.tsx` | إدارة المستخدمين |
+| `/(main)/admin-reports` | `admin-reports.tsx` | الإبلاغات |
+| `/(main)/admin-settings` | `admin-settings.tsx` | الإعدادات |
+| `/(main)/admin-activity` | `admin-activity.tsx` | سجل النشاط |
+| `/(main)/admin-backup` | `admin-backup.tsx` | النسخ الاحتياطي والاستيراد |
 
 ---
 

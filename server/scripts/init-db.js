@@ -72,6 +72,42 @@ CREATE TABLE IF NOT EXISTS place_requests (
 
 -- فهرس للبحث حسب الموقع
 CREATE INDEX IF NOT EXISTS idx_stores_location ON stores(latitude, longitude);
+
+-- جدول الإبلاغات
+CREATE TABLE IF NOT EXISTS reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id UUID REFERENCES stores(id) ON DELETE CASCADE,
+  reported_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  reason VARCHAR(50) NOT NULL,
+  details TEXT,
+  status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending','resolved','dismissed')),
+  resolved_at TIMESTAMPTZ,
+  resolved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- جدول سجل النشاط
+CREATE TABLE IF NOT EXISTS activity_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action VARCHAR(50) NOT NULL,
+  entity_type VARCHAR(50) NOT NULL,
+  entity_id VARCHAR(100),
+  details JSONB DEFAULT '{}',
+  actor_name VARCHAR(255),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- جدول إعدادات التطبيق
+CREATE TABLE IF NOT EXISTS app_settings (
+  key VARCHAR(100) PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+INSERT INTO app_settings (key, value) VALUES
+  ('maintenance_mode', 'false'),
+  ('welcome_message', '"مرحباً بكم في خريطة طولكرم"')
+ON CONFLICT (key) DO NOTHING;
 `;
 
 async function init() {

@@ -9,6 +9,17 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+async function logActivity(action, entityType, entityId, details = {}) {
+  try {
+    await pool.query(
+      'INSERT INTO activity_log (action, entity_type, entity_id, details) VALUES ($1, $2, $3, $4)',
+      [action, entityType, entityId || null, JSON.stringify(details)]
+    );
+  } catch (e) {
+    console.error('logActivity:', e.message);
+  }
+}
+
 // ============ المستخدمون ============
 
 // تسجيل الدخول
@@ -99,6 +110,7 @@ app.post('/api/categories', async (req, res) => {
       'INSERT INTO categories (name, emoji, color) VALUES ($1, $2, $3) RETURNING *',
       [name, emoji || '📍', color || '#2E86AB']
     );
+    logActivity('add', 'category', rows[0].id, { name });
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -122,6 +134,7 @@ app.patch('/api/categories/:id', async (req, res) => {
       values
     );
     if (rows.length === 0) return res.status(404).json({ error: 'الفئة غير موجودة' });
+    logActivity('update', 'category', id, req.body);
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -130,8 +143,9 @@ app.patch('/api/categories/:id', async (req, res) => {
 
 app.delete('/api/categories/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query('DELETE FROM categories WHERE id = $1 RETURNING id', [req.params.id]);
+    const { rows } = await pool.query('DELETE FROM categories WHERE id = $1 RETURNING id, name', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'الفئة غير موجودة' });
+    logActivity('delete', 'category', req.params.id, { name: rows[0].name });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -194,6 +208,7 @@ app.post('/api/stores', async (req, res) => {
       [name, description, cat[0].id, latitude, longitude, phone || null, JSON.stringify(photos || []), JSON.stringify(videos || [])]
     );
     const r = rows[0];
+    logActivity('add', 'store', r.id, { name: r.name });
     res.json({
       id: r.id,
       name: r.name,
@@ -241,6 +256,7 @@ app.patch('/api/stores/:id', async (req, res) => {
     if (rows.length === 0) return res.status(404).json({ error: 'المتجر غير موجود' });
     const r = rows[0];
     const { rows: cr } = await pool.query('SELECT name FROM categories WHERE id = $1', [r.category_id]);
+    logActivity('update', 'store', id, { name: r.name });
     res.json({
       id: r.id,
       name: r.name,
@@ -260,8 +276,9 @@ app.patch('/api/stores/:id', async (req, res) => {
 
 app.delete('/api/stores/:id', async (req, res) => {
   try {
-    const { rowCount } = await pool.query('DELETE FROM stores WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'المتجر غير موجود' });
+    const { rows } = await pool.query('DELETE FROM stores WHERE id = $1 RETURNING name', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'المتجر غير موجود' });
+    logActivity('delete', 'store', req.params.id, { name: rows[0].name });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -423,6 +440,7 @@ app.post('/api/place-requests/:id/accept', async (req, res) => {
       [name, description, categoryId, latitude, longitude, phone, JSON.stringify(photos), JSON.stringify(videos)]
     );
     await pool.query('UPDATE place_requests SET status = $1 WHERE id = $2', ['accepted', id]);
+    logActivity('accept', 'place_request', id, { name });
 
     const { rows: cr } = await pool.query('SELECT name FROM categories WHERE id = $1', [categoryId]);
     res.json({
@@ -445,11 +463,12 @@ app.post('/api/place-requests/:id/accept', async (req, res) => {
 
 app.post('/api/place-requests/:id/reject', async (req, res) => {
   try {
-    const { rowCount } = await pool.query(
-      'UPDATE place_requests SET status = $1 WHERE id = $2',
-      ['rejected', req.params.id]
+    const { rows } = await pool.query(
+      "UPDATE place_requests SET status = 'rejected' WHERE id = $1 RETURNING name",
+      [req.params.id]
     );
-    if (rowCount === 0) return res.status(404).json({ error: 'الطلب غير موجود' });
+    if (rows.length === 0) return res.status(404).json({ error: 'الطلب غير موجود' });
+    logActivity('reject', 'place_request', req.params.id, { name: rows[0].name });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -466,6 +485,272 @@ app.post('/api/place-requests/update-category', async (req, res) => {
       [oldName, newName]
     );
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ المستخدمون (للإدارة) ============
+
+app.get('/api/users', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, email, is_admin, created_at FROM users ORDER BY created_at DESC'
+    );
+    res.json(rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      isAdmin: r.is_admin,
+      createdAt: r.created_at,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isAdmin } = req.body;
+    if (typeof isAdmin !== 'boolean') {
+      return res.status(400).json({ error: 'isAdmin مطلوب' });
+    }
+    const { rowCount } = await pool.query(
+      'UPDATE users SET is_admin = $1 WHERE id = $2',
+      [isAdmin, id]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: 'المستخدم غير موجود' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'المستخدم غير موجود' });
+    if (rows[0].email === 'admin@tulkarm.com') {
+      return res.status(400).json({ error: 'لا يمكن حذف حساب المدير الافتراضي' });
+    }
+    await pool.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ الإبلاغات ============
+
+app.get('/api/reports', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.id, r.store_id, r.reason, r.details, r.status, r.created_at, s.name as store_name
+       FROM reports r
+       LEFT JOIN stores s ON r.store_id = s.id
+       ORDER BY r.created_at DESC`
+    );
+    res.json(rows.map((r) => ({
+      id: r.id,
+      storeId: r.store_id,
+      storeName: r.store_name,
+      reason: r.reason,
+      details: r.details,
+      status: r.status,
+      createdAt: r.created_at,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/reports', async (req, res) => {
+  try {
+    const { storeId, reason, details } = req.body;
+    if (!storeId || !reason) return res.status(400).json({ error: 'storeId و reason مطلوبان' });
+    const { rows } = await pool.query(
+      'INSERT INTO reports (store_id, reason, details) VALUES ($1, $2, $3) RETURNING id, store_id, reason, details, status, created_at',
+      [storeId, reason, details || null]
+    );
+    const r = rows[0];
+    res.json({ id: r.id, storeId: r.store_id, reason: r.reason, details: r.details, status: r.status, createdAt: r.created_at });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/reports/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!['pending', 'resolved', 'dismissed'].includes(status)) {
+      return res.status(400).json({ error: 'حالة غير صالحة' });
+    }
+    await pool.query(
+      'UPDATE reports SET status = $1, resolved_at = CASE WHEN $1 != $2 THEN now() ELSE resolved_at END WHERE id = $3',
+      [status, 'pending', id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ سجل النشاط ============
+
+app.get('/api/activity-log', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, action, entity_type, entity_id, details, created_at FROM activity_log ORDER BY created_at DESC LIMIT 100'
+    );
+    res.json(rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      entityType: r.entity_type,
+      entityId: r.entity_id,
+      details: r.details || {},
+      createdAt: r.created_at,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ إعدادات التطبيق ============
+
+app.get('/api/settings', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT key, value FROM app_settings');
+    const settings = { maintenance_mode: false, welcome_message: 'مرحباً بكم في خريطة طولكرم' };
+    rows.forEach((r) => { settings[r.key] = r.value; });
+    res.json(settings);
+  } catch (err) {
+    res.json({ maintenance_mode: false, welcome_message: 'مرحباً بكم في خريطة طولكرم' });
+  }
+});
+
+app.patch('/api/settings', async (req, res) => {
+  try {
+    const { maintenance_mode, welcome_message } = req.body;
+    if (typeof maintenance_mode === 'boolean') {
+      await pool.query(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES ('maintenance_mode', $1::jsonb, now()) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = now()",
+        [JSON.stringify(maintenance_mode)]
+      );
+    }
+    if (typeof welcome_message === 'string') {
+      await pool.query(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES ('welcome_message', $1::jsonb, now()) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = now()",
+        [JSON.stringify(welcome_message)]
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ إحصائيات الإدارة ============
+
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    let reports = 0;
+    try {
+      const r = await pool.query("SELECT COUNT(*) FROM reports WHERE status = 'pending'");
+      reports = parseInt(r.rows[0].count);
+    } catch {
+      reports = 0;
+    }
+    const [users, stores, categories, placeReqs, storesThisMonth, requestsThisWeek] = await Promise.all([
+      pool.query('SELECT COUNT(*) FROM users').then((r) => parseInt(r.rows[0].count)),
+      pool.query('SELECT COUNT(*) FROM stores').then((r) => parseInt(r.rows[0].count)),
+      pool.query('SELECT COUNT(*) FROM categories').then((r) => parseInt(r.rows[0].count)),
+      pool.query("SELECT COUNT(*) FROM place_requests WHERE status = 'pending'").then((r) => parseInt(r.rows[0].count)),
+      pool.query("SELECT COUNT(*) FROM stores WHERE created_at >= date_trunc('month', CURRENT_DATE)").then((r) => parseInt(r.rows[0].count)),
+      pool.query("SELECT COUNT(*) FROM place_requests WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'").then((r) => parseInt(r.rows[0].count)),
+    ]);
+    res.json({
+      users,
+      stores,
+      categories,
+      pendingPlaceRequests: placeReqs,
+      pendingReports: reports,
+      storesThisMonth,
+      requestsThisWeek,
+    });
+  } catch (err) {
+    res.json({
+      users: 0,
+      stores: 0,
+      categories: 0,
+      pendingPlaceRequests: 0,
+      pendingReports: 0,
+      storesThisMonth: 0,
+      requestsThisWeek: 0,
+    });
+  }
+});
+
+// ============ تصدير / استيراد ============
+
+app.get('/api/admin/export', async (req, res) => {
+  try {
+    const format = req.query.format || 'json';
+    const { rows: stores } = await pool.query(
+      `SELECT s.id, s.name, s.description, c.name as category, s.latitude, s.longitude, s.phone, s.photos, s.videos, s.created_at
+       FROM stores s JOIN categories c ON s.category_id = c.id ORDER BY s.created_at DESC`
+    );
+    const data = stores.map((r) => ({
+      name: r.name,
+      description: r.description,
+      category: r.category,
+      latitude: parseFloat(r.latitude),
+      longitude: parseFloat(r.longitude),
+      phone: r.phone,
+      photos: r.photos || [],
+      videos: r.videos || [],
+    }));
+    if (format === 'csv') {
+      const header = 'الاسم,الوصف,الفئة,خط العرض,خط الطول,الهاتف\n';
+      const rows = data.map((d) =>
+        `"${(d.name || '').replace(/"/g, '""')}","${(d.description || '').replace(/"/g, '""')}","${d.category}",${d.latitude},${d.longitude},"${d.phone || ''}"`
+      ).join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename=stores.csv');
+      return res.send('\ufeff' + header + rows);
+    }
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/import', async (req, res) => {
+  try {
+    const items = Array.isArray(req.body) ? req.body : req.body.items || [];
+    let created = 0;
+    for (const item of items) {
+      if (!item.name || !item.category) continue;
+      const { rows: cat } = await pool.query('SELECT id FROM categories WHERE name = $1', [item.category]);
+      if (cat.length === 0) continue;
+      await pool.query(
+        `INSERT INTO stores (name, description, category_id, latitude, longitude, phone, photos, videos)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          item.name,
+          item.description || '',
+          cat[0].id,
+          item.latitude ?? 32.31,
+          item.longitude ?? 35.03,
+          item.phone || null,
+          JSON.stringify(item.photos || []),
+          JSON.stringify(item.videos || []),
+        ]
+      );
+      created++;
+    }
+    res.json({ success: true, created });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

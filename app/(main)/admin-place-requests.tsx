@@ -55,6 +55,7 @@ export default function AdminPlaceRequestsScreen() {
     lng: String(TULKARM_REGION.longitude),
   });
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'accepted' | 'rejected'>('pending');
+  const [searchQuery, setSearchQuery] = useState('');
 
   React.useEffect(() => {
     if (categories.length > 0 && !form.category?.trim()) {
@@ -75,9 +76,17 @@ export default function AdminPlaceRequestsScreen() {
 
   const defaultCategory = categories[0]?.name ?? '';
 
-  const filtered = statusFilter === 'all'
+  const filtered = (statusFilter === 'all'
     ? placeRequests
-    : placeRequests.filter((r) => r.status === statusFilter);
+    : placeRequests.filter((r) => r.status === statusFilter)
+  ).filter((r) => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return true;
+    return r.name.toLowerCase().includes(q) ||
+      r.description.toLowerCase().includes(q) ||
+      r.category.toLowerCase().includes(q) ||
+      (r.phone || '').includes(q);
+  });
 
   const resetForm = () => {
     setForm({ name: '', description: '', category: defaultCategory, phone: '', lat: String(TULKARM_REGION.latitude), lng: String(TULKARM_REGION.longitude) });
@@ -182,13 +191,20 @@ export default function AdminPlaceRequestsScreen() {
 
       <View style={styles.content}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>الطلبات</Text>
+          <TextInput
+            style={styles.searchBar}
+            placeholder="بحث في الطلبات..."
+            placeholderTextColor="#9CA3AF"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            textAlign="right"
+          />
           <TouchableOpacity style={styles.addBtn} onPress={() => { setShowAddModal(true); resetForm(); }}>
-            <Text style={styles.addBtnText}>+ إضافة طلب</Text>
+            <Text style={styles.addBtnText}>+ إضافة</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.filterRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterRow}>
           {(['pending', 'accepted', 'rejected', 'all'] as const).map((s) => (
             <TouchableOpacity
               key={s}
@@ -200,13 +216,17 @@ export default function AdminPlaceRequestsScreen() {
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
 
         {filtered.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyStateEmoji}>📋</Text>
+            <Text style={styles.emptyStateEmoji}>{searchQuery.trim() ? '🔍' : '📋'}</Text>
             <Text style={styles.emptyStateText}>
-              {statusFilter === 'all' ? 'لا توجد طلبات' : `لا توجد طلبات ${STATUS_LABELS[statusFilter] ?? 'في هذه الفئة'}`}
+              {searchQuery.trim()
+                ? 'لا توجد نتائج للبحث'
+                : statusFilter === 'all'
+                  ? 'لا توجد طلبات'
+                  : `لا توجد طلبات ${STATUS_LABELS[statusFilter] ?? 'في هذه الفئة'}`}
             </Text>
             {statusFilter !== 'all' && (
               <TouchableOpacity style={styles.emptyStateBtn} onPress={() => setStatusFilter('all')}>
@@ -215,36 +235,38 @@ export default function AdminPlaceRequestsScreen() {
             )}
           </View>
         ) : (
-          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+          <ScrollView style={styles.list} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
             {filtered.map((req) => (
               <View key={req.id} style={[styles.requestCard, req.status === 'pending' && styles.requestCardPending]}>
                 <TouchableOpacity style={styles.requestInfo} onPress={() => req.status === 'pending' && openEdit(req)} activeOpacity={req.status === 'pending' ? 0.7 : 1}>
-                  <Text style={styles.requestName}>{req.name}</Text>
-                  <Text style={styles.requestDesc}>{req.description}</Text>
-                  <View style={styles.requestMeta}>
-                    <Text style={styles.requestCategory}>{catEmoji(categories, req.category)} {req.category}</Text>
+                  <View style={styles.requestHeader}>
+                    <Text style={styles.requestName} numberOfLines={1}>{req.name}</Text>
                     <View style={[styles.statusBadge, req.status === 'pending' && styles.statusPending, req.status === 'accepted' && styles.statusAccepted, req.status === 'rejected' && styles.statusRejected]}>
                       <Text style={styles.statusText}>{STATUS_LABELS[req.status]}</Text>
                     </View>
                   </View>
-                  {req.phone ? <Text style={styles.requestPhone}>📞 {req.phone}</Text> : null}
-                  <Text style={styles.requestCoords}>📌 {req.latitude.toFixed(5)}, {req.longitude.toFixed(5)}</Text>
+                  <Text style={styles.requestDesc} numberOfLines={1}>{req.description}</Text>
+                  <View style={styles.requestMeta}>
+                    <Text style={styles.requestCategory}>{catEmoji(categories, req.category)} {req.category}</Text>
+                    {req.phone ? <Text style={styles.requestPhone} selectable>📞 {req.phone}</Text> : null}
+                    <Text style={styles.requestCoords}>📌 {req.latitude.toFixed(4)}, {req.longitude.toFixed(4)}</Text>
+                  </View>
                 </TouchableOpacity>
                 <View style={styles.requestActions}>
                   {req.status === 'pending' && (
                     <>
-                      <TouchableOpacity style={styles.editBtn} onPress={() => openEdit(req)}>
+                      <TouchableOpacity style={styles.editBtn} onPress={() => openEdit(req)} activeOpacity={0.8}>
                         <Text style={styles.editBtnText}>✏️ تعديل</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAccept(req)}>
+                      <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAccept(req)} activeOpacity={0.8}>
                         <Text style={styles.acceptBtnText}>✓ قبول</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.rejectBtn} onPress={() => handleReject(req)}>
+                      <TouchableOpacity style={styles.rejectBtn} onPress={() => handleReject(req)} activeOpacity={0.8}>
                         <Text style={styles.rejectBtnText}>✕ رفض</Text>
                       </TouchableOpacity>
                     </>
                   )}
-                  <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(req)}>
+                  <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(req)} activeOpacity={0.8}>
                     <Text style={styles.deleteBtnText}>🗑️ حذف</Text>
                   </TouchableOpacity>
                 </View>
@@ -369,49 +391,115 @@ const styles = StyleSheet.create({
   headerTitle: { color: '#fff', fontSize: 20, fontWeight: '700', marginRight: 12 },
   headerBadge: { backgroundColor: '#F59E0B', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   headerBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  content: { flex: 1, padding: 16 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1A3A5C', textAlign: 'right' },
-  addBtn: { backgroundColor: '#2E86AB', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14 },
-  addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  filterRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  filterChip: { backgroundColor: '#E5E7EB', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
+  content: { flex: 1, padding: 16, paddingBottom: 8 },
+  sectionHeader: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10, marginBottom: 12 },
+  searchBar: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#1F2937',
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    minHeight: 42,
+  },
+  addBtn: { backgroundColor: '#2E86AB', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, minHeight: 42, justifyContent: 'center' },
+  addBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  filterScroll: { marginBottom: 16, maxHeight: 48 },
+  filterRow: { flexDirection: 'row-reverse', gap: 10, paddingVertical: 4, paddingHorizontal: 2 },
+  filterChip: { backgroundColor: '#E5E7EB', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, minHeight: 38, justifyContent: 'center' },
   filterChipActive: { backgroundColor: '#2E86AB' },
   filterChipText: { fontSize: 13, color: '#374151', fontWeight: '600' },
   filterChipTextActive: { color: '#fff', fontWeight: '700' },
   list: { flex: 1 },
-  listContent: { paddingBottom: 40 },
+  listContent: { paddingBottom: 32, paddingTop: 4 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   emptyStateEmoji: { fontSize: 60, marginBottom: 16 },
   emptyStateText: { color: '#9CA3AF', fontSize: 16, marginBottom: 16, textAlign: 'center' },
-  emptyStateBtn: { backgroundColor: '#2E86AB', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 24 },
+  emptyStateBtn: { backgroundColor: '#2E86AB', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 22 },
   emptyStateBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   requestCard: {
-    flexDirection: 'row', backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10,
-    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.08, radius: 6, elevation: 2 }),
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.08, radius: 6, elevation: 4 }),
   },
   requestCardPending: { borderWidth: 2, borderColor: '#FEF3C7' },
-  requestInfo: { flex: 1, alignItems: 'flex-end' },
-  requestName: { fontSize: 15, fontWeight: '700', color: '#1F2937', textAlign: 'right' },
-  requestDesc: { fontSize: 13, color: '#6B7280', textAlign: 'right', marginTop: 2 },
-  requestMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
-  requestCategory: { fontSize: 12, color: '#2E86AB', fontWeight: '600' },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
+  requestInfo: { alignItems: 'flex-end' },
+  requestHeader: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+    width: '100%',
+  },
+  requestName: { fontSize: 15, fontWeight: '700', color: '#1F2937', textAlign: 'right', flex: 1 },
+  requestDesc: { fontSize: 13, color: '#6B7280', textAlign: 'right', marginTop: 4 },
+  requestMeta: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 6, alignItems: 'center' },
+  requestCategory: { fontSize: 12, color: '#2E86AB', fontWeight: '600', textAlign: 'right' },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8 },
   statusPending: { backgroundColor: '#FEF3C7' },
   statusAccepted: { backgroundColor: '#DCFCE7' },
   statusRejected: { backgroundColor: '#FEE2E2' },
   statusText: { fontSize: 11, fontWeight: '700', color: '#374151' },
-  requestPhone: { fontSize: 12, color: '#6B7280', marginTop: 2 },
-  requestCoords: { fontSize: 11, color: '#9CA3AF', marginTop: 2 },
-  requestActions: { flexDirection: 'row', gap: 6, alignItems: 'center' },
-  editBtn: { backgroundColor: '#2E86AB', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
-  editBtnText: { fontSize: 12, color: '#fff', fontWeight: '700' },
-  acceptBtn: { backgroundColor: '#10B981', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
-  acceptBtnText: { fontSize: 12, color: '#fff', fontWeight: '700' },
-  rejectBtn: { backgroundColor: '#FEE2E2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
-  rejectBtnText: { fontSize: 12, color: '#EF4444', fontWeight: '700' },
-  deleteBtn: { backgroundColor: '#FEE2E2', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
-  deleteBtnText: { fontSize: 12, color: '#DC2626', fontWeight: '700' },
+  requestPhone: { fontSize: 12, color: '#6B7280', textAlign: 'right' },
+  requestCoords: { fontSize: 11, color: '#9CA3AF', textAlign: 'right' },
+  requestActions: {
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  editBtn: {
+    backgroundColor: '#2E86AB',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    minHeight: 38,
+    minWidth: 68,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  editBtnText: { fontSize: 13, color: '#fff', fontWeight: '700' },
+  acceptBtn: {
+    backgroundColor: '#10B981',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    minHeight: 38,
+    minWidth: 68,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  acceptBtnText: { fontSize: 13, color: '#fff', fontWeight: '700' },
+  rejectBtn: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    minHeight: 38,
+    minWidth: 68,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rejectBtnText: { fontSize: 13, color: '#EF4444', fontWeight: '700' },
+  deleteBtn: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    minHeight: 38,
+    minWidth: 68,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteBtnText: { fontSize: 13, color: '#DC2626', fontWeight: '700' },
   modalContainer: { flex: 1, backgroundColor: '#F0F4F8' },
   modalHeader: { backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: LAYOUT.modalHeaderTop, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
   modalCancelText: { color: '#EF4444', fontSize: 16, fontWeight: '600' },
@@ -428,6 +516,6 @@ const styles = StyleSheet.create({
   categoryChipTextActive: { color: '#fff', fontWeight: '700' },
   coordsRow: { flexDirection: 'row', gap: 10 },
   coordInput: { flex: 1 },
-  deleteRequestBtn: { backgroundColor: '#FEE2E2', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 24 },
+  deleteRequestBtn: { backgroundColor: '#FEE2E2', borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 24 },
   deleteRequestBtnText: { fontSize: 15, color: '#DC2626', fontWeight: '700' },
 });

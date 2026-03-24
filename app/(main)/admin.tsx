@@ -1,6 +1,8 @@
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ScrollView, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { api } from '../../api/client';
+import { USE_API } from '../../api/config';
 import { useAuth } from '../../context/AuthContext';
 import { useStores } from '../../context/StoreContext';
 import { useCategories } from '../../context/CategoryContext';
@@ -10,9 +12,15 @@ import { shadow } from '../../utils/shadowStyles';
 export default function AdminScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ editStoreId?: string }>();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { categories } = useCategories();
   const { stores, placeRequests } = useStores();
+  const [stats, setStats] = useState<{
+    users?: number;
+    pendingReports?: number;
+    storesThisMonth?: number;
+    requestsThisWeek?: number;
+  }>({});
 
   useEffect(() => {
     if (!user?.isAdmin) return;
@@ -21,6 +29,12 @@ export default function AdminScreen() {
       router.replace({ pathname: '/(main)/admin-stores', params: { editStoreId: id } });
     }
   }, [user?.isAdmin, params.editStoreId]);
+
+  useEffect(() => {
+    if (USE_API && user?.isAdmin) {
+      api.getAdminStats().then(setStats).catch(() => {});
+    }
+  }, [USE_API, user?.isAdmin]);
 
   if (!user?.isAdmin) {
     return (
@@ -32,6 +46,8 @@ export default function AdminScreen() {
       </View>
     );
   }
+
+  const pendingPlaceRequests = placeRequests.filter((r) => r.status === 'pending').length;
 
   return (
     <View style={styles.container}>
@@ -45,22 +61,61 @@ export default function AdminScreen() {
         </View>
       </View>
 
-      <View style={styles.statsRow}>
-        <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-stores')} activeOpacity={0.7}>
-          <Text style={styles.statNumber}>{stores.length}</Text>
-          <Text style={styles.statLabel}>إجمالي المتاجر</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-categories')} activeOpacity={0.7}>
-          <Text style={styles.statNumber}>{categories.length}</Text>
-          <Text style={styles.statLabel}>الفئات</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-place-requests')} activeOpacity={0.7}>
-          <Text style={styles.statNumber}>
-            {placeRequests.filter((r) => r.status === 'pending').length}
-          </Text>
-          <Text style={styles.statLabel}>طلبات الأماكن</Text>
-        </TouchableOpacity>
-      </View>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.statsRow}>
+          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-stores')} activeOpacity={0.7}>
+            <Text style={styles.statNumber}>{stores.length}</Text>
+            <Text style={styles.statLabel}>إجمالي المتاجر</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-categories')} activeOpacity={0.7}>
+            <Text style={styles.statNumber}>{categories.length}</Text>
+            <Text style={styles.statLabel}>الفئات</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-place-requests')} activeOpacity={0.7}>
+            <Text style={styles.statNumber}>{pendingPlaceRequests}</Text>
+            <Text style={styles.statLabel}>طلبات الأماكن</Text>
+          </TouchableOpacity>
+        </View>
+
+        {USE_API && (
+          <View style={styles.statsRow}>
+            <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-users')} activeOpacity={0.7}>
+              <Text style={styles.statNumber}>{stats.users ?? '-'}</Text>
+              <Text style={styles.statLabel}>المستخدمون</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-reports')} activeOpacity={0.7}>
+              <Text style={styles.statNumber}>{stats.pendingReports ?? '-'}</Text>
+              <Text style={styles.statLabel}>الإبلاغات</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.statCard} activeOpacity={0.7}>
+              <Text style={styles.statNumber}>{stats.storesThisMonth ?? '-'}</Text>
+              <Text style={styles.statLabel}>متاجر هذا الشهر</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <View style={styles.menuSection}>
+          <Text style={styles.menuTitle}>الإدارة</Text>
+          <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/(main)/admin-users')}>
+            <Text style={styles.menuItemText}>👥 إدارة المستخدمين</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/(main)/admin-reports')}>
+            <Text style={styles.menuItemText}>⚠️ الإبلاغات</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/(main)/admin-activity')}>
+            <Text style={styles.menuItemText}>📋 سجل النشاط</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/(main)/admin-settings')}>
+            <Text style={styles.menuItemText}>⚙️ الإعدادات</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={() => router.push('/(main)/admin-backup')}>
+            <Text style={styles.menuItemText}>💾 النسخ الاحتياطي</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.logoutBtn} onPress={() => { logout(); router.replace('/(main)/map'); }}>
+            <Text style={styles.logoutBtnText}>🚪 تسجيل الخروج</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </View>
   );
 }
@@ -95,6 +150,15 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   headerBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  logoutBtn: {
+    backgroundColor: '#EF4444',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 16,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
+  },
+  logoutBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   statsRow: {
     flexDirection: 'row',
     padding: 20,
@@ -113,4 +177,16 @@ const styles = StyleSheet.create({
   },
   statNumber: { fontSize: 36, fontWeight: '800', color: '#2E86AB', textAlign: 'center' },
   statLabel: { fontSize: 14, color: '#6B7280', marginTop: 8, textAlign: 'center' },
+  scroll: { flex: 1 },
+  scrollContent: { paddingBottom: 40 },
+  menuSection: { paddingHorizontal: 20, marginTop: 8 },
+  menuTitle: { fontSize: 16, fontWeight: '700', color: '#1F2937', marginBottom: 12, textAlign: 'right' },
+  menuItem: {
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    ...shadow({ offset: { width: 0, height: 1 }, opacity: 0.06, radius: 4, elevation: 2 }),
+  },
+  menuItemText: { fontSize: 15, fontWeight: '600', color: '#374151', textAlign: 'right' },
 });
