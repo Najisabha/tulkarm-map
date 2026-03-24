@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api } from '../api/client';
-import { USE_API } from '../api/config';
+import { api, PlaceType } from '../api/client';
 
 export interface Category {
   id: string;
@@ -10,118 +8,123 @@ export interface Category {
   color: string;
 }
 
-const CATEGORIES_KEY = 'categories';
+function typeToCategory(pt: PlaceType): Category {
+  return {
+    id: pt.id,
+    name: pt.name,
+    emoji: pt.emoji && String(pt.emoji).trim() !== '' ? String(pt.emoji) : '\u{1F4CD}',
+    color: pt.color && String(pt.color).trim() !== '' ? String(pt.color) : '#2E86AB',
+  };
+}
 
 interface CategoryContextType {
   categories: Category[];
+  loading: boolean;
   addCategory: (cat: Omit<Category, 'id'>) => Promise<void>;
   updateCategory: (id: string, updates: Partial<Omit<Category, 'id'>>) => Promise<void>;
   deleteCategory: (id: string) => Promise<{ success: boolean; message?: string }>;
   getCategoryByName: (name: string) => Category | undefined;
+  refreshCategories: () => Promise<void>;
 }
 
 const CategoryContext = createContext<CategoryContextType | null>(null);
 
 export function CategoryProvider({ children }: { children: React.ReactNode }) {
   const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadCategories();
   }, []);
 
   const loadCategories = async () => {
+    setLoading(true);
     try {
-      if (USE_API) {
-        const list = await api.getCategories();
-        setCategories(
-          list.map((c) => ({
-            id: c.id,
-            name: c.name,
-            emoji: c.emoji,
-            color: c.color,
-          }))
-        );
-        return;
-      }
-      const json = await AsyncStorage.getItem(CATEGORIES_KEY);
-      if (json) {
-        const list = JSON.parse(json);
-        if (Array.isArray(list) && list.length > 0) {
-          setCategories(list);
-        }
-      }
+      const res = await api.getPlaceTypes();
+      const raw = (res as any)?.data ?? res;
+      const list = Array.isArray(raw) ? raw : [];
+      setCategories(list.map((row: PlaceType) => typeToCategory(row)));
     } catch {
       setCategories([]);
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const saveCategories = async (list: Category[]) => {
-    await AsyncStorage.setItem(CATEGORIES_KEY, JSON.stringify(list));
-    setCategories(list);
   };
 
   const addCategory = async (cat: Omit<Category, 'id'>) => {
-    if (USE_API) {
-      const newCat = await api.addCategory({
-        name: cat.name,
-        emoji: cat.emoji,
-        color: cat.color,
-      });
-      setCategories((prev) => [
-        ...prev,
-        { id: newCat.id, name: newCat.name, emoji: newCat.emoji, color: newCat.color },
-      ]);
-      return;
+    const res = await api.createPlaceType(cat.name, { emoji: cat.emoji, color: cat.color });
+    if (res?.data) {
+      setCategories((prev) => [...prev, typeToCategory(res.data)]);
     }
-    const newCat: Category = {
-      ...cat,
-      id: `cat-${Date.now()}`,
-    };
-    await saveCategories([...categories, newCat]);
   };
 
   const updateCategory = async (id: string, updates: Partial<Omit<Category, 'id'>>) => {
-    if (USE_API) {
-      const updated = await api.updateCategory(id, updates) as Category;
-      setCategories((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, ...updated } : c))
+    const prev = categories.find((c) => c.id === id);
+    if (!prev) return;
+
+    const nextName = updates.name !== undefined ? updates.name.trim() : prev.name;
+    const nextEmoji = updates.emoji !== undefined ? updates.emoji : prev.emoji;
+    const nextColor = updates.color !== undefined ? updates.color : prev.color;
+
+    const nameChanged = updates.name !== undefined && nextName !== prev.name;
+    const emojiChanged = updates.emoji !== undefined && nextEmoji !== prev.emoji;
+    const colorChanged = updates.color !== undefined && nextColor !== prev.color;
+
+    if (!nameChanged && !emojiChanged && !colorChanged) return;
+
+    const patch: { name?: string; emoji?: string; color?: string } = {};
+    if (nameChanged) patch.name = nextName;
+    if (emojiChanged) patch.emoji = nextEmoji;
+    if (colorChanged) patch.color = nextColor;
+
+    try {
+      const res = await api.updatePlaceType(id, patch);
+      if (res?.data) {
+        setCategories((prevList) =>
+          prevList.map((c) => (c.id === id ? typeToCategory(res.data as PlaceType) : c))
+        );
+      } else {
+        setCategories((prevList) =>
+          prevList.map((c) => (c.id === id ? { ...c, name: nextName, emoji: nextEmoji, color: nextColor } : c))
+        );
+      }
+    } catch {
+      setCategories((prevList) =>
+        prevList.map((c) => (c.id === id ? { ...c, name: nextName, emoji: nextEmoji, color: nextColor } : c))
       );
-      return;
     }
-    const list = categories.map((c) => (c.id === id ? { ...c, ...updates } : c));
-    await saveCategories(list);
   };
 
   const deleteCategory = async (id: string) => {
-    const cat = categories.find((c) => c.id === id);
-    if (!cat) return { success: false, message: 'الفئة غير موجودة' };
     if (categories.length <= 1) {
-      return { success: false, message: 'يجب وجود فئة واحدة على الأقل' };
+      return { success: false, message: '\u064A\u062C\u0628 \u0648\u062C\u0648\u062F \u0646\u0648\u0639 \u0648\u0627\u062D\u062F \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644' };
     }
-    if (USE_API) {
-      try {
-        await api.deleteCategory(id);
-        setCategories((prev) => prev.filter((c) => c.id !== id));
-        return { success: true };
-      } catch (e: any) {
-        return { success: false, message: e?.message };
-      }
+    try {
+      await api.deletePlaceType(id);
+      setCategories((prev) => prev.filter((c) => c.id !== id));
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, message: e?.message };
     }
-    await saveCategories(categories.filter((c) => c.id !== id));
-    return { success: true };
   };
 
   const getCategoryByName = (name: string) =>
     categories.find((c) => c.name === name);
 
+  const refreshCategories = async () => {
+    await loadCategories();
+  };
+
   return (
     <CategoryContext.Provider
       value={{
         categories,
+        loading,
         addCategory,
         updateCategory,
         deleteCategory,
         getCategoryByName,
+        refreshCategories,
       }}
     >
       {children}

@@ -1,298 +1,106 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api } from '../api/client';
-import { USE_API } from '../api/config';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { api, PlaceData } from '../api/client';
+import { useAuth } from './AuthContext';
+
+export type { PlaceData };
 
 export interface Store {
   id: string;
   name: string;
   description: string;
   category: string;
+  type_name?: string;
+  type_id?: string;
   latitude: number;
   longitude: number;
   phone?: string;
   photos?: string[];
   videos?: string[];
+  status?: string;
+  avg_rating?: string;
+  rating_count?: number;
+  attributes?: { key: string; value: string; value_type: string }[];
+  images?: { id: string; image_url: string; sort_order: number }[];
   createdAt: string;
 }
 
-export interface PlaceRequest {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  latitude: number;
-  longitude: number;
-  phone?: string;
-  photos?: string[];
-  videos?: string[];
-  status: 'pending' | 'accepted' | 'rejected';
-  createdAt: string;
+/** pg/json أحياناً يرجع الإحداثيات كسلسلة — نضمن رقماً صالحاً للخريطة و`toFixed` */
+function parseCoord(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const s = String(value ?? '').trim().replace(',', '.');
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
 }
 
-const PLACE_REQUESTS_KEY = 'place_requests';
-const LEGACY_SEED_IDS = new Set(['store-001', 'store-002', 'store-003']);
-const LEGACY_SEED_CLEARED_KEY = 'stores_legacy_seed_cleared';
+function placeToStore(p: PlaceData): Store {
+  const phone = p.attributes?.find(a => a.key === 'phone')?.value;
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description || '',
+    category: p.type_name,
+    type_name: p.type_name,
+    type_id: p.type_id,
+    latitude: parseCoord(p.latitude as unknown),
+    longitude: parseCoord(p.longitude as unknown),
+    phone: phone || undefined,
+    photos: p.images?.map(img => img.image_url) || [],
+    status: p.status,
+    avg_rating: p.avg_rating,
+    rating_count: p.rating_count,
+    attributes: p.attributes,
+    images: p.images,
+    createdAt: p.created_at,
+  };
+}
 
 interface StoreContextType {
   stores: Store[];
-  placeRequests: PlaceRequest[];
-  addStore: (store: Omit<Store, 'id' | 'createdAt'>) => Promise<void>;
-  updateStore: (id: string, updates: Partial<Omit<Store, 'id' | 'createdAt'>>) => Promise<void>;
+  loading: boolean;
   deleteStore: (id: string) => Promise<void>;
-  updateStoresCategory: (oldName: string, newName: string) => Promise<void>;
-  updatePlaceRequestsCategory: (oldName: string, newName: string) => Promise<void>;
-  addPlaceRequest: (req: Omit<PlaceRequest, 'id' | 'status' | 'createdAt'>) => Promise<void>;
-  updatePlaceRequest: (id: string, updates: Partial<Omit<PlaceRequest, 'id' | 'createdAt'>>) => Promise<void>;
-  acceptPlaceRequest: (id: string, overrides?: Partial<Omit<Store, 'id' | 'createdAt'>>) => Promise<void>;
-  rejectPlaceRequest: (id: string) => Promise<void>;
-  deletePlaceRequest: (id: string) => Promise<void>;
   refreshStores: () => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextType | null>(null);
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
+  const { user, isLoading: authLoading } = useAuth();
   const [stores, setStores] = useState<Store[]>([]);
-  const [placeRequests, setPlaceRequests] = useState<PlaceRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadStores = useCallback(async () => {
+    setLoading(true);
+    try {
+      const isAdminUser = user?.role === 'admin' || user?.isAdmin === true;
+      const res = await api.getPlaces(
+        isAdminUser ? { limit: 500, status: 'all' } : { limit: 500 }
+      );
+      const list = res?.data;
+      setStores(Array.isArray(list) ? list.map(placeToStore) : []);
+    } catch (err) {
+      console.warn('Error loading places:', err);
+      setStores([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.role, user?.isAdmin]);
 
   useEffect(() => {
-    loadStores();
-    loadPlaceRequests();
-  }, []);
-
-  const loadPlaceRequests = async () => {
-    try {
-      if (USE_API) {
-        try {
-          const list = await api.getPlaceRequests();
-          setPlaceRequests(list as PlaceRequest[]);
-          return;
-        } catch {
-          const json = await AsyncStorage.getItem(PLACE_REQUESTS_KEY);
-          setPlaceRequests(json ? JSON.parse(json) : []);
-          return;
-        }
-      }
-      const json = await AsyncStorage.getItem(PLACE_REQUESTS_KEY);
-      setPlaceRequests(json ? JSON.parse(json) : []);
-    } catch {
-      setPlaceRequests([]);
-    }
-  };
-
-  const loadStoresFromStorage = async (): Promise<Store[]> => {
-    const storesJson = await AsyncStorage.getItem('stores');
-    if (!storesJson) return [];
-    let list: Store[] = JSON.parse(storesJson);
-    const seedCleared = await AsyncStorage.getItem(LEGACY_SEED_CLEARED_KEY);
-    if (!seedCleared) {
-      const next = list.filter((s) => !LEGACY_SEED_IDS.has(s.id));
-      if (next.length !== list.length) {
-        await AsyncStorage.setItem('stores', JSON.stringify(next));
-      }
-      await AsyncStorage.setItem(LEGACY_SEED_CLEARED_KEY, '1');
-      list = next;
-    }
-    return list;
-  };
-
-  const loadStores = async () => {
-    try {
-      if (USE_API) {
-        try {
-          const list = await api.getStores();
-          setStores(list);
-          return;
-        } catch (apiError) {
-          // عند فشل الاتصال (مثلاً على الموبايل مع localhost)، نستخدم التخزين المحلي
-          const local = await loadStoresFromStorage();
-          setStores(local);
-          return;
-        }
-      }
-      const list = await loadStoresFromStorage();
-      setStores(list);
-    } catch (error) {
-      console.warn('Error loading stores:', error);
-      setStores([]);
-    }
-  };
-
-  const addStore = async (storeData: Omit<Store, 'id' | 'createdAt'>) => {
-    if (USE_API) {
-      const newStore = await api.addStore(storeData);
-      setStores((prev) => [newStore as Store, ...prev]);
-      return;
-    }
-    const newStore: Store = {
-      ...storeData,
-      id: `store-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-    };
-    const updatedStores = [...stores, newStore];
-    await AsyncStorage.setItem('stores', JSON.stringify(updatedStores));
-    setStores(updatedStores);
-  };
-
-  const updateStore = async (id: string, updates: Partial<Omit<Store, 'id' | 'createdAt'>>) => {
-    if (USE_API) {
-      const updated = await api.updateStore(id, updates);
-      setStores((prev) => prev.map((s) => (s.id === id ? (updated as Store) : s)));
-      return;
-    }
-    const updated = stores.map((s) => (s.id === id ? { ...s, ...updates } : s));
-    await AsyncStorage.setItem('stores', JSON.stringify(updated));
-    setStores(updated);
-  };
+    if (authLoading) return;
+    void loadStores();
+  }, [authLoading, user?.id, user?.role, loadStores]);
 
   const deleteStore = async (id: string) => {
-    if (USE_API) {
-      await api.deleteStore(id);
-      setStores((prev) => prev.filter((s) => s.id !== id));
-      return;
-    }
-    const updatedStores = stores.filter((s) => s.id !== id);
-    await AsyncStorage.setItem('stores', JSON.stringify(updatedStores));
-    setStores(updatedStores);
+    await api.deletePlace(id);
+    setStores((prev) => prev.filter((s) => s.id !== id));
   };
 
-  const updateStoresCategory = async (oldName: string, newName: string) => {
-    if (USE_API) {
-      await api.updateStoresCategory(oldName, newName);
-      setStores((prev) =>
-        prev.map((s) => (s.category === oldName ? { ...s, category: newName } : s))
-      );
-      return;
-    }
-    const updated = stores.map((s) =>
-      s.category === oldName ? { ...s, category: newName } : s
-    );
-    await AsyncStorage.setItem('stores', JSON.stringify(updated));
-    setStores(updated);
-  };
-
-  const updatePlaceRequestsCategory = async (oldName: string, newName: string) => {
-    if (USE_API) {
-      await api.updatePlaceRequestsCategory(oldName, newName);
-      setPlaceRequests((prev) =>
-        prev.map((r) => (r.category === oldName ? { ...r, category: newName } : r))
-      );
-      return;
-    }
-    const updated = placeRequests.map((r) =>
-      r.category === oldName ? { ...r, category: newName } : r
-    );
-    await AsyncStorage.setItem(PLACE_REQUESTS_KEY, JSON.stringify(updated));
-    setPlaceRequests(updated);
-  };
-
-  const refreshStores = async () => {
+  const refreshStores = useCallback(async () => {
     await loadStores();
-  };
-
-  const addPlaceRequest = async (req: Omit<PlaceRequest, 'id' | 'status' | 'createdAt'>) => {
-    if (USE_API) {
-      const newReq = await api.addPlaceRequest(req);
-      setPlaceRequests((prev) => [newReq as PlaceRequest, ...prev]);
-      return;
-    }
-    const newReq: PlaceRequest = {
-      ...req,
-      id: `pr-${Date.now()}`,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-    };
-    const updated = [...placeRequests, newReq];
-    await AsyncStorage.setItem(PLACE_REQUESTS_KEY, JSON.stringify(updated));
-    setPlaceRequests(updated);
-  };
-
-  const acceptPlaceRequest = async (id: string, overrides?: Partial<Omit<Store, 'id' | 'createdAt'>>) => {
-    if (USE_API) {
-      await api.acceptPlaceRequest(id, overrides);
-      setPlaceRequests((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status: 'accepted' as const } : r))
-      );
-      await loadStores();
-      return;
-    }
-    const req = placeRequests.find((r) => r.id === id);
-    if (!req) return;
-    await addStore({
-      name: overrides?.name ?? req.name,
-      description: overrides?.description ?? req.description,
-      category: overrides?.category ?? req.category,
-      phone: overrides?.phone ?? req.phone,
-      latitude: overrides?.latitude ?? req.latitude,
-      longitude: overrides?.longitude ?? req.longitude,
-      photos: overrides?.photos ?? req.photos,
-      videos: overrides?.videos ?? req.videos,
-    });
-    const updated = placeRequests.map((r) =>
-      r.id === id ? { ...r, status: 'accepted' as const } : r
-    );
-    await AsyncStorage.setItem(PLACE_REQUESTS_KEY, JSON.stringify(updated));
-    setPlaceRequests(updated);
-  };
-
-  const rejectPlaceRequest = async (id: string) => {
-    if (USE_API) {
-      await api.rejectPlaceRequest(id);
-      setPlaceRequests((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status: 'rejected' as const } : r))
-      );
-      return;
-    }
-    const updated = placeRequests.map((r) =>
-      r.id === id ? { ...r, status: 'rejected' as const } : r
-    );
-    await AsyncStorage.setItem(PLACE_REQUESTS_KEY, JSON.stringify(updated));
-    setPlaceRequests(updated);
-  };
-
-  const updatePlaceRequest = async (id: string, updates: Partial<Omit<PlaceRequest, 'id' | 'createdAt'>>) => {
-    if (USE_API) {
-      const updated = await api.updatePlaceRequest(id, updates);
-      setPlaceRequests((prev) =>
-        prev.map((r) => (r.id === id ? (updated as PlaceRequest) : r))
-      );
-      return;
-    }
-    const updated = placeRequests.map((r) => (r.id === id ? { ...r, ...updates } : r));
-    await AsyncStorage.setItem(PLACE_REQUESTS_KEY, JSON.stringify(updated));
-    setPlaceRequests(updated);
-  };
-
-  const deletePlaceRequest = async (id: string) => {
-    if (USE_API) {
-      await api.deletePlaceRequest(id);
-      setPlaceRequests((prev) => prev.filter((r) => r.id !== id));
-      return;
-    }
-    const updated = placeRequests.filter((r) => r.id !== id);
-    await AsyncStorage.setItem(PLACE_REQUESTS_KEY, JSON.stringify(updated));
-    setPlaceRequests(updated);
-  };
+  }, [loadStores]);
 
   return (
-    <StoreContext.Provider
-      value={{
-        stores,
-        placeRequests,
-        addStore,
-        updateStore,
-        deleteStore,
-        updateStoresCategory,
-        updatePlaceRequestsCategory,
-        addPlaceRequest,
-        updatePlaceRequest,
-        acceptPlaceRequest,
-        rejectPlaceRequest,
-        deletePlaceRequest,
-        refreshStores,
-      }}
-    >
+    <StoreContext.Provider value={{ stores, loading, deleteStore, refreshStores }}>
       {children}
     </StoreContext.Provider>
   );

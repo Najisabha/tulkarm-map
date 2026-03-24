@@ -1,13 +1,12 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api } from '../api/client';
-import { USE_API } from '../api/config';
+import { api, loadTokens, saveTokens, clearTokens, getAccessToken, getRefreshToken } from '../api/client';
 
 export interface User {
   id: string;
   name: string;
   email: string;
-  password?: string;
+  role: string;
   isAdmin: boolean;
   createdAt: string;
 }
@@ -16,7 +15,7 @@ const GUEST_USER: User = {
   id: 'guest',
   name: 'زائر',
   email: '',
-  password: '',
+  role: 'guest',
   isAdmin: false,
   createdAt: new Date().toISOString(),
 };
@@ -32,14 +31,21 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const ADMIN_USER: User = {
-  id: 'admin-001',
-  name: 'مدير التطبيق',
-  email: 'admin@tulkarm.com',
-  password: 'admin123',
-  isAdmin: true,
-  createdAt: new Date().toISOString(),
-};
+function toUser(raw: any): User {
+  const email = String(raw?.email || '').toLowerCase();
+  const role =
+    raw.role || (raw.isAdmin ? 'admin' : email === 'admin@tulkarm.com' ? 'admin' : 'user');
+  const isAdmin =
+    role === 'admin' || raw.isAdmin === true || email === 'admin@tulkarm.com';
+  return {
+    id: raw.id,
+    name: raw.name,
+    email: raw.email,
+    role,
+    isAdmin,
+    createdAt: raw.created_at || raw.createdAt || new Date().toISOString(),
+  };
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -47,29 +53,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     loadCurrentUser();
-    if (!USE_API) ensureAdminExists();
   }, []);
-
-  const ensureAdminExists = async () => {
-    try {
-      const usersJson = await AsyncStorage.getItem('users');
-      const users: User[] = usersJson ? JSON.parse(usersJson) : [];
-      const adminExists = users.some((u) => u.id === 'admin-001');
-      if (!adminExists) {
-        users.push(ADMIN_USER);
-        await AsyncStorage.setItem('users', JSON.stringify(users));
-      }
-    } catch (error) {
-      console.error('Error ensuring admin exists:', error);
-    }
-  };
 
   const loadCurrentUser = async () => {
     try {
+      await loadTokens();
       const userJson = await AsyncStorage.getItem('currentUser');
       if (userJson) {
         const u = JSON.parse(userJson);
-        setUser({ ...u, password: undefined });
+        if (u.id === 'guest') {
+          setUser(toUser(u));
+        } else if (!getAccessToken() && !getRefreshToken()) {
+          // مستخدم محفوظ بدون JWT — طلبات /api/* ستُرجع 401؛ نفرض إعادة الدخول
+          await AsyncStorage.removeItem('currentUser');
+          setUser(null);
+        } else {
+          setUser(toUser(u));
+        }
       }
     } catch (error) {
       console.error('Error loading user:', error);
@@ -80,35 +80,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string): Promise<{ success: boolean; message: string }> => {
     try {
-      if (USE_API) {
-        const res = await api.login(email, password);
-        if (!res.success || !res.user) {
-          return { success: false, message: res.message || 'فشل تسجيل الدخول' };
+      const res: any = await api.login(email, password);
+      // Supports both:
+      // 1) New API: { success, data: { user, accessToken, refreshToken } }
+      // 2) Legacy API: { success, user }
+      if (res.success && (res.data?.user || res.user)) {
+        const rawUser = res.data?.user || res.user;
+        if (res.data?.accessToken && res.data?.refreshToken) {
+          await saveTokens(res.data.accessToken, res.data.refreshToken);
+        } else {
+          await clearTokens();
         }
-        const u = res.user as { id: string; name: string; email: string; isAdmin: boolean; createdAt: string };
-        const savedUser: User = {
-          id: u.id,
-          name: u.name,
-          email: u.email,
-          isAdmin: u.isAdmin,
-          createdAt: u.createdAt,
-        };
+        const savedUser = toUser(rawUser);
         await AsyncStorage.setItem('currentUser', JSON.stringify(savedUser));
         setUser(savedUser);
         return { success: true, message: 'تم تسجيل الدخول بنجاح' };
       }
-      const usersJson = await AsyncStorage.getItem('users');
-      const users: User[] = usersJson ? JSON.parse(usersJson) : [];
-      const foundUser = users.find(
-        (u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-      );
-      if (!foundUser) {
-        return { success: false, message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' };
-      }
-      const { password: _, ...safeUser } = foundUser;
-      await AsyncStorage.setItem('currentUser', JSON.stringify(safeUser));
-      setUser(safeUser);
-      return { success: true, message: 'تم تسجيل الدخول بنجاح' };
+      return { success: false, message: 'فشل تسجيل الدخول' };
     } catch (error: any) {
       return { success: false, message: error?.message || 'حدث خطأ، يرجى المحاولة مرة أخرى' };
     }
@@ -131,57 +119,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: false, message: 'صيغة البريد الإلكتروني غير صحيحة' };
       }
 
-      if (USE_API) {
-        const res = await api.register(name, email, password);
-        if (!res.success || !res.user) {
-          return { success: false, message: res.message || 'فشل إنشاء الحساب' };
+      const res: any = await api.register(name, email, password);
+      // Supports both new and legacy response shapes.
+      if (res.success && (res.data?.user || res.user)) {
+        const rawUser = res.data?.user || res.user;
+        if (res.data?.accessToken && res.data?.refreshToken) {
+          await saveTokens(res.data.accessToken, res.data.refreshToken);
+        } else {
+          await clearTokens();
         }
-        const u = res.user as { id: string; name: string; email: string; isAdmin: boolean; createdAt: string };
-        const savedUser: User = {
-          id: u.id,
-          name: u.name,
-          email: u.email,
-          isAdmin: u.isAdmin,
-          createdAt: u.createdAt,
-        };
+        const savedUser = toUser(rawUser);
         await AsyncStorage.setItem('currentUser', JSON.stringify(savedUser));
         setUser(savedUser);
         return { success: true, message: 'تم إنشاء الحساب بنجاح' };
       }
-
-      const usersJson = await AsyncStorage.getItem('users');
-      const users: User[] = usersJson ? JSON.parse(usersJson) : [];
-      const emailExists = users.some((u) => u.email.toLowerCase() === email.toLowerCase());
-      if (emailExists) {
-        return { success: false, message: 'هذا البريد الإلكتروني مسجل مسبقاً' };
-      }
-      const newUser: User = {
-        id: `user-${Date.now()}`,
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
-        password,
-        isAdmin: false,
-        createdAt: new Date().toISOString(),
-      };
-      users.push(newUser);
-      await AsyncStorage.setItem('users', JSON.stringify(users));
-      const { password: _, ...safeUser } = newUser;
-      await AsyncStorage.setItem('currentUser', JSON.stringify(safeUser));
-      setUser(safeUser);
-      return { success: true, message: 'تم إنشاء الحساب بنجاح' };
+      return { success: false, message: 'فشل إنشاء الحساب' };
     } catch (error: any) {
       return { success: false, message: error?.message || 'حدث خطأ، يرجى المحاولة مرة أخرى' };
     }
   };
 
   const loginAsGuest = async () => {
+    await clearTokens();
     await AsyncStorage.setItem('currentUser', JSON.stringify(GUEST_USER));
     setUser(GUEST_USER);
   };
 
   const logout = async () => {
-    await AsyncStorage.removeItem('currentUser');
-    setUser(null);
+    try {
+      await api.logout().catch(() => {});
+    } finally {
+      await clearTokens();
+      await AsyncStorage.removeItem('currentUser');
+      setUser(null);
+    }
   };
 
   return (

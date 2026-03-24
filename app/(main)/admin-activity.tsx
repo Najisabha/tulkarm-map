@@ -8,7 +8,6 @@ import {
   View,
 } from 'react-native';
 import { api } from '../../api/client';
-import { USE_API } from '../../api/config';
 import { LAYOUT } from '../../constants/layout';
 import { useAuth } from '../../context/AuthContext';
 import { shadow } from '../../utils/shadowStyles';
@@ -43,14 +42,13 @@ export default function AdminActivityScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (USE_API) loadActivity();
-    else setLoading(false);
+    loadActivity();
   }, []);
 
   const loadActivity = async () => {
     try {
-      const list = await api.getActivityLog();
-      setEntries(list);
+      const res = await api.getActivityLog();
+      setEntries(res.data || []);
     } catch {
       setEntries([]);
     } finally {
@@ -65,22 +63,6 @@ export default function AdminActivityScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.backLink}>العودة</Text>
         </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (!USE_API) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backBtnText}>→</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>سجل النشاط</Text>
-        </View>
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>يتطلب اتصال الخادم</Text>
-        </View>
       </View>
     );
   }

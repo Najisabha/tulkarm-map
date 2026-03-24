@@ -6,7 +6,6 @@ import {
   Animated,
   FlatList,
   Linking,
-  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -16,10 +15,10 @@ import {
 } from 'react-native';
 import { AddPlaceModal } from '../../components/AddPlaceModal';
 import { ReportModal } from '../../components/ReportModal';
-import { Circle, MapView, Marker, PROVIDER_GOOGLE } from '../../components/MapWrapper';
+import { Circle, MapView, Marker, Polyline, PROVIDER_GOOGLE } from '../../components/MapWrapper';
 import { LAYOUT } from '../../constants/layout';
 import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
-import { USE_API } from '../../api/config';
+import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useCategories } from '../../context/CategoryContext';
 import { Store, useStores } from '../../context/StoreContext';
@@ -29,6 +28,20 @@ import { shadow } from '../../utils/shadowStyles';
 function getCategoryStyle(categories: { name: string; emoji: string; color: string }[], name: string) {
   const c = categories.find((x) => x.name === name);
   return { emoji: c?.emoji ?? '📍', color: c?.color ?? '#2E86AB' };
+}
+
+async function uriToBase64(uri: string): Promise<string> {
+  const response = await fetch(uri);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      resolve(result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 interface UserLocation {
@@ -56,10 +69,308 @@ function formatDistance(meters: number): string {
   return `${(meters / 1000).toFixed(1)} كم`;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isValidPlaceTypeId(id: string): boolean {
+  return typeof id === 'string' && UUID_RE.test(id.trim());
+}
+
+function StoreServicesSheet({ store, user, onClose }: { store: Store; user: any; onClose: () => void }) {
+  const [services, setServices] = React.useState<any[]>([]);
+  const [products, setProducts] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [cart, setCart] = React.useState<Record<string, number>>({});
+  const [ordering, setOrdering] = React.useState(false);
+
+  React.useEffect(() => {
+    loadData();
+  }, [store.id]);
+
+  const loadData = async () => {
+    try {
+      const [svcRes, prodRes] = await Promise.all([
+        api.getStoreServices(store.id),
+        api.getStoreProducts(store.id),
+      ]);
+      setServices(svcRes.data || []);
+      setProducts(prodRes.data || []);
+    } catch {
+      setServices([]);
+      setProducts([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addToCart = (productId: string) => {
+    setCart((prev) => ({ ...prev, [productId]: (prev[productId] || 0) + 1 }));
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCart((prev) => {
+      const next = { ...prev };
+      if (next[productId] > 1) next[productId]--;
+      else delete next[productId];
+      return next;
+    });
+  };
+
+  const cartTotal = products
+    .filter((p: any) => cart[p.id])
+    .reduce((sum: number, p: any) => sum + parseFloat(p.price) * cart[p.id], 0);
+
+  const cartCount = Object.values(cart).reduce((a, b) => a + b, 0);
+
+  const handleOrder = async () => {
+    if (user?.id === 'guest' || !user) {
+      Alert.alert('تنبيه', 'يجب تسجيل الدخول لإتمام الطلب');
+      return;
+    }
+    setOrdering(true);
+    try {
+      const items = Object.entries(cart).map(([product_id, quantity]) => ({ product_id, quantity }));
+      const res = await api.createOrder({ store_id: store.id, items });
+      const order = res.data;
+      Alert.alert('تم الطلب بنجاح', `رقم الطلب: ${order.id.slice(0, 8)}\nالمجموع: ${parseFloat(order.total).toFixed(2)} ₪`);
+      setCart({});
+    } catch (err: any) {
+      Alert.alert('خطأ', err.message);
+    } finally {
+      setOrdering(false);
+    }
+  };
+
+  return (
+    <View style={styles.servicesModal}>
+      <View style={styles.servicesModalHeader}>
+        <TouchableOpacity onPress={onClose}>
+          <Text style={styles.servicesModalCloseText}>✕</Text>
+        </TouchableOpacity>
+        <Text style={styles.servicesModalTitle}>🛍️ {store.name}</Text>
+      </View>
+      <ScrollView style={styles.servicesModalBody}>
+        {loading ? (
+          <View style={{ padding: 40, alignItems: 'center' }}>
+            <Text style={{ color: '#9CA3AF' }}>جارٍ التحميل...</Text>
+          </View>
+        ) : (
+          <>
+            {store.description ? (
+              <View style={styles.servicesItem}>
+                <Text style={styles.servicesItemIcon}>📋</Text>
+                <Text style={styles.servicesItemText}>{store.description}</Text>
+              </View>
+            ) : null}
+            {store.phone ? (
+              <TouchableOpacity
+                style={styles.servicesItem}
+                onPress={() => Linking.openURL(`tel:${store.phone}`)}
+              >
+                <Text style={styles.servicesItemIcon}>📞</Text>
+                <Text style={[styles.servicesItemText, { color: '#2E86AB' }]}>{store.phone}</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {services.length > 0 && (
+              <>
+                <Text style={styles.servicesSectionTitle}>🛎️ الخدمات</Text>
+                {services.map((svc: any) => (
+                  <View key={svc.id} style={styles.servicesItem}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.servicesItemText}>{svc.name}</Text>
+                      {svc.description && <Text style={{ fontSize: 12, color: '#6B7280' }}>{svc.description}</Text>}
+                    </View>
+                    {svc.price != null && (
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#10B981' }}>{svc.price} ₪</Text>
+                    )}
+                  </View>
+                ))}
+              </>
+            )}
+
+            {products.length > 0 && (
+              <>
+                <Text style={styles.servicesSectionTitle}>📦 المنتجات</Text>
+                {products.map((prod: any) => (
+                  <View key={prod.id} style={styles.servicesItem}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.servicesItemText}>{prod.name}</Text>
+                      {prod.description && <Text style={{ fontSize: 12, color: '#6B7280' }}>{prod.description}</Text>}
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#10B981', marginTop: 4 }}>{prod.price} ₪</Text>
+                    </View>
+                    {user?.id !== 'guest' && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        {cart[prod.id] ? (
+                          <>
+                            <TouchableOpacity
+                              onPress={() => removeFromCart(prod.id)}
+                              style={{ backgroundColor: '#FEE2E2', borderRadius: 8, width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
+                            >
+                              <Text style={{ fontSize: 16, color: '#EF4444' }}>-</Text>
+                            </TouchableOpacity>
+                            <Text style={{ fontSize: 16, fontWeight: '700', minWidth: 20, textAlign: 'center' }}>{cart[prod.id]}</Text>
+                          </>
+                        ) : null}
+                        <TouchableOpacity
+                          onPress={() => addToCart(prod.id)}
+                          style={{ backgroundColor: '#DCFCE7', borderRadius: 8, width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <Text style={{ fontSize: 16, color: '#16A34A' }}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                ))}
+              </>
+            )}
+
+            {services.length === 0 && products.length === 0 && !store.description && !store.phone && (
+              <View style={styles.servicesEmpty}>
+                <Text style={styles.servicesEmptyText}>لا توجد خدمات أو منتجات مسجلة حالياً</Text>
+              </View>
+            )}
+
+            {user?.id === 'guest' && products.length > 0 && (
+              <Text style={[styles.guestHint, { marginTop: 16 }]}>سجّل دخولك لتتمكن من الشراء</Text>
+            )}
+          </>
+        )}
+      </ScrollView>
+
+      {cartCount > 0 && (
+        <View style={styles.cartBar}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+              🛒 {cartCount} منتج · {cartTotal.toFixed(2)} ₪
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.cartBtn}
+            onPress={handleOrder}
+            disabled={ordering}
+          >
+            {ordering ? (
+              <Text style={styles.cartBtnText}>جاري...</Text>
+            ) : (
+              <Text style={styles.cartBtnText}>إتمام الطلب</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ── Store Detail Sheet ────────────────────────────────────────────────────────
+function StoreDetailSheet({
+  store, userLocation, user, categoryList,
+  onClose, onNavigate, onReport, onServices, onEdit, onDelete,
+}: {
+  store: Store;
+  userLocation: { latitude: number; longitude: number } | null;
+  user: any;
+  categoryList: { name: string; emoji: string; color: string }[];
+  onClose: () => void;
+  onNavigate: () => void;
+  onReport: () => void;
+  onServices: () => void;
+  onEdit: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  const catStyle = getCategoryStyle(categoryList, store.category);
+  const dist = userLocation
+    ? haversineDistance(userLocation.latitude, userLocation.longitude, store.latitude, store.longitude)
+    : null;
+
+  return (
+    <View style={styles.overlayContainer} pointerEvents="box-none">
+      <TouchableOpacity style={styles.overlayBackdrop} onPress={onClose} activeOpacity={1} />
+      <View style={styles.storeModal}>
+        <View style={styles.storeModalHandle} />
+        <View style={styles.storeModalHeader}>
+          <TouchableOpacity style={styles.closeModalBtn} onPress={onClose}>
+            <Text style={styles.closeModalBtnText}>✕</Text>
+          </TouchableOpacity>
+          <View style={[styles.storeModalEmojiCircle, { backgroundColor: catStyle.color + '20' }]}>
+            <Text style={styles.storeModalEmoji}>{catStyle.emoji}</Text>
+          </View>
+        </View>
+        <View style={styles.storeModalBody}>
+          <Text style={styles.storeModalName}>{store.name}</Text>
+          <View style={styles.storeModalPillsRow}>
+            <View style={[styles.storeModalCategoryPill, { backgroundColor: catStyle.color + '18' }]}>
+              <Text style={[styles.storeModalCategoryText, { color: catStyle.color }]}>{store.category}</Text>
+            </View>
+            {dist !== null && (
+              <View style={styles.storeModalDistancePill}>
+                <Text style={styles.storeModalDistanceText}>{formatDistance(dist)}</Text>
+              </View>
+            )}
+          </View>
+          {store.description ? (
+            <Text style={styles.storeModalDescription}>{store.description}</Text>
+          ) : null}
+          {store.phone && (
+            <TouchableOpacity style={styles.storeModalPhoneRow} onPress={() => Linking.openURL(`tel:${store.phone}`)}>
+              <Text style={styles.storeModalPhoneIcon}>📞</Text>
+              <Text style={styles.storeModalPhoneText}>{store.phone}</Text>
+            </TouchableOpacity>
+          )}
+          <View style={styles.storeModalBtnRow}>
+            <TouchableOpacity
+              style={[styles.storeModalActionBtn, styles.storeModalNavigateBtn]}
+              onPress={onNavigate}
+              disabled={!userLocation}
+            >
+              <Text style={styles.storeModalNavigateBtnIcon}>🧭</Text>
+              <Text style={styles.storeModalNavigateBtnText}>الانتقال إلى المكان</Text>
+              {dist !== null && (
+                <Text style={styles.storeModalNavigateBtnSub}>يبعد {formatDistance(dist)}</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.storeModalActionBtn, styles.storeModalServicesBtn]} onPress={onServices}>
+              <Text style={styles.storeModalServicesBtnIcon}>🛍️</Text>
+              <Text style={styles.storeModalServicesBtnText}>خدمات المتجر</Text>
+            </TouchableOpacity>
+          </View>
+          {user?.id !== 'guest' && (
+            <TouchableOpacity style={styles.storeModalReportBtn} onPress={onReport}>
+              <Text style={styles.storeModalReportBtnText}>⚠️ الإبلاغ عن هذا المكان</Text>
+            </TouchableOpacity>
+          )}
+          {user?.isAdmin && (
+            <View style={styles.storeModalAdminRow}>
+              <TouchableOpacity style={styles.storeModalEditBtn} onPress={onEdit}>
+                <Text style={styles.storeModalEditBtnText}>✏️ تعديل</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.storeModalDeleteBtn}
+                onPress={() => {
+                  Alert.alert('حذف المتجر', `هل أنت متأكد من حذف "${store.name}"؟`, [
+                    { text: 'إلغاء', style: 'cancel' },
+                    { text: 'حذف', style: 'destructive', onPress: onDelete },
+                  ]);
+                }}
+              >
+                <Text style={styles.storeModalDeleteBtnText}>🗑️ حذف</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 export default function MapScreen() {
   const { user, logout } = useAuth();
   const { categories: categoryList } = useCategories();
-  const { stores, addPlaceRequest, deleteStore } = useStores();
+  const { stores: allStores, deleteStore, refreshStores } = useStores();
+  /** يظهر على الخريطة فقط ما وافق عليه المدير — لا pending ولا rejected ولا صفوف بلا status صريح */
+  const stores = allStores.filter(
+    (s) => String(s.status || '').toLowerCase() === 'active'
+  );
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
 
@@ -72,6 +383,9 @@ export default function MapScreen() {
   const [tappedCoord, setTappedCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [addPlaceCoord, setAddPlaceCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [routePath, setRoutePath] = useState<{ latitude: number; longitude: number }[] | null>(null);
+  const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(null);
+  const [showServicesModal, setShowServicesModal] = useState(false);
 
   const bannerAnim = useRef(new Animated.Value(-100)).current;
   const [bannerMessage, setBannerMessage] = useState('');
@@ -227,6 +541,89 @@ export default function MapScreen() {
     router.replace('/(auth)/login');
   };
 
+  const fetchRoute = async (
+    origin: { latitude: number; longitude: number },
+    destination: { latitude: number; longitude: number }
+  ) => {
+    try {
+      const apiKey = process?.env?.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      if (apiKey) {
+        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=walking&key=${apiKey}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.routes?.length > 0) {
+          const route = data.routes[0];
+          const leg = route.legs[0];
+          const points = decodePolyline(route.overview_polyline.points);
+          setRoutePath(points);
+          setRouteInfo({
+            distance: leg.distance.text,
+            duration: leg.duration.text,
+          });
+          return;
+        }
+      }
+    } catch {
+      // fallback to straight line
+    }
+    setRoutePath([origin, destination]);
+    const dist = haversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude);
+    const walkMinutes = Math.round(dist / 80);
+    setRouteInfo({
+      distance: formatDistance(dist),
+      duration: `${walkMinutes} دقيقة مشي`,
+    });
+  };
+
+  const decodePolyline = (encoded: string): { latitude: number; longitude: number }[] => {
+    const points: { latitude: number; longitude: number }[] = [];
+    let index = 0;
+    let lat = 0;
+    let lng = 0;
+    while (index < encoded.length) {
+      let shift = 0;
+      let result = 0;
+      let byte: number;
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+      lat += result & 1 ? ~(result >> 1) : result >> 1;
+      shift = 0;
+      result = 0;
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+      lng += result & 1 ? ~(result >> 1) : result >> 1;
+      points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+    }
+    return points;
+  };
+
+  const handleNavigateToStore = () => {
+    if (!selectedStore || !userLocation) return;
+    const destination = { latitude: selectedStore.latitude, longitude: selectedStore.longitude };
+    fetchRoute(userLocation, destination);
+    setSelectedStore(null);
+    mapRef.current?.animateToRegion(
+      {
+        latitude: (userLocation.latitude + destination.latitude) / 2,
+        longitude: (userLocation.longitude + destination.longitude) / 2,
+        latitudeDelta: Math.abs(userLocation.latitude - destination.latitude) * 2.5 + 0.005,
+        longitudeDelta: Math.abs(userLocation.longitude - destination.longitude) * 2.5 + 0.005,
+      },
+      800
+    );
+  };
+
+  const clearRoute = () => {
+    setRoutePath(null);
+    setRouteInfo(null);
+  };
+
   const renderCategoryStoreItem = ({
     item,
   }: {
@@ -317,6 +714,14 @@ export default function MapScreen() {
           strokeWidth={2}
         />
 
+        {routePath && routePath.length >= 2 && (
+          <Polyline
+            coordinates={routePath}
+            strokeColor="#2E86AB"
+            strokeWidth={4}
+          />
+        )}
+
         {stores.map((store) => {
           const isActive =
             selectedCategory === null || store.category === selectedCategory;
@@ -361,6 +766,21 @@ export default function MapScreen() {
         <Text style={styles.bannerText}>{bannerMessage}</Text>
       </Animated.View>
 
+      {/* Route Info Banner */}
+      {routeInfo && (
+        <View style={styles.routeBanner}>
+          <View style={styles.routeBannerContent}>
+            <View style={styles.routeBannerInfo}>
+              <Text style={styles.routeBannerDistance}>📍 {routeInfo.distance}</Text>
+              <Text style={styles.routeBannerDuration}>🚶 {routeInfo.duration}</Text>
+            </View>
+            <TouchableOpacity style={styles.routeBannerClose} onPress={clearRoute}>
+              <Text style={styles.routeBannerCloseText}>✕ إنهاء</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Top Bar */}
       <View style={styles.topBar}>
         <TouchableOpacity
@@ -403,47 +823,102 @@ export default function MapScreen() {
         <Text style={styles.centerBtnText}>🎯</Text>
       </TouchableOpacity>
 
-      {/* Tap options: Add place / Navigate */}
-      <Modal visible={!!tappedCoord} transparent animationType="slide">
-        <TouchableOpacity style={styles.sheetOverlay} onPress={() => setTappedCoord(null)} />
-        <View style={styles.tapOptionsSheet}>
-          <View style={styles.tapOptionsHandle} />
-          <Text style={styles.tapOptionsTitle}>مكان فارغ</Text>
+      {/* Tap options: Add place / Navigate — rendered directly (no Modal) for web+mobile */}
+      {tappedCoord && (
+        <View style={styles.overlayContainer} pointerEvents="box-none">
           <TouchableOpacity
-            style={styles.tapOptionBtn}
-            onPress={() => {
-              if (tappedCoord) setAddPlaceCoord(tappedCoord);
-              setTappedCoord(null);
-            }}
-          >
-            <Text style={styles.tapOptionBtnText}>➕ إضافة مكان</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tapOptionBtn, styles.tapOptionBtnSecondary]}
-            onPress={handleNavigateToArea}
-          >
-            <Text style={styles.tapOptionBtnTextSecondary}>🧭 التوجه إلى هذه المنطقة</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.tapOptionCancel} onPress={() => setTappedCoord(null)}>
-            <Text style={styles.tapOptionCancelText}>إلغاء</Text>
-          </TouchableOpacity>
+            style={styles.overlayBackdrop}
+            onPress={() => setTappedCoord(null)}
+            activeOpacity={1}
+          />
+          <View style={styles.tapOptionsSheet}>
+            <View style={styles.tapOptionsHandle} />
+            <Text style={styles.tapOptionsTitle}>مكان فارغ</Text>
+            {user && user.id !== 'guest' ? (
+              <TouchableOpacity
+                style={styles.tapOptionBtn}
+                onPress={() => {
+                  setAddPlaceCoord(tappedCoord);
+                  setTappedCoord(null);
+                }}
+              >
+                <Text style={styles.tapOptionBtnText}>➕ إضافة مكان</Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={[styles.guestHint, { marginBottom: 10 }]}>
+                سجّل الدخول أو أنشئ حساباً لإرسال طلب إضافة مكان (يُراجع من قبل الإدارة).
+              </Text>
+            )}
+            <TouchableOpacity
+              style={[styles.tapOptionBtn, styles.tapOptionBtnSecondary]}
+              onPress={handleNavigateToArea}
+            >
+              <Text style={styles.tapOptionBtnTextSecondary}>🧭 التوجه إلى هذه المنطقة</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.tapOptionCancel} onPress={() => setTappedCoord(null)}>
+              <Text style={styles.tapOptionCancelText}>إلغاء</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </Modal>
+      )}
 
       {addPlaceCoord && (
         <AddPlaceModal
           visible={!!addPlaceCoord}
           onClose={() => setAddPlaceCoord(null)}
+          submitSuccessTitle="تم إرسال الطلب بنجاح"
+          submitSuccessMessage="سنراجع طلبك في أقرب وقت ممكن. كل البيانات أصبحت ضمن «طلبات المتاجر» في لوحة الإدارة. إذا وافق المدير: ينتقل المكان إلى «الأماكن» ويظهر على الخريطة للجميع. إذا رُفض الطلب: يُزال فوراً ولن يُنشر."
           onSubmit={async (data) => {
-            await addPlaceRequest(data);
-            setAddPlaceCoord(null);
+            if (!isValidPlaceTypeId(data.type_id)) {
+              throw new Error(
+                'معرّف نوع المكان غير صالح. أغلق النافذة وافتح «إدارة الفئات» من لوحة الإدارة للتأكد من وجود الأنواع ثم أعد المحاولة.'
+              );
+            }
+
+            const attributes = data.dynamicAttributes || [];
+
+            let imageUrls: string[] = [];
+            const uploadErrors: string[] = [];
+            if (data.photos?.length) {
+              for (const photoUri of data.photos) {
+                try {
+                  const base64 = await uriToBase64(photoUri);
+                  const uploadRes = await api.uploadBase64(base64);
+                  const url = uploadRes?.data?.url;
+                  if (url && /^https?:\/\//i.test(url)) {
+                    imageUrls.push(url);
+                  }
+                } catch (uploadErr: any) {
+                  uploadErrors.push(uploadErr?.message || 'فشل رفع صورة');
+                }
+              }
+              if (imageUrls.length === 0) {
+                throw new Error(
+                  uploadErrors[0] ||
+                    'فشل رفع الصور. تحقق من Cloudinary على السيرفر أو أزل الصور وأعد المحاولة.'
+                );
+              }
+            }
+
+            await api.createPlace({
+              name: data.name.trim(),
+              description: data.description?.trim() || undefined,
+              type_id: data.type_id.trim(),
+              latitude: Number(data.latitude),
+              longitude: Number(data.longitude),
+              attributes: attributes.length ? attributes : undefined,
+              image_urls: imageUrls.length ? imageUrls : undefined,
+            });
+
+            await refreshStores();
           }}
           latitude={addPlaceCoord.latitude}
           longitude={addPlaceCoord.longitude}
         />
       )}
 
-      {/* ── Category Bar (Bottom) ── */}
+      {/* ── Category Bar (Bottom) — إخفاؤه عند نافذة إضافة مكان حتى لا يغطي زر الإرسال (elevation + ترتيب الرسم) ── */}
+      {!addPlaceCoord && (
       <View style={styles.categoryBar}>
         <ScrollView
           horizontal
@@ -500,253 +975,151 @@ export default function MapScreen() {
           })}
         </ScrollView>
       </View>
+      )}
 
       {/* ── Category Bottom Sheet ── */}
-      <Modal
-        visible={!!selectedCategory}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelectedCategory(null)}
-      >
-        <TouchableOpacity
-          style={styles.sheetOverlay}
-          onPress={() => setSelectedCategory(null)}
-        />
-        <View style={styles.sheet}>
-          {/* Sheet Handle */}
-          <View style={styles.sheetHandle} />
-
-          {/* Sheet Header */}
-          <View style={styles.sheetHeader}>
-            <TouchableOpacity
-              style={styles.sheetCloseBtn}
-              onPress={() => setSelectedCategory(null)}
-            >
-              <Text style={styles.sheetCloseBtnText}>✕</Text>
-            </TouchableOpacity>
-            <View style={styles.sheetTitleRow}>
-              <Text style={styles.sheetTitleEmoji}>
-                {getCategoryStyle(categoryList, selectedCategory ?? '').emoji}
-              </Text>
-              <View>
-                <Text style={styles.sheetTitle}>{selectedCategory}</Text>
-                <Text style={styles.sheetSubtitle}>
-                  {categoryStores.length} مكان
-                  {userLocation ? ' · مرتّب حسب المسافة' : ''}
+      {selectedCategory && (
+        <View style={styles.overlayContainer} pointerEvents="box-none">
+          <TouchableOpacity
+            style={styles.overlayBackdrop}
+            onPress={() => setSelectedCategory(null)}
+            activeOpacity={1}
+          />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <TouchableOpacity
+                style={styles.sheetCloseBtn}
+                onPress={() => setSelectedCategory(null)}
+              >
+                <Text style={styles.sheetCloseBtnText}>✕</Text>
+              </TouchableOpacity>
+              <View style={styles.sheetTitleRow}>
+                <Text style={styles.sheetTitleEmoji}>
+                  {getCategoryStyle(categoryList, selectedCategory ?? '').emoji}
                 </Text>
+                <View>
+                  <Text style={styles.sheetTitle}>{selectedCategory}</Text>
+                  <Text style={styles.sheetSubtitle}>
+                    {categoryStores.length} مكان
+                    {userLocation ? ' · مرتّب حسب المسافة' : ''}
+                  </Text>
+                </View>
               </View>
             </View>
-          </View>
-
-          {/* Sheet List */}
-          {categoryStores.length === 0 ? (
-            <View style={styles.sheetEmpty}>
-              <Text style={styles.sheetEmptyText}>
-                لا توجد أماكن في هذه الفئة بعد
-              </Text>
-            </View>
-          ) : (
-            <FlatList
-              data={categoryStores}
-              keyExtractor={(item) => item.id}
-              renderItem={renderCategoryStoreItem}
-              contentContainerStyle={styles.sheetList}
-              showsVerticalScrollIndicator={false}
-            />
-          )}
-        </View>
-      </Modal>
-
-      {/* Sidebar Drawer */}
-      <Modal visible={showSidebar} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.overlay}
-          onPress={() => setShowSidebar(false)}
-        />
-        <View style={styles.sidebar}>
-          <View style={styles.sidebarHeader}>
-            <View style={styles.avatarCircle}>
-              <Text style={styles.avatarText}>
-                {user?.name?.charAt(0) || 'م'}
-              </Text>
-            </View>
-            <Text style={styles.sidebarName}>{user?.name}</Text>
-            <Text style={styles.sidebarEmail}>{user?.id === 'guest' ? 'دخول كضيف' : user?.email}</Text>
-            {user?.isAdmin && (
-              <View style={styles.adminBadge}>
-                <Text style={styles.adminBadgeText}>مدير النظام 👑</Text>
+            {categoryStores.length === 0 ? (
+              <View style={styles.sheetEmpty}>
+                <Text style={styles.sheetEmptyText}>لا توجد أماكن في هذه الفئة بعد</Text>
               </View>
+            ) : (
+              <FlatList
+                data={categoryStores}
+                keyExtractor={(item) => item.id}
+                renderItem={renderCategoryStoreItem}
+                contentContainerStyle={styles.sheetList}
+                showsVerticalScrollIndicator={false}
+              />
             )}
           </View>
-
-          <ScrollView style={styles.sidebarList}>
-            <Text style={styles.sidebarSectionTitle}>
-              الفئات ({categories.length})
-            </Text>
-            {categories.map((cat) => {
-              const catCount = stores.filter((s) => s.category === cat).length;
-              return (
-                <TouchableOpacity
-                  key={cat}
-                  style={styles.sidebarCatItem}
-                  onPress={() => {
-                    setShowSidebar(false);
-                    handleCategoryPress(cat);
-                  }}
-                >
-                  <View
-                    style={[
-                      styles.sidebarCatCount,
-                      { backgroundColor: (getCategoryStyle(categoryList, cat).color) + '22' },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.sidebarCatCountText,
-                        { color: getCategoryStyle(categoryList, cat).color },
-                      ]}
-                    >
-                      {catCount}
-                    </Text>
-                  </View>
-                  <View style={styles.sidebarCatInfo}>
-                    <Text style={styles.sidebarCatName}>{cat}</Text>
-                  </View>
-                  <Text style={styles.sidebarCatEmoji}>
-                    {getCategoryStyle(categoryList, cat).emoji}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {user?.isAdmin && (
-            <TouchableOpacity
-              style={styles.sidebarAdminBtn}
-              onPress={() => {
-                setShowSidebar(false);
-                router.push('/(main)/admin');
-              }}
-            >
-              <Text style={styles.sidebarAdminBtnText}>⚙️ لوحة الإدارة</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-            <Text style={styles.logoutBtnText}>🚪 تسجيل الخروج</Text>
-          </TouchableOpacity>
         </View>
-      </Modal>
+      )}
 
-      {/* Store Detail Modal */}
-      <Modal visible={!!selectedStore} transparent animationType="slide">
-        <TouchableOpacity
-          style={styles.storeModalOverlay}
-          onPress={() => setSelectedStore(null)}
-        />
-        {selectedStore && (
-          <View style={styles.storeModal}>
-            <View
-              style={[
-                styles.storeModalHeader,
-                {
-                  backgroundColor:
-                    getCategoryStyle(categoryList, selectedStore.category).color,
-                },
-              ]}
-            >
-              <Text style={styles.storeModalEmoji}>
-                {getCategoryStyle(categoryList, selectedStore.category).emoji}
-              </Text>
-              <TouchableOpacity
-                style={styles.closeModalBtn}
-                onPress={() => setSelectedStore(null)}
-              >
-                <Text style={styles.closeModalBtnText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.storeModalBody}>
-              <Text style={styles.storeModalName}>{selectedStore.name}</Text>
-              <View style={styles.storeModalRow}>
-                <View style={styles.storeModalCategoryPill}>
-                  <Text style={styles.storeModalCategoryText}>
-                    {selectedStore.category}
-                  </Text>
-                </View>
-                {userLocation && (
-                  <View style={styles.storeModalDistancePill}>
-                    <Text style={styles.storeModalDistanceText}>
-                      📍{' '}
-                      {formatDistance(
-                        haversineDistance(
-                          userLocation.latitude,
-                          userLocation.longitude,
-                          selectedStore.latitude,
-                          selectedStore.longitude
-                        )
-                      )}
-                    </Text>
-                  </View>
-                )}
+      {/* Sidebar Drawer */}
+      {showSidebar && (
+        <View style={styles.overlayContainer} pointerEvents="box-none">
+          <TouchableOpacity
+            style={styles.overlayBackdrop}
+            onPress={() => setShowSidebar(false)}
+            activeOpacity={1}
+          />
+          <View style={styles.sidebar}>
+            <View style={styles.sidebarHeader}>
+              <View style={styles.avatarCircle}>
+                <Text style={styles.avatarText}>{user?.name?.charAt(0) || 'م'}</Text>
               </View>
-              <Text style={styles.storeModalDescription}>
-                {selectedStore.description}
-              </Text>
-              {selectedStore.phone && (
-                <Text style={styles.storeModalPhone}>
-                  📞 {selectedStore.phone}
-                </Text>
-              )}
-              {USE_API && (
-                <TouchableOpacity
-                  style={styles.storeModalReportBtn}
-                  onPress={() => setShowReportModal(true)}
-                >
-                  <Text style={styles.storeModalReportBtnText}>⚠️ الإبلاغ عن هذا المكان</Text>
-                </TouchableOpacity>
-              )}
+              <Text style={styles.sidebarName}>{user?.name}</Text>
+              <Text style={styles.sidebarEmail}>{user?.id === 'guest' ? 'دخول كضيف' : user?.email}</Text>
               {user?.isAdmin && (
-                <View style={styles.storeModalActions}>
-                  <TouchableOpacity
-                    style={styles.storeModalEditBtn}
-                    onPress={() => {
-                      setSelectedStore(null);
-                      router.push({
-                        pathname: '/(main)/admin-stores',
-                        params: { editStoreId: selectedStore.id },
-                      });
-                    }}
-                  >
-                    <Text style={styles.storeModalEditBtnText}>✏️ تعديل البيانات</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.storeModalDeleteBtn}
-                    onPress={() => {
-                      Alert.alert(
-                        'حذف المتجر',
-                        `هل أنت متأكد من حذف "${selectedStore.name}"؟`,
-                        [
-                          { text: 'إلغاء', style: 'cancel' },
-                          {
-                            text: 'حذف',
-                            style: 'destructive',
-                            onPress: async () => {
-                              await deleteStore(selectedStore.id);
-                              setSelectedStore(null);
-                              Alert.alert('تم', 'تم حذف المتجر');
-                            },
-                          },
-                        ]
-                      );
-                    }}
-                  >
-                    <Text style={styles.storeModalDeleteBtnText}>🗑️ حذف المتجر</Text>
-                  </TouchableOpacity>
+                <View style={styles.adminBadge}>
+                  <Text style={styles.adminBadgeText}>مدير النظام 👑</Text>
+                </View>
+              )}
+              {user?.role === 'owner' && !user?.isAdmin && (
+                <View style={[styles.adminBadge, { backgroundColor: '#10B981' }]}>
+                  <Text style={styles.adminBadgeText}>صاحب متجر 🏪</Text>
                 </View>
               )}
             </View>
+            <ScrollView style={styles.sidebarList}>
+              <Text style={styles.sidebarSectionTitle}>الفئات ({categories.length})</Text>
+              {categories.map((cat) => {
+                const catCount = stores.filter((s) => s.category === cat).length;
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    style={styles.sidebarCatItem}
+                    onPress={() => { setShowSidebar(false); handleCategoryPress(cat); }}
+                  >
+                    <View style={[styles.sidebarCatCount, { backgroundColor: getCategoryStyle(categoryList, cat).color + '22' }]}>
+                      <Text style={[styles.sidebarCatCountText, { color: getCategoryStyle(categoryList, cat).color }]}>{catCount}</Text>
+                    </View>
+                    <View style={styles.sidebarCatInfo}>
+                      <Text style={styles.sidebarCatName}>{cat}</Text>
+                    </View>
+                    <Text style={styles.sidebarCatEmoji}>{getCategoryStyle(categoryList, cat).emoji}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            {(user?.role === 'owner' || user?.isAdmin) && (
+              <TouchableOpacity style={styles.sidebarOwnerBtn} onPress={() => { setShowSidebar(false); router.push('/(main)/owner-dashboard'); }}>
+                <Text style={styles.sidebarOwnerBtnText}>🏪 لوحة تحكم المتجر</Text>
+              </TouchableOpacity>
+            )}
+            {user?.isAdmin && (
+              <TouchableOpacity style={styles.sidebarAdminBtn} onPress={() => { setShowSidebar(false); router.push('/(main)/admin'); }}>
+                <Text style={styles.sidebarAdminBtnText}>⚙️ لوحة الإدارة</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+              <Text style={styles.logoutBtnText}>🚪 تسجيل الخروج</Text>
+            </TouchableOpacity>
           </View>
-        )}
-      </Modal>
+        </View>
+      )}
+
+      {/* Store Detail Sheet */}
+      {selectedStore && (
+        <StoreDetailSheet
+          store={selectedStore}
+          userLocation={userLocation}
+          user={user}
+          categoryList={categoryList}
+          onClose={() => setSelectedStore(null)}
+          onNavigate={handleNavigateToStore}
+          onReport={() => setShowReportModal(true)}
+          onServices={() => setShowServicesModal(true)}
+          onEdit={() => {
+            setSelectedStore(null);
+            router.push({
+              pathname: '/(main)/admin-stores',
+              params: { editStoreId: selectedStore.id },
+            });
+          }}
+          onDelete={async () => {
+            await deleteStore(selectedStore.id);
+            setSelectedStore(null);
+          }}
+        />
+      )}
+
+      {/* Services Sheet */}
+      {showServicesModal && selectedStore && (
+        <View style={styles.overlayContainer} pointerEvents="box-none">
+          <TouchableOpacity style={styles.overlayBackdrop} onPress={() => setShowServicesModal(false)} activeOpacity={1} />
+          <StoreServicesSheet store={selectedStore} user={user} onClose={() => setShowServicesModal(false)} />
+        </View>
+      )}
 
       {selectedStore && (
         <ReportModal
@@ -841,20 +1214,27 @@ const styles = StyleSheet.create({
   categoryChipBadgeActive: { backgroundColor: 'rgba(255,255,255,0.3)' },
   categoryChipBadgeText: { fontSize: 12, fontWeight: '700' },
 
+  // ── Overlay scaffold: works on web + mobile without Modal ──
+  overlayContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 200,
+    justifyContent: 'flex-end',
+  },
+  overlayBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
   // ── Category Bottom Sheet ──
   sheetOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.3)',
   },
   tapOptionsSheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     backgroundColor: '#fff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     paddingBottom: 40,
+    zIndex: 201,
     ...shadow({ offset: { width: 0, height: -4 }, opacity: 0.15, radius: 12, elevation: 20 }),
   },
   tapOptionsHandle: {
@@ -894,6 +1274,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     maxHeight: '65%',
+    zIndex: 201,
     ...shadow({ offset: { width: 0, height: -4 }, opacity: 0.15, radius: 12, elevation: 20 }),
   },
   sheetHandle: {
@@ -944,8 +1325,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
   },
   sidebar: {
-    position: 'absolute', right: 0, top: 0, bottom: 0, width: '80%',
+    position: 'absolute',
+    right: 0, top: 0, bottom: 0,
+    width: '80%',
+    maxWidth: 340,
     backgroundColor: '#fff',
+    zIndex: 201,
     ...shadow({ offset: { width: -4, height: 0 }, opacity: 0.2, radius: 12, elevation: 20 }),
   },
   sidebarHeader: {
@@ -994,62 +1379,233 @@ const styles = StyleSheet.create({
   },
   logoutBtnText: { color: '#EF4444', fontWeight: '700', fontSize: 15 },
 
+  // Route Banner
+  routeBanner: {
+    position: 'absolute',
+    top: LAYOUT.headerTop + 56,
+    left: 12, right: 12,
+    zIndex: 90,
+  },
+  routeBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 12,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 8, elevation: 6 }),
+  },
+  routeBannerInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 16,
+    justifyContent: 'center',
+  },
+  routeBannerDistance: { fontSize: 15, fontWeight: '700', color: '#1A3A5C' },
+  routeBannerDuration: { fontSize: 15, fontWeight: '600', color: '#6B7280' },
+  routeBannerClose: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  routeBannerCloseText: { color: '#DC2626', fontSize: 13, fontWeight: '700' },
+
   // Store Detail
-  storeModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)' },
+  storeModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   storeModal: {
-    backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     overflow: 'hidden',
-    ...shadow({ offset: { width: 0, height: -4 }, opacity: 0.15, radius: 12, elevation: 20 }),
+    zIndex: 201,
+    ...shadow({ offset: { width: 0, height: -6 }, opacity: 0.18, radius: 16, elevation: 24 }),
+  },
+  storeModalHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: '#D1D5DB',
+    alignSelf: 'center',
+    marginTop: 10,
+    marginBottom: 4,
   },
   storeModalHeader: {
-    height: 90, alignItems: 'center', justifyContent: 'center', position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
-  storeModalEmoji: { fontSize: 44 },
-  closeModalBtn: {
-    position: 'absolute', top: 12, left: 16,
-    width: 30, height: 30, borderRadius: 15,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+  storeModalEmojiCircle: {
+    width: 56, height: 56, borderRadius: 28,
     alignItems: 'center', justifyContent: 'center',
   },
-  closeModalBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  storeModalBody: { padding: 20, alignItems: 'flex-end' },
+  storeModalEmoji: { fontSize: 30 },
+  closeModalBtn: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  closeModalBtnText: { color: '#6B7280', fontSize: 16, fontWeight: '700' },
+  storeModalBody: { padding: 20, paddingTop: 8, alignItems: 'flex-end' },
   storeModalName: {
-    fontSize: 20, fontWeight: '800', color: '#1A3A5C',
+    fontSize: 22, fontWeight: '800', color: '#1A3A5C',
     textAlign: 'right', marginBottom: 10,
+    alignSelf: 'stretch',
   },
-  storeModalRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  storeModalPillsRow: {
+    flexDirection: 'row', gap: 8, marginBottom: 12,
+    flexWrap: 'wrap', justifyContent: 'flex-end',
+  },
   storeModalCategoryPill: {
-    backgroundColor: '#EBF5FB', borderRadius: 12,
-    paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 6,
   },
-  storeModalCategoryText: { color: '#2E86AB', fontSize: 13, fontWeight: '600' },
+  storeModalCategoryText: { fontSize: 13, fontWeight: '700' },
   storeModalDistancePill: {
-    backgroundColor: '#DCFCE7', borderRadius: 12,
-    paddingHorizontal: 12, paddingVertical: 5,
+    backgroundColor: '#DCFCE7', borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
   },
   storeModalDistanceText: { color: '#16A34A', fontSize: 13, fontWeight: '700' },
   storeModalDescription: {
     fontSize: 14, color: '#4B5563', textAlign: 'right',
-    lineHeight: 22, marginBottom: 10,
+    lineHeight: 22, marginBottom: 12,
+    alignSelf: 'stretch',
   },
-  storeModalPhone: { fontSize: 14, color: '#374151', fontWeight: '600' },
-  storeModalActions: { flexDirection: 'row', gap: 10, marginTop: 16, alignSelf: 'stretch', justifyContent: 'flex-start' },
+  storeModalPhoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    backgroundColor: '#F0F9FF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 16,
+    gap: 8,
+  },
+  storeModalPhoneIcon: { fontSize: 18 },
+  storeModalPhoneText: { fontSize: 15, fontWeight: '700', color: '#2E86AB' },
+
+  // Action buttons row
+  storeModalBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignSelf: 'stretch',
+    marginBottom: 14,
+  },
+  storeModalActionBtn: {
+    flex: 1,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storeModalNavigateBtn: {
+    backgroundColor: '#2E86AB',
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.2, radius: 6, elevation: 4 }),
+  },
+  storeModalNavigateBtnIcon: { fontSize: 22, marginBottom: 4 },
+  storeModalNavigateBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  storeModalNavigateBtnSub: {
+    color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '600', marginTop: 2,
+  },
+  storeModalServicesBtn: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+  },
+  storeModalServicesBtnIcon: { fontSize: 22, marginBottom: 4 },
+  storeModalServicesBtnText: { color: '#374151', fontSize: 14, fontWeight: '700' },
+
   storeModalReportBtn: {
     backgroundColor: '#FEF3C7',
     borderRadius: 12,
-    paddingVertical: 12,
+    paddingVertical: 10,
     alignItems: 'center',
-    marginBottom: 12,
+    alignSelf: 'stretch',
+    marginBottom: 8,
   },
-  storeModalReportBtnText: { color: '#B45309', fontSize: 14, fontWeight: '700' },
+  storeModalReportBtnText: { color: '#B45309', fontSize: 13, fontWeight: '600' },
+
+  // Admin row
+  storeModalAdminRow: {
+    flexDirection: 'row', gap: 10, alignSelf: 'stretch', marginTop: 8,
+  },
   storeModalEditBtn: {
     flex: 1, backgroundColor: '#2E86AB', borderRadius: 12,
-    paddingVertical: 12, alignItems: 'center',
+    paddingVertical: 10, alignItems: 'center',
   },
-  storeModalEditBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  storeModalEditBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   storeModalDeleteBtn: {
     flex: 1, backgroundColor: '#FEE2E2', borderRadius: 12,
-    paddingVertical: 12, alignItems: 'center',
+    paddingVertical: 10, alignItems: 'center',
   },
-  storeModalDeleteBtnText: { color: '#DC2626', fontSize: 14, fontWeight: '700' },
+  storeModalDeleteBtnText: { color: '#DC2626', fontSize: 13, fontWeight: '700' },
+
+  // Services Modal
+  servicesModal: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    overflow: 'hidden',
+    ...shadow({ offset: { width: 0, height: -6 }, opacity: 0.18, radius: 16, elevation: 24 }),
+  },
+  servicesModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  servicesModalTitle: {
+    fontSize: 18, fontWeight: '800', color: '#1A3A5C', textAlign: 'right',
+  },
+  servicesModalCloseText: {
+    fontSize: 18, color: '#6B7280', fontWeight: '700',
+  },
+  servicesModalBody: { padding: 20 },
+  servicesItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    gap: 10,
+  },
+  servicesItemIcon: { fontSize: 20 },
+  servicesItemText: {
+    flex: 1, fontSize: 14, color: '#374151',
+    textAlign: 'right', lineHeight: 22,
+  },
+  servicesEmpty: { padding: 30, alignItems: 'center' },
+  servicesEmptyText: { color: '#9CA3AF', fontSize: 15 },
+  servicesSectionTitle: {
+    fontSize: 16, fontWeight: '700', color: '#1A3A5C',
+    textAlign: 'right', marginTop: 16, marginBottom: 10, paddingBottom: 6,
+    borderBottomWidth: 1, borderBottomColor: '#E5E7EB',
+  },
+  guestHint: {
+    textAlign: 'center', color: '#9CA3AF', fontSize: 13,
+    marginTop: 8, fontStyle: 'italic',
+  },
+  sidebarOwnerBtn: {
+    backgroundColor: '#10B981', borderRadius: 12,
+    paddingVertical: 14, alignItems: 'center', marginHorizontal: 16,
+    marginBottom: 8,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
+  },
+  sidebarOwnerBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  cartBar: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#2E86AB', padding: 16, paddingBottom: 20,
+    borderTopLeftRadius: 0, borderTopRightRadius: 0,
+  },
+  cartBtn: {
+    backgroundColor: '#fff', borderRadius: 12,
+    paddingHorizontal: 20, paddingVertical: 10,
+  },
+  cartBtnText: { color: '#2E86AB', fontWeight: '700', fontSize: 15 },
 });

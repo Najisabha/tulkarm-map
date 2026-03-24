@@ -1,23 +1,39 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  ScrollView,
-  Modal,
-  Alert,
-  Platform,
-  ActivityIndicator,
-  Image,
-} from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { api, PlaceType } from '../api/client';
 import { shadow } from '../utils/shadowStyles';
-import { useCategories } from '../context/CategoryContext';
 
 const MAX_PHOTOS = 3;
 const MAX_VIDEOS = 1;
+
+interface AttributeDefinition {
+  id: string;
+  key: string;
+  label: string;
+  value_type: string;
+  is_required: boolean;
+  options?: any;
+}
+
+interface PlaceTypeUI {
+  id: string;
+  name: string;
+  emoji: string;
+  color: string;
+}
 
 interface AddPlaceModalProps {
   visible: boolean;
@@ -25,16 +41,23 @@ interface AddPlaceModalProps {
   onSubmit: (data: {
     name: string;
     description: string;
-    category: string;
-    phone: string;
+    type_id: string;
+    type_name: string;
     latitude: number;
     longitude: number;
     photos?: string[];
     videos?: string[];
+    dynamicAttributes?: { key: string; value: string; value_type?: string }[];
   }) => Promise<void>;
   latitude: number;
   longitude: number;
+  /** If set, shown instead of the default “تم إضافة المكان” (e.g. pending approval copy). */
+  submitSuccessTitle?: string;
+  submitSuccessMessage?: string;
 }
+
+const DEFAULT_SUCCESS_TITLE = '\u2705 \u062A\u0645';
+const DEFAULT_SUCCESS_MESSAGE = '\u062A\u0645 \u0625\u0636\u0627\u0641\u0629 \u0627\u0644\u0645\u0643\u0627\u0646 \u0628\u0646\u062C\u0627\u062D';
 
 export function AddPlaceModal({
   visible,
@@ -42,46 +65,91 @@ export function AddPlaceModal({
   onSubmit,
   latitude,
   longitude,
+  submitSuccessTitle,
+  submitSuccessMessage,
 }: AddPlaceModalProps) {
-  const { categories } = useCategories();
+  const [step, setStep] = useState<'type' | 'form' | 'success'>('type');
+  const [placeTypes, setPlaceTypes] = useState<PlaceTypeUI[]>([]);
+  const [loadingTypes, setLoadingTypes] = useState(true);
+  const [selectedType, setSelectedType] = useState<PlaceTypeUI | null>(null);
+  const [attrDefs, setAttrDefs] = useState<AttributeDefinition[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState(categories[0]?.name ?? '');
-
-  useEffect(() => {
-    if (categories.length > 0) {
-      setCategory((prev) => (prev.trim() ? prev : categories[0].name));
-    }
-  }, [categories]);
-
+  /** يُحفظ في place_attributes كـ key=phone إن لم يكن هناك حقل ديناميكي بنفس المفتاح */
   const [phone, setPhone] = useState('');
+  const [dynamicValues, setDynamicValues] = useState<Record<string, string>>({});
   const [photos, setPhotos] = useState<string[]>([]);
   const [videos, setVideos] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const loadPlaceTypes = async () => {
+    setLoadingTypes(true);
+    try {
+      const res = await api.getPlaceTypes();
+      const apiTypes: PlaceType[] = res.data || [];
+      setPlaceTypes(
+        apiTypes.map((t) => ({
+          id: t.id,
+          name: t.name,
+          emoji: t.emoji || '\u{1F4CD}',
+          color: t.color || '#2E86AB',
+        }))
+      );
+    } catch {
+      setPlaceTypes([]);
+    } finally {
+      setLoadingTypes(false);
+    }
+  };
+
+  const loadAttributeDefs = async (typeId: string) => {
+    try {
+      const res = await api.getAttributeDefinitions(typeId);
+      setAttrDefs(res.data || []);
+    } catch {
+      setAttrDefs([]);
+    }
+  };
+
   const reset = () => {
+    setStep('type');
+    setSelectedType(null);
+    setAttrDefs([]);
     setName('');
     setDescription('');
-    setCategory(categories[0]?.name ?? '');
     setPhone('');
+    setDynamicValues({});
     setPhotos([]);
     setVideos([]);
   };
+
+  useEffect(() => {
+    if (!visible) return;
+    reset();
+    void loadPlaceTypes();
+  }, [visible]);
 
   const handleClose = () => {
     reset();
     onClose();
   };
 
+  const handleSelectType = (type: PlaceTypeUI) => {
+    setSelectedType(type);
+    setDynamicValues({});
+    loadAttributeDefs(type.id);
+    setStep('form');
+  };
+
   const pickImage = async () => {
     if (photos.length >= MAX_PHOTOS) {
-      Alert.alert('تنبيه', `الحد الأقصى ${MAX_PHOTOS} صور`);
+      Alert.alert('\u062A\u0646\u0628\u064A\u0647', `\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${MAX_PHOTOS} \u0635\u0648\u0631`);
       return;
     }
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('تنبيه', 'نحتاج إذن الوصول للصور');
+        Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u0646\u062D\u062A\u0627\u062C \u0625\u0630\u0646 \u0627\u0644\u0648\u0635\u0648\u0644 \u0644\u0644\u0635\u0648\u0631');
         return;
       }
     }
@@ -98,13 +166,13 @@ export function AddPlaceModal({
 
   const pickVideo = async () => {
     if (videos.length >= MAX_VIDEOS) {
-      Alert.alert('تنبيه', `الحد الأقصى ${MAX_VIDEOS} فيديو`);
+      Alert.alert('\u062A\u0646\u0628\u064A\u0647', `\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${MAX_VIDEOS} \u0641\u064A\u062F\u064A\u0648`);
       return;
     }
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('تنبيه', 'نحتاج إذن الوصول للملفات');
+        Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u0646\u062D\u062A\u0627\u062C \u0625\u0630\u0646 \u0627\u0644\u0648\u0635\u0648\u0644 \u0644\u0644\u0645\u0644\u0641\u0627\u062A');
         return;
       }
     }
@@ -121,31 +189,57 @@ export function AddPlaceModal({
   const removePhoto = (idx: number) => setPhotos((p) => p.filter((_, i) => i !== idx));
   const removeVideo = (idx: number) => setVideos((v) => v.filter((_, i) => i !== idx));
 
+  const setDynamic = (key: string, value: string) => {
+    setDynamicValues((prev) => ({ ...prev, [key]: value }));
+  };
+
   const handleSubmit = async () => {
-    if (!name.trim() || !description.trim()) {
-      Alert.alert('تنبيه', 'يرجى تعبئة الاسم والوصف');
+    if (!name.trim()) {
+      Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u064A\u0631\u062C\u0649 \u062A\u0639\u0628\u0626\u0629 \u0627\u0644\u0627\u0633\u0645');
       return;
     }
-    if (!category.trim() || categories.length === 0) {
-      Alert.alert('تنبيه', 'لا توجد فئات. يرجى طلب المدير إضافة فئات أولاً.');
+    if (!selectedType) {
+      Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u064A\u0631\u062C\u0649 \u0627\u062E\u062A\u064A\u0627\u0631 \u0646\u0648\u0639 \u0627\u0644\u0645\u0643\u0627\u0646');
       return;
     }
+
+    const missingRequired = attrDefs.filter(
+      (d) => d.is_required && !dynamicValues[d.key]?.trim()
+    );
+    if (missingRequired.length > 0) {
+      Alert.alert('\u062A\u0646\u0628\u064A\u0647', `\u064A\u0631\u062C\u0649 \u062A\u0639\u0628\u0626\u0629: ${missingRequired.map((d) => d.label).join('\u060C ')}`);
+      return;
+    }
+
     setLoading(true);
     try {
+      const attrs = Object.entries(dynamicValues)
+        .filter(([, v]) => v.trim())
+        .map(([key, value]) => {
+          const def = attrDefs.find((d) => d.key === key);
+          return { key, value: value.trim(), value_type: def?.value_type || 'string' };
+        });
+
+      const hasPhoneInDynamic = attrDefs.some((d) => d.key === 'phone');
+      const phoneTrim = phone.trim();
+      if (!hasPhoneInDynamic && phoneTrim && !attrs.some((a) => a.key === 'phone')) {
+        attrs.push({ key: 'phone', value: phoneTrim, value_type: 'string' });
+      }
+
       await onSubmit({
         name: name.trim(),
         description: description.trim(),
-        category,
-        phone: phone.trim(),
+        type_id: selectedType.id,
+        type_name: selectedType.name,
         latitude,
         longitude,
         photos: photos.length ? photos : undefined,
         videos: videos.length ? videos : undefined,
+        dynamicAttributes: attrs.length ? attrs : undefined,
       });
-      Alert.alert('✅ تم', 'تم إرسال طلب إضافة المكان للأدمن');
-      handleClose();
-    } catch (e) {
-      Alert.alert('خطأ', 'حدث خطأ، يرجى المحاولة مجدداً');
+      setStep('success');
+    } catch (e: any) {
+      Alert.alert('\u062E\u0637\u0623', e?.message || '\u062D\u062F\u062B \u062E\u0637\u0623\u060C \u064A\u0631\u062C\u0649 \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629 \u0645\u062C\u062F\u062F\u0627\u064B');
     } finally {
       setLoading(false);
     }
@@ -154,137 +248,251 @@ export function AddPlaceModal({
   if (!visible) return null;
 
   return (
-    <Modal visible transparent animationType="slide">
+    <View style={styles.outerContainer}>
       <View style={styles.overlay}>
         <View style={styles.modal}>
+          {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.title}>إضافة مكان</Text>
+            <Text style={styles.title}>
+              {step === 'success'
+                ? '\u0637\u0644\u0628\u0643 \u0642\u064A\u062F \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0629'
+                : step === 'type'
+                  ? '\u0627\u062E\u062A\u0631 \u0646\u0648\u0639 \u0627\u0644\u0645\u0643\u0627\u0646'
+                  : `\u0625\u0636\u0627\u0641\u0629 ${selectedType?.name || '\u0645\u0643\u0627\u0646'}`}
+            </Text>
             <TouchableOpacity onPress={handleClose}>
-              <Text style={styles.closeBtn}>✕</Text>
+              <Text style={styles.closeBtn}>{'\u2715'}</Text>
             </TouchableOpacity>
           </View>
-          <ScrollView style={styles.body} keyboardShouldPersistTaps="handled">
-            <Text style={styles.coords}>📌 {latitude.toFixed(5)}, {longitude.toFixed(5)}</Text>
 
-            <Text style={styles.label}>الاسم *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="اسم المكان"
-              placeholderTextColor="#9CA3AF"
-              value={name}
-              onChangeText={setName}
-              textAlign="right"
-            />
+          {step === 'type' ? (
+            <ScrollView style={styles.typeGrid} contentContainerStyle={{ paddingBottom: 30 }}>
+              <Text style={styles.coords}>{'\u{1F4CC}'} {latitude.toFixed(5)}, {longitude.toFixed(5)}</Text>
+              <Text style={styles.typeHint}>{'\u0645\u0627 \u0646\u0648\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u0643\u0627\u0646\u061F'}</Text>
 
-            <Text style={styles.label}>الوصف *</Text>
-            <TextInput
-              style={[styles.input, styles.textarea]}
-              placeholder="وصف مختصر"
-              placeholderTextColor="#9CA3AF"
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              textAlign="right"
-            />
-
-            <Text style={styles.label}>الفئة</Text>
-            {categories.length === 0 ? (
-              <Text style={styles.emptyCategoriesText}>لا توجد فئات. يرجى طلب المدير إضافة فئات أولاً.</Text>
-            ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.catRow}
-              contentContainerStyle={styles.catRowContent}
-            >
-              {[...categories]
-                .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
-                .map((c) => (
-                <TouchableOpacity
-                  key={c.id}
-                  style={[styles.catChip, category === c.name && [styles.catChipActive, { backgroundColor: c.color }]]}
-                  onPress={() => setCategory(c.name)}
-                >
-                  <Text style={[styles.catText, category === c.name && { color: '#fff' }]}>
-                    {c.emoji} {c.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {loadingTypes ? (
+                <ActivityIndicator size="large" color="#2E86AB" style={{ marginTop: 20 }} />
+              ) : placeTypes.length === 0 ? (
+                <Text style={styles.noTypesText}>{'\u0644\u0627 \u062A\u0648\u062C\u062F \u0623\u0646\u0648\u0627\u0639 \u0623\u0645\u0627\u0643\u0646. \u062A\u0623\u0643\u062F \u0645\u0646 \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u0627\u0644\u0633\u064A\u0631\u0641\u0631 \u0623\u0648 \u0623\u0636\u0641 \u0623\u0646\u0648\u0627\u0639 \u0645\u0646 \u0644\u0648\u062D\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629.'}</Text>
+              ) : (
+                placeTypes.map((type) => (
+                  <TouchableOpacity
+                    key={type.id}
+                    style={styles.typeCard}
+                    onPress={() => handleSelectType(type)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.typeIconCircle, { backgroundColor: type.color + '18' }]}>
+                      <Text style={styles.typeEmoji}>{type.emoji}</Text>
+                    </View>
+                    <Text style={styles.typeLabel}>{type.name}</Text>
+                    <Text style={styles.typeArrow}>{'\u2190'}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
             </ScrollView>
-            )}
-
-            <Text style={styles.label}>رقم الهاتف</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="05xxxxxxxx"
-              placeholderTextColor="#9CA3AF"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              textAlign="right"
-            />
-
-            <Text style={styles.label}>صور ({photos.length}/{MAX_PHOTOS})</Text>
-            <View style={styles.mediaRow}>
-              {photos.map((uri, i) => (
-                <View key={i} style={styles.thumbWrap}>
-                  <Image source={{ uri }} style={styles.thumb} />
-                  <TouchableOpacity style={styles.removeThumb} onPress={() => removePhoto(i)}>
-                    <Text style={styles.removeThumbText}>✕</Text>
+          ) : step === 'form' ? (
+            <View style={styles.formStep}>
+              <ScrollView
+                style={styles.bodyScroll}
+                contentContainerStyle={styles.bodyScrollContent}
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
+              >
+              {selectedType ? (
+                <>
+                  <TouchableOpacity style={styles.selectedTypeBadge} onPress={() => setStep('type')}>
+                    <Text style={styles.selectedTypeBadgeArrow}>{'\u2192'}</Text>
+                    <View style={[styles.selectedTypeDot, { backgroundColor: selectedType.color }]} />
+                    <Text style={styles.selectedTypeBadgeText}>
+                      {selectedType.emoji} {selectedType.name}
+                    </Text>
+                    <Text style={styles.selectedTypeChange}>{'\u062A\u063A\u064A\u064A\u0631'}</Text>
                   </TouchableOpacity>
-                </View>
-              ))}
-              {photos.length < MAX_PHOTOS && (
-                <TouchableOpacity style={styles.addMediaBtn} onPress={pickImage}>
-                  <Text style={styles.addMediaText}>📷 إضافة صورة</Text>
-                </TouchableOpacity>
-              )}
-            </View>
 
-            <Text style={styles.label}>فيديو ({videos.length}/{MAX_VIDEOS})</Text>
-            <View style={styles.mediaRow}>
-              {videos.map((uri, i) => (
-                <View key={i} style={styles.thumbWrap}>
-                  <View style={styles.videoPlaceholder}>
-                    <Text style={{ fontSize: 24 }}>🎬</Text>
+                  <Text style={styles.coords}>{'\u{1F4CC}'} {latitude.toFixed(5)}, {longitude.toFixed(5)}</Text>
+
+                  <Text style={styles.label}>{'\u0627\u0644\u0627\u0633\u0645 *'}</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder={'\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646'}
+                    placeholderTextColor="#9CA3AF"
+                    value={name}
+                    onChangeText={setName}
+                    textAlign="right"
+                  />
+
+                  <Text style={styles.label}>{'\u0627\u0644\u0648\u0635\u0641'}</Text>
+                  <TextInput
+                    style={[styles.input, styles.textarea]}
+                    placeholder={'\u0648\u0635\u0641 \u0645\u062E\u062A\u0635\u0631 (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)'}
+                    placeholderTextColor="#9CA3AF"
+                    value={description}
+                    onChangeText={setDescription}
+                    multiline
+                    textAlign="right"
+                  />
+
+                  {!attrDefs.some((d) => d.key === 'phone') ? (
+                    <>
+                      <Text style={styles.label}>
+                        {'\u0631\u0642\u0645 \u0627\u0644\u0647\u0627\u062A\u0641 (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)'}
+                      </Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder={'\u0645\u062B\u0627\u0644: 0591234567'}
+                        placeholderTextColor="#9CA3AF"
+                        value={phone}
+                        onChangeText={setPhone}
+                        keyboardType={Platform.OS === 'web' ? 'default' : 'phone-pad'}
+                        textAlign="right"
+                      />
+                    </>
+                  ) : null}
+
+                  {/* Dynamic attribute fields from place_type_attribute_definitions */}
+                  {attrDefs.map((def) => (
+                    <View key={def.id}>
+                      <Text style={styles.label}>
+                        {def.label}{def.is_required ? ' *' : ''}
+                      </Text>
+                      {def.value_type === 'boolean' ? (
+                        <TouchableOpacity
+                          style={[
+                            styles.booleanToggle,
+                            dynamicValues[def.key] === 'true' && styles.booleanToggleActive,
+                          ]}
+                          onPress={() =>
+                            setDynamic(def.key, dynamicValues[def.key] === 'true' ? 'false' : 'true')
+                          }
+                        >
+                          <Text style={styles.booleanToggleText}>
+                            {dynamicValues[def.key] === 'true' ? '\u2705 \u0646\u0639\u0645' : '\u274C \u0644\u0627'}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <TextInput
+                          style={styles.input}
+                          placeholder={def.label}
+                          placeholderTextColor="#9CA3AF"
+                          value={dynamicValues[def.key] || ''}
+                          onChangeText={(v) => setDynamic(def.key, v)}
+                          keyboardType={def.value_type === 'number' ? 'numeric' : 'default'}
+                          textAlign="right"
+                        />
+                      )}
+                    </View>
+                  ))}
+
+                  <Text style={styles.label}>{'\u0635\u0648\u0631'} ({photos.length}/{MAX_PHOTOS})</Text>
+                  <View style={styles.mediaRow}>
+                    {photos.map((uri, i) => (
+                      <View key={i} style={styles.thumbWrap}>
+                        <Image source={{ uri }} style={styles.thumb} />
+                        <TouchableOpacity style={styles.removeThumb} onPress={() => removePhoto(i)}>
+                          <Text style={styles.removeThumbText}>{'\u2715'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {photos.length < MAX_PHOTOS && (
+                      <TouchableOpacity style={styles.addMediaBtn} onPress={pickImage}>
+                        <Text style={styles.addMediaText}>{'\u{1F4F7} \u0625\u0636\u0627\u0641\u0629 \u0635\u0648\u0631\u0629'}</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
-                  <TouchableOpacity style={styles.removeThumb} onPress={() => removeVideo(i)}>
-                    <Text style={styles.removeThumbText}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-              {videos.length < MAX_VIDEOS && (
-                <TouchableOpacity style={styles.addMediaBtn} onPress={pickVideo}>
-                  <Text style={styles.addMediaText}>🎬 إضافة فيديو</Text>
-                </TouchableOpacity>
-              )}
-            </View>
 
-            <TouchableOpacity
-              style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
-              onPress={handleSubmit}
-              disabled={loading}
+                  <Text style={styles.label}>{'\u0641\u064A\u062F\u064A\u0648'} ({videos.length}/{MAX_VIDEOS})</Text>
+                  <Text style={styles.videoHint}>{'\u0627\u0644\u0641\u064A\u062F\u064A\u0648 \u0644\u0627 \u064A\u064F\u062D\u0641\u0638 \u0639\u0644\u0649 \u0627\u0644\u062E\u0627\u062F\u0645 \u062D\u0627\u0644\u064A\u0627\u064B\u061B \u064A\u064F\u0633\u062A\u062E\u062F\u0645 \u0644\u0644\u0645\u0639\u0627\u064A\u0646\u0629 \u0627\u0644\u0645\u062D\u0644\u064A\u0629 \u0641\u0642\u0637.'}</Text>
+                  <View style={styles.mediaRow}>
+                    {videos.map((uri, i) => (
+                      <View key={i} style={styles.thumbWrap}>
+                        <View style={styles.videoPlaceholder}>
+                          <Text style={{ fontSize: 24 }}>{'\u{1F3AC}'}</Text>
+                        </View>
+                        <TouchableOpacity style={styles.removeThumb} onPress={() => removeVideo(i)}>
+                          <Text style={styles.removeThumbText}>{'\u2715'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {videos.length < MAX_VIDEOS && (
+                      <TouchableOpacity style={styles.addMediaBtn} onPress={pickVideo}>
+                        <Text style={styles.addMediaText}>{'\u{1F3AC} \u0625\u0636\u0627\u0641\u0629 \u0641\u064A\u062F\u064A\u0648'}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </>
+              ) : null}
+              </ScrollView>
+
+              <View style={styles.submitFooter} pointerEvents="box-none">
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.submitBtn,
+                    loading && styles.submitBtnDisabled,
+                    pressed && !loading && styles.submitBtnPressed,
+                  ]}
+                  onPress={handleSubmit}
+                  disabled={loading}
+                  accessibilityRole="button"
+                  accessibilityLabel={'\u0625\u0636\u0627\u0641\u0629 \u0627\u0644\u0645\u0643\u0627\u0646'}
+                  hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.submitBtnText}>{'\u0625\u0636\u0627\u0641\u0629 \u0627\u0644\u0645\u0643\u0627\u0646'}</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <ScrollView
+              style={styles.successScroll}
+              contentContainerStyle={styles.successScrollContent}
+              keyboardShouldPersistTaps="handled"
             >
-              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>إرسال الطلب</Text>}
-            </TouchableOpacity>
-          </ScrollView>
+              <View style={styles.successCircle}>
+                <Text style={styles.successCheck}>{'\u2713'}</Text>
+              </View>
+              <Text style={styles.successHeadline}>
+                {submitSuccessTitle ?? DEFAULT_SUCCESS_TITLE}
+              </Text>
+              <Text style={styles.successText}>
+                {submitSuccessMessage ?? DEFAULT_SUCCESS_MESSAGE}
+              </Text>
+              <TouchableOpacity style={styles.successBtn} onPress={handleClose} activeOpacity={0.85}>
+                <Text style={styles.successBtnText}>{'\u062D\u0633\u0646\u0627\u064B\u060C \u0641\u0647\u0645\u062A'}</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
         </View>
       </View>
-    </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  outerContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    justifyContent: 'flex-end',
+    elevation: 1000,
+  },
   overlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'flex-end',
+    zIndex: 0,
   },
   modal: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '90%',
+    zIndex: 1,
+    overflow: 'hidden',
+    elevation: 24,
   },
   header: {
     flexDirection: 'row',
@@ -296,7 +504,79 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 20, fontWeight: '700', color: '#1A3A5C' },
   closeBtn: { fontSize: 24, color: '#6B7280' },
-  body: { padding: 20, maxHeight: 500 },
+
+  typeGrid: { padding: 20, flexGrow: 0 },
+  typeHint: {
+    fontSize: 16, fontWeight: '600', color: '#374151',
+    textAlign: 'center', marginBottom: 20,
+  },
+  noTypesText: { fontSize: 14, color: '#EF4444', textAlign: 'center', marginTop: 20 },
+  typeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+  },
+  typeIconCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  typeEmoji: { fontSize: 26 },
+  typeLabel: {
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1A3A5C',
+    textAlign: 'right',
+    marginRight: 12,
+  },
+  typeArrow: { fontSize: 18, color: '#9CA3AF' },
+
+  selectedTypeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    gap: 8,
+  },
+  selectedTypeBadgeArrow: { fontSize: 14, color: '#2E86AB' },
+  selectedTypeDot: { width: 8, height: 8, borderRadius: 4 },
+  selectedTypeBadgeText: { flex: 1, fontSize: 15, fontWeight: '700', color: '#1A3A5C', textAlign: 'right' },
+  selectedTypeChange: { fontSize: 13, color: '#2E86AB', fontWeight: '600' },
+
+  formStep: {
+    flexShrink: 1,
+    flexGrow: 1,
+    minHeight: 280,
+    maxHeight: 520,
+  },
+  bodyScroll: {
+    flexGrow: 1,
+    flexShrink: 1,
+  },
+  bodyScrollContent: {
+    padding: 20,
+    paddingBottom: 12,
+  },
+  submitFooter: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 20,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    backgroundColor: '#fff',
+  },
   coords: { fontSize: 12, color: '#6B7280', marginBottom: 16, textAlign: 'right' },
   label: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 8, textAlign: 'right' },
   input: {
@@ -307,19 +587,16 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1.5,
     borderColor: '#E5E7EB',
+    color: '#1F2937',
   },
   textarea: { minHeight: 80 },
-  emptyCategoriesText: { fontSize: 14, color: '#9CA3AF', marginBottom: 16, textAlign: 'right' },
-  catRow: { marginBottom: 16 },
-  catRowContent: { flexDirection: 'row-reverse', gap: 8, paddingVertical: 4 },
-  catChip: {
-    backgroundColor: '#E5E7EB',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  videoHint: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    textAlign: 'right',
+    marginBottom: 8,
+    marginTop: -8,
   },
-  catChipActive: { backgroundColor: '#2E86AB' },
-  catText: { fontSize: 14, fontWeight: '600', color: '#374151' },
   mediaRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   thumbWrap: { position: 'relative' },
   thumb: { width: 70, height: 70, borderRadius: 10 },
@@ -355,14 +632,80 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addMediaText: { fontSize: 11, color: '#6B7280' },
+  booleanToggle: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+  },
+  booleanToggleActive: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  booleanToggleText: { fontSize: 15, fontWeight: '600', color: '#374151' },
   submitBtn: {
     backgroundColor: '#2E86AB',
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 8,
-    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 4 }, opacity: 0.3, radius: 8, elevation: 4 }),
+    justifyContent: 'center',
+    minHeight: 52,
+    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 4 }, opacity: 0.3, radius: 8, elevation: 8 }),
   },
   submitBtnDisabled: { opacity: 0.7 },
+  submitBtnPressed: { opacity: 0.9 },
   submitBtnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+
+  successScroll: { maxHeight: 520 },
+  successScrollContent: {
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 28,
+    alignItems: 'center',
+  },
+  successCircle: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#16A34A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 22,
+    ...shadow({ color: '#15803D', offset: { width: 0, height: 6 }, opacity: 0.35, radius: 12, elevation: 10 }),
+  },
+  successCheck: {
+    color: '#fff',
+    fontSize: 52,
+    fontWeight: '300',
+    lineHeight: 56,
+    marginTop: -4,
+  },
+  successHeadline: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#14532D',
+    textAlign: 'center',
+    marginBottom: 14,
+    paddingHorizontal: 8,
+  },
+  successText: {
+    fontSize: 16,
+    lineHeight: 26,
+    color: '#4B5563',
+    textAlign: 'center',
+    paddingHorizontal: 4,
+  },
+  successBtn: {
+    marginTop: 26,
+    alignSelf: 'stretch',
+    backgroundColor: '#2E86AB',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    ...shadow({ color: '#2E86AB', offset: { width: 0, height: 4 }, opacity: 0.28, radius: 8, elevation: 6 }),
+  },
+  successBtnText: { color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center' },
 });

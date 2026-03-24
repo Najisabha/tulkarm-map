@@ -9,7 +9,6 @@ import {
   View,
 } from 'react-native';
 import { api } from '../../api/client';
-import { USE_API } from '../../api/config';
 import { LAYOUT } from '../../constants/layout';
 import { useAuth } from '../../context/AuthContext';
 import { shadow } from '../../utils/shadowStyles';
@@ -40,14 +39,13 @@ export default function AdminReportsScreen() {
   const [filter, setFilter] = useState<'all' | 'pending'>('pending');
 
   useEffect(() => {
-    if (USE_API) loadReports();
-    else setLoading(false);
+    loadReports();
   }, []);
 
   const loadReports = async () => {
     try {
-      const list = await api.getReports();
-      setReports(list);
+      const res = await api.getReports();
+      setReports(res.data || []);
     } catch {
       setReports([]);
     } finally {
@@ -72,22 +70,6 @@ export default function AdminReportsScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.backLink}>العودة</Text>
         </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (!USE_API) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backBtnText}>→</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>الإبلاغات</Text>
-        </View>
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>يتطلب اتصال الخادم</Text>
-        </View>
       </View>
     );
   }

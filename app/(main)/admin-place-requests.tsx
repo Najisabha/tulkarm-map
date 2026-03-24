@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,61 +7,99 @@ import {
   TextInput,
   ScrollView,
   Alert,
-  Modal,
-  KeyboardAvoidingView,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
-import { useStores, PlaceRequest } from '../../context/StoreContext';
 import { useCategories } from '../../context/CategoryContext';
+import { useStores, Store } from '../../context/StoreContext';
+import { api, PlaceData } from '../../api/client';
 import { LAYOUT } from '../../constants/layout';
-import { TULKARM_REGION } from '../../constants/tulkarmRegion';
 import { shadow } from '../../utils/shadowStyles';
 
 function catEmoji(cats: { name: string; emoji: string }[], name: string) {
   return cats.find((c) => c.name === name)?.emoji || '📍';
 }
 
+function catColor(cats: { name: string; color: string }[], name: string) {
+  return cats.find((c) => c.name === name)?.color || '#2E86AB';
+}
+
+function showMessage(title: string, message: string) {
+  if (typeof window !== 'undefined') {
+    window.alert(`${title}\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
+
+function confirmAction(title: string, message: string): Promise<boolean> {
+  if (typeof window !== 'undefined') {
+    return Promise.resolve(window.confirm(`${title}\n${message}`));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: 'إلغاء', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'تأكيد', style: 'destructive', onPress: () => resolve(true) },
+    ]);
+  });
+}
+
 const STATUS_LABELS: Record<string, string> = {
   pending: 'قيد الانتظار',
-  accepted: 'مقبول',
+  active: 'مفعّل',
   rejected: 'مرفوض',
 };
+
+/** حالة الطلب كما تُعرَّف في الـ API؛ أي قيمة غير صريحة تُعامل كمعلّق للمراجعة */
+function normalizePlaceStatus(raw: unknown): 'pending' | 'active' | 'rejected' {
+  const s = String(raw == null ? '' : raw).trim().toLowerCase();
+  if (s === 'active' || s === 'rejected' || s === 'pending') return s;
+  return 'pending';
+}
+
+function toCoord(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  const n = parseFloat(String(v ?? '').trim().replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function storeToPlaceData(s: Store): PlaceData {
+  const status = normalizePlaceStatus(s.status);
+  return {
+    id: s.id,
+    name: s.name,
+    description: s.description || null,
+    type_name: s.type_name || s.category,
+    type_id: s.type_id || '',
+    latitude: toCoord(s.latitude),
+    longitude: toCoord(s.longitude),
+    status,
+    avg_rating: s.avg_rating ?? '0',
+    rating_count: Number(s.rating_count ?? 0),
+    attributes: s.attributes || [],
+    images: s.images || [],
+    created_at: s.createdAt,
+  };
+}
 
 export default function AdminPlaceRequestsScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { categories } = useCategories();
-  const {
-    placeRequests,
-    addPlaceRequest,
-    updatePlaceRequest,
-    acceptPlaceRequest,
-    rejectPlaceRequest,
-    deletePlaceRequest,
-  } = useStores();
+  const { stores, loading, refreshStores } = useStores();
 
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [editingRequest, setEditingRequest] = useState<PlaceRequest | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', description: '', category: '', phone: '', lat: '', lng: '' });
-  const [form, setForm] = useState({
-    name: '',
-    description: '',
-    category: categories[0]?.name ?? '',
-    phone: '',
-    lat: String(TULKARM_REGION.latitude),
-    lng: String(TULKARM_REGION.longitude),
-  });
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'accepted' | 'rejected'>('pending');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'active' | 'rejected'>('pending');
   const [searchQuery, setSearchQuery] = useState('');
 
-  React.useEffect(() => {
-    if (categories.length > 0 && !form.category?.trim()) {
-      setForm((f) => ({ ...f, category: categories[0].name }));
-    }
-  }, [categories]);
+  const places = useMemo(() => stores.map(storeToPlaceData), [stores]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshStores();
+    }, [refreshStores])
+  );
 
   if (!user?.isAdmin) {
     return (
@@ -74,108 +112,55 @@ export default function AdminPlaceRequestsScreen() {
     );
   }
 
-  const defaultCategory = categories[0]?.name ?? '';
-
   const filtered = (statusFilter === 'all'
-    ? placeRequests
-    : placeRequests.filter((r) => r.status === statusFilter)
-  ).filter((r) => {
+    ? places
+    : places.filter((p) => normalizePlaceStatus(p.status) === statusFilter)
+  ).filter((p) => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return true;
-    return r.name.toLowerCase().includes(q) ||
-      r.description.toLowerCase().includes(q) ||
-      r.category.toLowerCase().includes(q) ||
-      (r.phone || '').includes(q);
+    return p.name.toLowerCase().includes(q) ||
+      (p.description || '').toLowerCase().includes(q) ||
+      p.type_name.toLowerCase().includes(q);
   });
 
-  const resetForm = () => {
-    setForm({ name: '', description: '', category: defaultCategory, phone: '', lat: String(TULKARM_REGION.latitude), lng: String(TULKARM_REGION.longitude) });
-  };
-
-  const handleAdd = async () => {
-    if (!form.name.trim() || !form.description.trim()) {
-      Alert.alert('تنبيه', 'يرجى تعبئة الاسم والوصف');
-      return;
+  const handleAccept = async (place: PlaceData) => {
+    try {
+      await api.updatePlace(place.id, { status: 'active' });
+      await refreshStores();
+      showMessage('✅ تم', 'تم تفعيل المكان');
+    } catch (e: any) {
+      showMessage('خطأ', e?.message || 'فشل التفعيل');
     }
-    if (!form.category.trim() || categories.length === 0) {
-      Alert.alert('تنبيه', 'أضف فئة أولاً من إدارة الفئات');
-      return;
+  };
+
+  const handleReject = async (place: PlaceData) => {
+    const confirmed = await confirmAction(
+      'رفض وحذف الطلب',
+      `سيتم حذف طلب «${place.name}» نهائياً من قاعدة البيانات. المتابعة؟`
+    );
+    if (!confirmed) return;
+    try {
+      await api.deletePlace(place.id);
+      await refreshStores();
+      showMessage('تم', 'تم رفض الطلب وحذفه');
+    } catch (e: any) {
+      showMessage('خطأ', e?.message || 'فشل');
     }
-    const lat = parseFloat(form.lat);
-    const lng = parseFloat(form.lng);
-    if (isNaN(lat) || isNaN(lng)) {
-      Alert.alert('تنبيه', 'يرجى إدخال إحداثيات صحيحة');
-      return;
+  };
+
+  const handleDelete = async (place: PlaceData) => {
+    const confirmed = await confirmAction('حذف المكان', `حذف "${place.name}" نهائياً؟`);
+    if (!confirmed) return;
+    try {
+      await api.deletePlace(place.id);
+      await refreshStores();
+      showMessage('تم', 'تم حذف المكان');
+    } catch (e: any) {
+      showMessage('خطأ', e?.message || 'فشل الحذف');
     }
-    setSaving(true);
-    await addPlaceRequest({
-      name: form.name.trim(),
-      description: form.description.trim(),
-      category: form.category,
-      phone: form.phone.trim() || undefined,
-      latitude: lat,
-      longitude: lng,
-    });
-    setSaving(false);
-    setShowAddModal(false);
-    resetForm();
-    Alert.alert('✅ تم', 'تمت إضافة طلب المكان');
   };
 
-  const openEdit = (req: PlaceRequest) => {
-    setEditingRequest(req);
-    setEditForm({
-      name: req.name,
-      description: req.description,
-      category: req.category,
-      phone: req.phone ?? '',
-      lat: String(req.latitude),
-      lng: String(req.longitude),
-    });
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editingRequest) return;
-    if (!editForm.name.trim() || !editForm.description.trim()) {
-      Alert.alert('تنبيه', 'يرجى تعبئة الاسم والوصف');
-      return;
-    }
-    const lat = parseFloat(editForm.lat);
-    const lng = parseFloat(editForm.lng);
-    if (isNaN(lat) || isNaN(lng)) {
-      Alert.alert('تنبيه', 'يرجى إدخال إحداثيات صحيحة');
-      return;
-    }
-    await updatePlaceRequest(editingRequest.id, {
-      name: editForm.name.trim(),
-      description: editForm.description.trim(),
-      category: editForm.category,
-      phone: editForm.phone.trim() || undefined,
-      latitude: lat,
-      longitude: lng,
-    });
-    setEditingRequest(null);
-    Alert.alert('✅ تم', 'تم تحديث الطلب');
-  };
-
-  const handleAccept = (req: PlaceRequest) => {
-    acceptPlaceRequest(req.id);
-    Alert.alert('✅ تم', 'تمت إضافة المكان للمتاجر');
-  };
-
-  const handleReject = (req: PlaceRequest) => {
-    Alert.alert('رفض الطلب', `رفض "${req.name}"؟`, [
-      { text: 'إلغاء', style: 'cancel' },
-      { text: 'رفض', style: 'destructive', onPress: () => { rejectPlaceRequest(req.id); Alert.alert('تم', 'تم رفض الطلب'); } },
-    ]);
-  };
-
-  const handleDelete = (req: PlaceRequest) => {
-    Alert.alert('حذف الطلب', `حذف "${req.name}" نهائياً؟`, [
-      { text: 'إلغاء', style: 'cancel' },
-      { text: 'حذف', style: 'destructive', onPress: async () => { await deletePlaceRequest(req.id); setEditingRequest(null); Alert.alert('تم', 'تم حذف الطلب'); } },
-    ]);
-  };
+  const pendingCount = places.filter((p) => normalizePlaceStatus(p.status) === 'pending').length;
 
   return (
     <View style={styles.container}>
@@ -183,9 +168,9 @@ export default function AdminPlaceRequestsScreen() {
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Text style={styles.backBtnText}>→</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>طلبات الأماكن</Text>
+        <Text style={styles.headerTitle}>طلبات إضافة الأماكن</Text>
         <View style={styles.headerBadge}>
-          <Text style={styles.headerBadgeText}>{placeRequests.filter((r) => r.status === 'pending').length} قيد الانتظار</Text>
+          <Text style={styles.headerBadgeText}>{pendingCount} قيد الانتظار</Text>
         </View>
       </View>
 
@@ -193,19 +178,19 @@ export default function AdminPlaceRequestsScreen() {
         <View style={styles.sectionHeader}>
           <TextInput
             style={styles.searchBar}
-            placeholder="بحث في الطلبات..."
+            placeholder="بحث في الأماكن..."
             placeholderTextColor="#9CA3AF"
             value={searchQuery}
             onChangeText={setSearchQuery}
             textAlign="right"
           />
-          <TouchableOpacity style={styles.addBtn} onPress={() => { setShowAddModal(true); resetForm(); }}>
-            <Text style={styles.addBtnText}>+ إضافة</Text>
+          <TouchableOpacity style={styles.refreshBtn} onPress={() => void refreshStores()}>
+            <Text style={styles.refreshBtnText}>🔄</Text>
           </TouchableOpacity>
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterRow}>
-          {(['pending', 'accepted', 'rejected', 'all'] as const).map((s) => (
+          {(['pending', 'active', 'rejected', 'all'] as const).map((s) => (
             <TouchableOpacity
               key={s}
               style={[styles.filterChip, statusFilter === s && styles.filterChipActive]}
@@ -218,164 +203,99 @@ export default function AdminPlaceRequestsScreen() {
           ))}
         </ScrollView>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <ActivityIndicator size="large" color="#2E86AB" style={{ marginTop: 40 }} />
+        ) : filtered.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateEmoji}>{searchQuery.trim() ? '🔍' : '📋'}</Text>
             <Text style={styles.emptyStateText}>
               {searchQuery.trim()
                 ? 'لا توجد نتائج للبحث'
                 : statusFilter === 'all'
-                  ? 'لا توجد طلبات'
-                  : `لا توجد طلبات ${STATUS_LABELS[statusFilter] ?? 'في هذه الفئة'}`}
+                  ? 'لا توجد أماكن'
+                  : `لا توجد أماكن ${STATUS_LABELS[statusFilter] ?? ''}`}
             </Text>
-            {statusFilter !== 'all' && (
-              <TouchableOpacity style={styles.emptyStateBtn} onPress={() => setStatusFilter('all')}>
-                <Text style={styles.emptyStateBtnText}>عرض الكل</Text>
-              </TouchableOpacity>
-            )}
           </View>
         ) : (
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
-            {filtered.map((req) => (
-              <View key={req.id} style={[styles.requestCard, req.status === 'pending' && styles.requestCardPending]}>
-                <TouchableOpacity style={styles.requestInfo} onPress={() => req.status === 'pending' && openEdit(req)} activeOpacity={req.status === 'pending' ? 0.7 : 1}>
-                  <View style={styles.requestHeader}>
-                    <Text style={styles.requestName} numberOfLines={1}>{req.name}</Text>
-                    <View style={[styles.statusBadge, req.status === 'pending' && styles.statusPending, req.status === 'accepted' && styles.statusAccepted, req.status === 'rejected' && styles.statusRejected]}>
-                      <Text style={styles.statusText}>{STATUS_LABELS[req.status]}</Text>
+            {filtered.map((place) => {
+              const phone = place.attributes?.find(a => a.key === 'phone')?.value;
+              const st = normalizePlaceStatus(place.status);
+              const isPending = st === 'pending';
+              const typeColor = catColor(categories, place.type_name);
+              return (
+                <View key={place.id} style={[styles.requestCard, isPending && styles.requestCardPending]}>
+                  <View style={styles.cardTop}>
+                    <View style={[styles.typeIconCircle, { backgroundColor: typeColor + '22' }]}>
+                      <Text style={styles.typeIconEmoji}>{catEmoji(categories, place.type_name)}</Text>
+                    </View>
+                    <View style={styles.cardMain}>
+                      <View style={styles.requestHeader}>
+                        <Text style={styles.requestName} numberOfLines={2}>{place.name}</Text>
+                        <View style={[
+                          styles.statusBadge,
+                          st === 'pending' && styles.statusPending,
+                          st === 'active' && styles.statusAccepted,
+                          st === 'rejected' && styles.statusRejected,
+                        ]}>
+                          <Text style={styles.statusText}>{STATUS_LABELS[st] || place.status}</Text>
+                        </View>
+                      </View>
+                      {place.description ? (
+                        <Text style={styles.requestDesc} numberOfLines={2}>{place.description}</Text>
+                      ) : null}
                     </View>
                   </View>
-                  <Text style={styles.requestDesc} numberOfLines={1}>{req.description}</Text>
-                  <View style={styles.requestMeta}>
-                    <Text style={styles.requestCategory}>{catEmoji(categories, req.category)} {req.category}</Text>
-                    {req.phone ? <Text style={styles.requestPhone} selectable>📞 {req.phone}</Text> : null}
-                    <Text style={styles.requestCoords}>📌 {req.latitude.toFixed(4)}, {req.longitude.toFixed(4)}</Text>
+                  <View style={styles.chipsRow}>
+                    <View style={[styles.chip, { borderColor: typeColor + '55' }]}>
+                      <Text style={[styles.chipText, { color: typeColor }]}>{place.type_name}</Text>
+                    </View>
+                    {phone ? (
+                      <View style={styles.chip}>
+                        <Text style={styles.chipTextMuted} selectable>📞 {phone}</Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.chipMuted}>
+                      <Text style={styles.chipCoords} selectable>
+                        📌 {place.latitude.toFixed(4)}, {place.longitude.toFixed(4)}
+                      </Text>
+                    </View>
                   </View>
-                </TouchableOpacity>
-                <View style={styles.requestActions}>
-                  {req.status === 'pending' && (
-                    <>
-                      <TouchableOpacity style={styles.editBtn} onPress={() => openEdit(req)} activeOpacity={0.8}>
-                        <Text style={styles.editBtnText}>✏️ تعديل</Text>
+                  <View style={styles.actionSection}>
+                    {isPending ? (
+                      <View style={styles.actionRow}>
+                        <TouchableOpacity style={[styles.actionBtn, styles.actionAccept]} onPress={() => void handleAccept(place)} activeOpacity={0.85}>
+                          <Text style={styles.actionBtnTextLight}>✓ تفعيل</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.actionBtn, styles.actionReject]} onPress={() => void handleReject(place)} activeOpacity={0.85}>
+                          <Text style={styles.actionBtnTextDanger}>✕ رفض</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                    <View style={styles.actionRow}>
+                      <TouchableOpacity
+                        style={[styles.actionBtn, styles.actionEdit]}
+                        onPress={() =>
+                          router.push({
+                            pathname: '/(main)/admin-stores',
+                            params: { editStoreId: place.id },
+                          })
+                        }
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.actionBtnTextEdit}>✎ تعديل</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAccept(req)} activeOpacity={0.8}>
-                        <Text style={styles.acceptBtnText}>✓ قبول</Text>
+                      <TouchableOpacity style={[styles.actionBtn, styles.actionDelete]} onPress={() => void handleDelete(place)} activeOpacity={0.85}>
+                        <Text style={styles.actionBtnTextDanger}>🗑 حذف</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.rejectBtn} onPress={() => handleReject(req)} activeOpacity={0.8}>
-                        <Text style={styles.rejectBtnText}>✕ رفض</Text>
-                      </TouchableOpacity>
-                    </>
-                  )}
-                  <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDelete(req)} activeOpacity={0.8}>
-                    <Text style={styles.deleteBtnText}>🗑️ حذف</Text>
-                  </TouchableOpacity>
+                    </View>
+                  </View>
                 </View>
-              </View>
-            ))}
+              );
+            })}
           </ScrollView>
         )}
       </View>
-
-      {/* Add Modal */}
-      <Modal visible={showAddModal} animationType="slide">
-        <KeyboardAvoidingView style={styles.modalContainer} behavior={LAYOUT.keyboardBehavior}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => { setShowAddModal(false); resetForm(); }}>
-              <Text style={styles.modalCancelText}>إلغاء</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>إضافة طلب مكان</Text>
-            <TouchableOpacity onPress={handleAdd} disabled={saving}>
-              {saving ? <ActivityIndicator color="#2E86AB" /> : <Text style={styles.modalSaveText}>حفظ</Text>}
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>اسم المكان *</Text>
-              <TextInput style={styles.formInput} placeholder="مثال: مطعم الزيتون" value={form.name} onChangeText={(t) => setForm((p) => ({ ...p, name: t }))} textAlign="right" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>الوصف *</Text>
-              <TextInput style={[styles.formInput, styles.formTextarea]} placeholder="وصف مختصر" value={form.description} onChangeText={(t) => setForm((p) => ({ ...p, description: t }))} multiline textAlign="right" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>رقم الهاتف</Text>
-              <TextInput style={styles.formInput} placeholder="09-XXXXXXX" value={form.phone} onChangeText={(t) => setForm((p) => ({ ...p, phone: t }))} keyboardType="phone-pad" textAlign="right" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>الفئة</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {[...categories]
-                  .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
-                  .map((cat) => (
-                  <TouchableOpacity key={cat.id} style={[styles.categoryChip, form.category === cat.name && styles.categoryChipActive]} onPress={() => setForm((p) => ({ ...p, category: cat.name }))}>
-                    <Text style={[styles.categoryChipText, form.category === cat.name && styles.categoryChipTextActive]}>{cat.emoji} {cat.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>الإحداثيات</Text>
-              <View style={styles.coordsRow}>
-                <TextInput style={[styles.formInput, styles.coordInput]} placeholder="خط العرض" value={form.lat} onChangeText={(t) => setForm((p) => ({ ...p, lat: t }))} keyboardType="decimal-pad" textAlign="center" />
-                <TextInput style={[styles.formInput, styles.coordInput]} placeholder="خط الطول" value={form.lng} onChangeText={(t) => setForm((p) => ({ ...p, lng: t }))} keyboardType="decimal-pad" textAlign="center" />
-              </View>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* Edit Modal */}
-      <Modal visible={!!editingRequest} animationType="slide">
-        <KeyboardAvoidingView style={styles.modalContainer} behavior={LAYOUT.keyboardBehavior}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setEditingRequest(null)}>
-              <Text style={styles.modalCancelText}>إلغاء</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>تعديل الطلب</Text>
-            <TouchableOpacity onPress={handleSaveEdit}>
-              <Text style={styles.modalSaveText}>حفظ</Text>
-            </TouchableOpacity>
-          </View>
-          {editingRequest && editingRequest.status === 'pending' && (
-            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>اسم المكان *</Text>
-                <TextInput style={styles.formInput} value={editForm.name} onChangeText={(t) => setEditForm((p) => ({ ...p, name: t }))} textAlign="right" />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>الوصف *</Text>
-                <TextInput style={[styles.formInput, styles.formTextarea]} value={editForm.description} onChangeText={(t) => setEditForm((p) => ({ ...p, description: t }))} multiline textAlign="right" />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>رقم الهاتف</Text>
-                <TextInput style={styles.formInput} value={editForm.phone} onChangeText={(t) => setEditForm((p) => ({ ...p, phone: t }))} keyboardType="phone-pad" textAlign="right" />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>الفئة</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {[...categories]
-                  .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
-                  .map((cat) => (
-                    <TouchableOpacity key={cat.id} style={[styles.categoryChip, editForm.category === cat.name && styles.categoryChipActive]} onPress={() => setEditForm((p) => ({ ...p, category: cat.name }))}>
-                      <Text style={[styles.categoryChipText, editForm.category === cat.name && styles.categoryChipTextActive]}>{cat.emoji} {cat.name}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>الإحداثيات</Text>
-                <View style={styles.coordsRow}>
-                  <TextInput style={[styles.formInput, styles.coordInput]} placeholder="خط العرض" value={editForm.lat} onChangeText={(t) => setEditForm((p) => ({ ...p, lat: t }))} keyboardType="decimal-pad" textAlign="center" />
-                  <TextInput style={[styles.formInput, styles.coordInput]} placeholder="خط الطول" value={editForm.lng} onChangeText={(t) => setEditForm((p) => ({ ...p, lng: t }))} keyboardType="decimal-pad" textAlign="center" />
-                </View>
-              </View>
-              <TouchableOpacity style={styles.deleteRequestBtn} onPress={() => editingRequest && handleDelete(editingRequest)}>
-                <Text style={styles.deleteRequestBtnText}>🗑️ حذف الطلب</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          )}
-        </KeyboardAvoidingView>
-      </Modal>
     </View>
   );
 }
@@ -405,8 +325,8 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     minHeight: 42,
   },
-  addBtn: { backgroundColor: '#2E86AB', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, minHeight: 42, justifyContent: 'center' },
-  addBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  refreshBtn: { backgroundColor: '#2E86AB', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12, minHeight: 42, justifyContent: 'center' },
+  refreshBtnText: { fontSize: 18 },
   filterScroll: { marginBottom: 16, maxHeight: 48 },
   filterRow: { flexDirection: 'row-reverse', gap: 10, paddingVertical: 4, paddingHorizontal: 2 },
   filterChip: { backgroundColor: '#E5E7EB', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 8, minHeight: 38, justifyContent: 'center' },
@@ -418,104 +338,101 @@ const styles = StyleSheet.create({
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   emptyStateEmoji: { fontSize: 60, marginBottom: 16 },
   emptyStateText: { color: '#9CA3AF', fontSize: 16, marginBottom: 16, textAlign: 'center' },
-  emptyStateBtn: { backgroundColor: '#2E86AB', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 22 },
-  emptyStateBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   requestCard: {
     backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
-    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.08, radius: 6, elevation: 4 }),
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E8EDF2',
+    ...shadow({ offset: { width: 0, height: 3 }, opacity: 0.07, radius: 10, elevation: 3 }),
   },
-  requestCardPending: { borderWidth: 2, borderColor: '#FEF3C7' },
-  requestInfo: { alignItems: 'flex-end' },
+  requestCardPending: {
+    borderWidth: 2,
+    borderColor: '#FCD34D',
+    backgroundColor: '#FFFBEB',
+  },
+  cardTop: {
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-start',
+    gap: 14,
+  },
+  typeIconCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  typeIconEmoji: { fontSize: 26 },
+  cardMain: { flex: 1, minWidth: 0 },
   requestHeader: {
     flexDirection: 'row-reverse',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 10,
     width: '100%',
   },
-  requestName: { fontSize: 15, fontWeight: '700', color: '#1F2937', textAlign: 'right', flex: 1 },
-  requestDesc: { fontSize: 13, color: '#6B7280', textAlign: 'right', marginTop: 4 },
-  requestMeta: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 6, alignItems: 'center' },
-  requestCategory: { fontSize: 12, color: '#2E86AB', fontWeight: '600', textAlign: 'right' },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8 },
-  statusPending: { backgroundColor: '#FEF3C7' },
-  statusAccepted: { backgroundColor: '#DCFCE7' },
-  statusRejected: { backgroundColor: '#FEE2E2' },
-  statusText: { fontSize: 11, fontWeight: '700', color: '#374151' },
-  requestPhone: { fontSize: 12, color: '#6B7280', textAlign: 'right' },
-  requestCoords: { fontSize: 11, color: '#9CA3AF', textAlign: 'right' },
-  requestActions: {
+  requestName: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'right',
+    flex: 1,
+    lineHeight: 24,
+  },
+  requestDesc: { fontSize: 14, color: '#6B7280', textAlign: 'right', marginTop: 6, lineHeight: 20 },
+  chipsRow: {
     flexDirection: 'row-reverse',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-  },
-  editBtn: {
-    backgroundColor: '#2E86AB',
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    minHeight: 38,
-    minWidth: 68,
-    justifyContent: 'center',
+    marginTop: 14,
     alignItems: 'center',
   },
-  editBtnText: { fontSize: 13, color: '#fff', fontWeight: '700' },
-  acceptBtn: {
+  chip: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    maxWidth: '100%',
+  },
+  chipMuted: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  chipText: { fontSize: 12, fontWeight: '700', textAlign: 'right' },
+  chipTextMuted: { fontSize: 12, color: '#4B5563', fontWeight: '600', textAlign: 'right' },
+  chipCoords: { fontSize: 11, color: '#6B7280', fontWeight: '600' },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, flexShrink: 0 },
+  statusPending: { backgroundColor: '#FEF3C7' },
+  statusAccepted: { backgroundColor: '#DCFCE7' },
+  statusRejected: { backgroundColor: '#FEE2E2' },
+  statusText: { fontSize: 11, fontWeight: '800', color: '#374151' },
+  actionSection: { marginTop: 16, gap: 10 },
+  actionRow: { flexDirection: 'row-reverse', gap: 10 },
+  actionBtn: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+  },
+  actionAccept: {
     backgroundColor: '#10B981',
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    minHeight: 38,
-    minWidth: 68,
-    justifyContent: 'center',
-    alignItems: 'center',
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.2, radius: 4, elevation: 2 }),
   },
-  acceptBtnText: { fontSize: 13, color: '#fff', fontWeight: '700' },
-  rejectBtn: {
-    backgroundColor: '#FEE2E2',
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    minHeight: 38,
-    minWidth: 68,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  rejectBtnText: { fontSize: 13, color: '#EF4444', fontWeight: '700' },
-  deleteBtn: {
-    backgroundColor: '#FEE2E2',
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    minHeight: 38,
-    minWidth: 68,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deleteBtnText: { fontSize: 13, color: '#DC2626', fontWeight: '700' },
-  modalContainer: { flex: 1, backgroundColor: '#F0F4F8' },
-  modalHeader: { backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: LAYOUT.modalHeaderTop, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
-  modalCancelText: { color: '#EF4444', fontSize: 16, fontWeight: '600' },
-  modalTitle: { color: '#1A3A5C', fontSize: 17, fontWeight: '700' },
-  modalSaveText: { color: '#2E86AB', fontSize: 16, fontWeight: '700' },
-  modalBody: { flex: 1, padding: 16 },
-  formGroup: { marginBottom: 20 },
-  formLabel: { fontSize: 14, fontWeight: '600', color: '#374151', textAlign: 'right', marginBottom: 8 },
-  formInput: { backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: 15, color: '#1F2937', borderWidth: 1.5, borderColor: '#E5E7EB' },
-  formTextarea: { height: 90, paddingTop: 12 },
-  categoryChip: { backgroundColor: '#E5E7EB', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 },
-  categoryChipActive: { backgroundColor: '#2E86AB' },
-  categoryChipText: { fontSize: 14, color: '#374151', fontWeight: '500' },
-  categoryChipTextActive: { color: '#fff', fontWeight: '700' },
-  coordsRow: { flexDirection: 'row', gap: 10 },
-  coordInput: { flex: 1 },
-  deleteRequestBtn: { backgroundColor: '#FEE2E2', borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 24 },
-  deleteRequestBtnText: { fontSize: 15, color: '#DC2626', fontWeight: '700' },
+  actionReject: { backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FECACA' },
+  actionEdit: { backgroundColor: '#EBF5FB', borderWidth: 1.5, borderColor: '#2E86AB' },
+  actionDelete: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA' },
+  actionBtnTextLight: { fontSize: 14, fontWeight: '800', color: '#fff' },
+  actionBtnTextDanger: { fontSize: 14, fontWeight: '800', color: '#B91C1C' },
+  actionBtnTextEdit: { fontSize: 14, fontWeight: '800', color: '#2E86AB' },
 });

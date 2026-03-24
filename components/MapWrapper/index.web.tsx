@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import Constants from 'expo-constants';
-import { Circle as GMapCircle, GoogleMap, OverlayView } from '@react-google-maps/api';
+import { Circle as GMapCircle, GoogleMap, OverlayView, Polyline as GMapPolyline } from '@react-google-maps/api';
 import { useGoogleMapsLoader } from '../../context/GoogleMapsLoaderContext';
-import { MapContainer, TileLayer, Circle as LeafletCircle, Marker as LeafletMarker, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Circle as LeafletCircle, Marker as LeafletMarker, Polyline as LeafletPolyline, useMap } from 'react-leaflet';
 import type { Map } from 'leaflet';
 import L from 'leaflet';
 
@@ -482,6 +482,7 @@ export function Circle({
           fillOpacity: 1,
           color: strokeColor,
           weight: strokeWidth,
+          interactive: false,
         }}
       />
     );
@@ -496,6 +497,53 @@ export function Circle({
         fillOpacity: 1,
         strokeColor,
         strokeWeight: strokeWidth,
+        // مهم للويب: بدون هذا تُلتقط النقرات داخل الدائرة ولا يصل onClick للخريطة (لا يظهر خيار إضافة مكان)
+        clickable: false,
+      }}
+    />
+  );
+}
+
+interface PolylineProps {
+  coordinates: { latitude: number; longitude: number }[];
+  strokeColor?: string;
+  strokeWidth?: number;
+  lineDashPattern?: number[];
+}
+
+export function Polyline({
+  coordinates,
+  strokeColor = '#2E86AB',
+  strokeWidth = 4,
+}: PolylineProps) {
+  const mapType = React.useContext(MapTypeContext);
+
+  if (mapType === 'leaflet') {
+    const positions: [number, number][] = coordinates.map((c) => [c.latitude, c.longitude]);
+    return (
+      <LeafletPolyline
+        positions={positions}
+        pathOptions={{
+          color: strokeColor,
+          weight: strokeWidth,
+          opacity: 0.8,
+          dashArray: '10, 6',
+          interactive: false,
+        }}
+      />
+    );
+  }
+
+  const path = coordinates.map((c) => ({ lat: c.latitude, lng: c.longitude }));
+  return (
+    <GMapPolyline
+      path={path}
+      options={{
+        strokeColor,
+        strokeWeight: strokeWidth,
+        strokeOpacity: 0.8,
+        geodesic: true,
+        clickable: false,
       }}
     />
   );

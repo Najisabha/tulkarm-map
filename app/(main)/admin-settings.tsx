@@ -11,7 +11,6 @@ import {
   View,
 } from 'react-native';
 import { api } from '../../api/client';
-import { USE_API } from '../../api/config';
 import { LAYOUT } from '../../constants/layout';
 import { useAuth } from '../../context/AuthContext';
 
@@ -24,13 +23,13 @@ export default function AdminSettingsScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (USE_API) loadSettings();
-    else setLoading(false);
+    loadSettings();
   }, []);
 
   const loadSettings = async () => {
     try {
-      const s = await api.getSettings();
+      const res = await api.getSettings();
+      const s = res.data || {};
       setMaintenanceMode(s.maintenance_mode === true);
       setWelcomeMessage(typeof s.welcome_message === 'string' ? s.welcome_message : 'مرحباً بكم في خريطة طولكرم');
     } catch {
@@ -62,22 +61,6 @@ export default function AdminSettingsScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.backLink}>العودة</Text>
         </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (!USE_API) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backBtnText}>→</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>الإعدادات</Text>
-        </View>
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>يتطلب اتصال الخادم</Text>
-        </View>
       </View>
     );
   }

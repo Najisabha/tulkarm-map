@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { api } from '../../api/client';
-import { API_URL, USE_API } from '../../api/config';
+import { getApiUrl } from '../../api/config';
 import { LAYOUT } from '../../constants/layout';
 import { useAuth } from '../../context/AuthContext';
 import { useStores } from '../../context/StoreContext';
@@ -28,13 +28,14 @@ export default function AdminBackupScreen() {
   const handleExportJson = async () => {
     setExporting(true);
     try {
-      const data = await api.exportData('json');
+      const res = await api.getPlaces({ limit: 500 });
+      const data = res.data || [];
       const str = JSON.stringify(data, null, 2);
       if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(str);
         Alert.alert('✅ تم', 'تم نسخ البيانات للحافظة');
       } else {
-        Alert.alert('✅ تم', `تم تصدير ${Array.isArray(data) ? data.length : 0} مكان. البيانات جاهزة للنسخ.`);
+        Alert.alert('✅ تم', `تم تصدير ${data.length} مكان`);
       }
     } catch (e: any) {
       Alert.alert('خطأ', e?.message || 'فشل التصدير');
@@ -44,7 +45,7 @@ export default function AdminBackupScreen() {
   };
 
   const handleExportCsv = () => {
-    const url = `${API_URL}/api/admin/export?format=csv`;
+    const url = `${getApiUrl()}/api/admin/export?format=csv`;
     if (Platform.OS === 'web') {
       (window as any).open(url, '_blank');
       Alert.alert('✅ تم', 'تم فتح ملف CSV في تبويب جديد');
@@ -60,7 +61,7 @@ export default function AdminBackupScreen() {
       Alert.alert('تنبيه', 'الصق بيانات JSON للمتاجر');
       return;
     }
-    let items: { name: string; description?: string; category: string; latitude?: number; longitude?: number; phone?: string }[];
+    let items: any[];
     try {
       items = JSON.parse(trimmed);
       if (!Array.isArray(items)) items = [items];
@@ -70,10 +71,20 @@ export default function AdminBackupScreen() {
     }
     setImporting(true);
     try {
-      const res = await api.importStores(items);
+      let created = 0;
+      for (const item of items) {
+        await api.createPlaceFromAdmin({
+          name: item.name,
+          description: item.description,
+          type_id: item.type_id,
+          latitude: item.latitude || 32.31,
+          longitude: item.longitude || 35.02,
+        });
+        created++;
+      }
       await refreshStores();
       setImportJson('');
-      Alert.alert('✅ تم', `تم استيراد ${res.created} مكان`);
+      Alert.alert('✅ تم', `تم استيراد ${created} مكان`);
     } catch (e: any) {
       Alert.alert('خطأ', e?.message || 'فشل الاستيراد');
     } finally {
@@ -88,22 +99,6 @@ export default function AdminBackupScreen() {
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.backLink}>العودة</Text>
         </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (!USE_API) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backBtnText}>→</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>النسخ الاحتياطي</Text>
-        </View>
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>يتطلب اتصال الخادم</Text>
-        </View>
       </View>
     );
   }

@@ -9,7 +9,6 @@ import {
   Alert,
 } from 'react-native';
 import { api } from '../api/client';
-import { USE_API } from '../api/config';
 
 const REASONS = [
   { id: 'wrong_info', label: 'معلومات خاطئة' },
@@ -36,13 +35,9 @@ export function ReportModal({ visible, storeId, storeName, onClose }: ReportModa
       Alert.alert('تنبيه', 'اختر سبب الإبلاغ');
       return;
     }
-    if (!USE_API) {
-      Alert.alert('تنبيه', 'الإبلاغ يتطلب اتصال الخادم');
-      return;
-    }
     setSubmitting(true);
     try {
-      await api.addReport({ storeId, reason, details: details.trim() || undefined });
+      await api.addReport({ placeId: storeId, reason, details: details.trim() || undefined });
       Alert.alert('✅ تم', 'تم إرسال الإبلاغ بنجاح');
       setReason('');
       setDetails('');

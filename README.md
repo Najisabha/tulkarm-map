@@ -1,458 +1,261 @@
 # طولكرم — دليل مدينة طولكرم على الخريطة 🏙️
 
-تطبيق خريطة تفاعلية لمدينة طولكرم يستكشف المتاجر والمطاعم والخدمات. يعمل على **Expo / React Native** ويدعم **الموبايل والويب**. المشروع مفتوح المصدر ويمكن لأي مطوّر المساهمة في تطويره.
+تطبيق خريطة تفاعلية لمدينة طولكرم يستكشف الأماكن والمتاجر والخدمات. يعمل على **Expo / React Native** ويدعم **الموبايل والويب**. الخادم مبني على **Node.js + Express + PostgreSQL** مع نظام **JWT** للمصادقة.
 
 ---
 
 ## جدول المحتويات
 
-- [البدء](#البدء)
-- [ربط PostgreSQL](#ربط-postgresql)
+- [البدء السريع](#البدء-السريع)
+- [إعداد الخادم (Backend)](#إعداد-الخادم-backend)
+- [هجرات قاعدة البيانات](#هجرات-قاعدة-البيانات)
+- [نشر على Vercel](#نشر-على-vercel)
 - [Google Maps API](#google-maps-api)
 - [نظرة عامة على المشروع](#نظرة-عامة-على-المشروع)
-- [التوجيه (Routing)](#التوجيه-routing)
-- [الفرق بين الموبايل والويب](#الفرق-بين-الموبايل-والويب)
-- [قاعدة البيانات والتخزين](#قاعدة-البيانات-والتخزين)
-- [صلاحيات الأطراف](#صلاحيات-الأطراف)
-- [هيكل الملفات](#هيكل-الملفات)
-- [سير عمل طلب إضافة مكان](#سير-عمل-طلب-إضافة-مكان)
+- [هيكل الـ API](#هيكل-الـ-api)
 - [نماذج البيانات](#نماذج-البيانات)
-- [الملفات والتكوينات الإضافية](#الملفات-والتكوينات-الإضافية)
+- [مخطط قاعدة البيانات](#مخطط-قاعدة-البيانات)
+- [صلاحيات الأطراف](#صلاحيات-الأطراف)
+- [التوجيه (Routing)](#التوجيه-routing)
+- [هيكل الملفات](#هيكل-الملفات)
 - [مصادر إضافية](#مصادر-إضافية)
 
 ---
 
-## البدء
+## البدء السريع
 
-1. تثبيت الاعتماديات
+```bash
+# 1. تثبيت اعتماديات الواجهة الأمامية
+npm install
 
-   ```bash
-   npm install
-   ```
-
-2. تشغيل التطبيق
-
-   ```bash
-   npx expo start
-   ```
+# 2. تشغيل التطبيق
+npx expo start
+```
 
 في المخرجات ستجد خيارات فتح التطبيق عبر:
-
 - [Development build](https://docs.expo.dev/develop/development-builds/introduction/)
 - [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
 - [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
 - [Expo Go](https://expo.dev/go)
 - الويب: `npx expo start --web`
 
+> لتشغيل التطبيق بشكل كامل مع البيانات الحية، يجب إعداد الخادم أدناه.
+
 ---
 
-## ربط PostgreSQL
+## إعداد الخادم (Backend)
 
-المشروع يدعم الاتصال بقاعدة بيانات **PostgreSQL** عبر خادم API. اتبع الخطوات التالية:
-
-### 1. إعداد قاعدة البيانات
-
-تأكد أن لديك:
-- **PostgreSQL** مثبتاً ومُشغَّلاً (مثل pgAdmin الذي لديك)
-- قاعدة بيانات باسم `tulkarm-map` (أنشئها من pgAdmin إن لم تكن موجودة)
-
-### 2. تشغيل الخادم (Backend)
+### 1. تثبيت الاعتماديات
 
 ```bash
 cd server
 npm install
 ```
 
-أنشئ ملف `.env` داخل مجلد `server`:
+### 2. إعداد متغيّرات البيئة
 
 ```bash
-# انسخ المثال
-copy .env.example .env   # Windows
-# أو
-cp .env.example .env    # Mac/Linux
+# Windows
+copy .env.example .env
+
+# Mac/Linux
+cp .env.example .env
 ```
 
-عدّل ملف `.env` وضع كلمة مرور PostgreSQL الخاصة بك:
+عدّل `server/.env`:
 
-```
+```env
 DATABASE_URL=postgresql://postgres:كلمة_المرور@localhost:5432/tulkarm-map
 PORT=3000
+JWT_SECRET=سر_طويل_وعشوائي
+JWT_REFRESH_SECRET=سر_آخر_مختلف
+CLOUDINARY_CLOUD_NAME=اسم_cloudinary
+CLOUDINARY_API_KEY=مفتاح_cloudinary
+CLOUDINARY_API_SECRET=سر_cloudinary
 ```
 
-ثم شغّل تهيئة الجداول والبيانات الافتراضية:
+### 3. تهيئة قاعدة البيانات وتشغيل الهجرات
 
 ```bash
+cd server
+
+# إنشاء الجداول الأساسية للمرة الأولى
 npm run init-db
+
+# إضافة الجداول الموسّعة (place_types، places، ratings، refresh_tokens، ...)
+npm run migrate:v3
+
+# إضافة جدول admin_logs وتحسينات
+npm run migrate:v4
+
+# إضافة أعمدة emoji و color لـ place_types
+npm run migrate:v5
 ```
 
-إذا كانت لديك قاعدة بيانات قديمة، شغّل الترحيل لإضافة الجداول الجديدة:
+> يمكن تشغيل الهجرات من جذر المشروع أيضاً:
+> ```bash
+> npm run migrate:v3   # أو v4 أو v5
+> ```
+
+### 4. تشغيل الخادم
 
 ```bash
-npm run migrate
-```
-
-ثم شغّل الخادم:
-
-```bash
+cd server
 npm start
+# أو في وضع المراقبة
+npm run dev
 ```
 
-يجب أن ترى: `✅ متصل بـ PostgreSQL` و `🚀 الخادم يعمل على http://localhost:3000`
+يجب أن ترى: `DB connected` و `Server listening on port 3000`
 
-### 3. تفعيل الاتصال في التطبيق
+### 5. ربط التطبيق بالخادم
 
-في **جذر المشروع** (وليس داخل server)، أنشئ ملف `.env`:
+في **جذر المشروع** (ليس داخل server)، عدّل ملف `.env`:
 
-```bash
-copy .env.example .env   # Windows
-```
-
-عدّل المحتوى:
-
-```
+```env
 EXPO_PUBLIC_API_URL=http://localhost:3000
-EXPO_PUBLIC_USE_API=true
+EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=مفتاحك_هنا
 ```
 
-> **لجهاز Android محاكي:** استخدم `http://10.0.2.2:3000` بدل localhost  
-> **لجهاز حقيقي:** استخدم IP جهازك (مثل `http://192.168.1.5:3000`)
+> - **Android محاكي:** استخدم `http://10.0.2.2:3000`
+> - **جهاز حقيقي على نفس الشبكة:** استخدم IP جهازك مثل `http://192.168.1.5:3000`
 
-### 4. تشغيل التطبيق
+**حساب المدير الافتراضي:**  
+`admin@tulkarm.com` / `admin123`
 
-```bash
-npx expo start
-```
+---
 
-سيتصل التطبيق الآن بـ PostgreSQL عبر الخادم. حساب المدير الافتراضي: `admin@tulkarm.com` / `admin123`
+## هجرات قاعدة البيانات
 
-### نشر الخادم على Vercel (للوصول من أي جهاز)
+| الهجرة | ما تضيفه |
+|--------|----------|
+| `migrate:v2` / `init-db` | جداول `users`, `categories`, `stores`, `place_requests` |
+| `migrate:v3` | `place_types`, `places`, `place_locations`, `place_attributes`, `place_images`, `ratings`, `refresh_tokens`, `place_type_attribute_definitions` — مع ترحيل البيانات من الجداول القديمة |
+| `migrate:v4` | `admin_logs`, أعمدة `owner_id` في `places` |
+| `migrate:v5` | أعمدة `emoji` و `color` في `place_types` |
 
-1. اربط المستودع بـ [Vercel](https://vercel.com) وأنشئ مشروعاً جديداً
+> الهجرات آمنة للتشغيل أكثر من مرة (`IF NOT EXISTS`). الجداول القديمة **لا تُحذف**.
+
+---
+
+## نشر على Vercel
+
+1. اربط المستودع بـ [Vercel](https://vercel.com).
 2. في إعدادات المشروع:
    - **Root Directory:** `server`
-   - **Environment Variables:** أضف `DATABASE_URL` = رابط Neon من [لوحة Neon](https://console.neon.tech)
-3. بعد النشر، استخدم الرابط (مثل `https://tulkarm-map.vercel.app`) في `.env`:
-   ```
+   - **Build Command:** *(فارغ)*
+   - **Output Directory:** *(فارغ)*
+   - **Install Command:** `npm install`
+3. أضف **Environment Variables** على Vercel:
+   - `DATABASE_URL` ← رابط Neon من [console.neon.tech](https://console.neon.tech)
+   - `JWT_SECRET`, `JWT_REFRESH_SECRET`
+   - `CLOUDINARY_*`
+4. بعد النشر، حدّث `.env` في جذر المشروع:
+   ```env
    EXPO_PUBLIC_API_URL=https://tulkarm-map.vercel.app
-   EXPO_PUBLIC_USE_API=true
    ```
+5. شغّل الهجرات على قاعدة بيانات الإنتاج (Neon):
+   ```bash
+   # من جهازك المحلي مع DATABASE_URL تشير لـ Neon
+   npm run migrate:v3 && npm run migrate:v4 && npm run migrate:v5
+   ```
+
+> **ملاحظة:** Vercel يشغّل `npm start` الذي يُشغّل `node src/server.js` — وهو نفس ما يُشغّله `node index.js` الآن.
 
 ---
 
 ## Google Maps API
 
-التطبيق يستخدم Google Maps ويخفي POIs المدمجة لعرض أماكنك المخصصة فقط. للتفعيل:
+1. أنشئ مشروعاً في [Google Cloud](https://console.cloud.google.com) وفعّل:
+   - Maps SDK for Android
+   - Maps SDK for iOS
+   - Maps JavaScript API (للويب)
+2. أنشئ مفاتيح API من Credentials.
+3. في `app.json` استبدل `YOUR_ANDROID_GOOGLE_MAPS_API_KEY` و `YOUR_IOS_GOOGLE_MAPS_API_KEY`.
+4. في `.env` ضع مفتاح الويب: `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=...`
+5. أعد تشغيل Expo بعد أي تعديل على `.env`.
 
-1. أنشئ مشروعاً في [Google Cloud](https://console.cloud.google.com) وفعّل **Maps SDK for Android** و **Maps SDK for iOS** و **Maps JavaScript API** (للويب).
-2. أنشئ مفاتيح API من Credentials (واحد لـ Android، واحد لـ iOS، والويب يقرأ من .env).
-3. في `app.json` استبدل `YOUR_ANDROID_GOOGLE_MAPS_API_KEY` و `YOUR_IOS_GOOGLE_MAPS_API_KEY` بمفاتيحك.
-4. **للويب (مهم):** انسخ `.env.example` إلى `.env` وضع مفتاحك في `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`. أعد تشغيل السيرفر (`npx expo start --web`) بعد أي تعديل على `.env`.
-5. أعد بناء التطبيق الأصلي (Expo Go يستخدم خرائطه الخاصة؛ الـ development build مطلوب لاستخدام مفاتيحك على الموبايل).
+### استكشاف خطأ "This page didn't load Google Maps correctly"
 
-### استكشاف أخطاء "This page didn't load Google Maps correctly"
-
-إذا ظهر هذا الخطأ على الويب:
-
-1. **تفعيل الفوترة (Billing):** يجب ربط مشروع Google Cloud بحساب فوترة (حتى مع الاستخدام المجاني).
-2. **تفعيل Maps JavaScript API:** من [المكتبات](https://console.cloud.google.com/apis/library) ابحث عن "Maps JavaScript API" وثبّته.
-3. **تقييدات المفتاح:** إن كانت لديك قيود HTTP referrer، أضف:
-   - `http://localhost:*`
-   - `http://127.0.0.1:*`
-4. **إعادة تشغيل:** بعد أي تغيير في `.env` أعد تشغيل `npx expo start`.
+1. **تفعيل الفوترة:** يجب ربط مشروع Google Cloud بحساب فوترة.
+2. **Maps JavaScript API:** تأكد من تفعيله من [المكتبات](https://console.cloud.google.com/apis/library).
+3. **HTTP referrers:** أضف `http://localhost:*` و `http://127.0.0.1:*` للمفتاح.
 
 ---
 
 ## نظرة عامة على المشروع
 
-- **قاعدة البيانات:** PostgreSQL (مدعومة عبر خادم API في مجلد `server/`).
-- **التخزين الافتراضي:** محلي عبر AsyncStorage؛ فعّل `EXPO_PUBLIC_USE_API=true` للاتصال بـ PostgreSQL.
-- **المصادقة:** مستخدمين محليين + زائر + مدير افتراضي.
-- **الخريطة:** Google Maps على الموبايل والويب.
-- **Geofencing:** إشعارات الدخول/الخروج عند محافظة طولكرم (موبايل فقط، يتطلب development build).
+| الجانب | التفاصيل |
+|--------|----------|
+| قاعدة البيانات | PostgreSQL (Neon في الإنتاج) |
+| الخادم | Node.js + Express، ESM (`"type": "module"`) |
+| المصادقة | JWT (access token قصير + refresh token في DB) |
+| رفع الصور | Cloudinary |
+| الخريطة (موبايل) | Google Maps عبر `react-native-maps` |
+| الخريطة (ويب) | `@react-google-maps/api` |
+| التوجيه | `expo-router` (file-based routing) |
 
 ---
 
-## التوجيه (Routing)
-
-يستخدم المشروع **expo-router** مع التوجيه القائم على الملفات:
-
-| المسار | الملف المُحمَّل | الشرح |
-|--------|-----------------|-------|
-| `/` | `app/index.tsx` | نقطة البداية: يتحقق من `onboarding_seen` ويوجّه إلى onboarding أو login أو map |
-| `/onboarding` | `app/onboarding.tsx` | شاشة الترحيب (3 شرائح) |
-| `/(auth)/login` | `app/(auth)/login.tsx` | تسجيل الدخول |
-| `/(auth)/register` | `app/(auth)/register.tsx` | إنشاء حساب |
-| `/(main)/map` | `map.tsx` | الخريطة — ملف موحد للموبايل والويب |
-| `/(main)/admin` | `admin.tsx` | لوحة الإدارة — ملف موحد للموبايل والويب |
-| `/(main)/admin-stores` | `admin-stores.tsx` | إدارة المتاجر |
-| `/(main)/admin-categories` | `admin-categories.tsx` | إدارة الفئات |
-| `/(main)/admin-place-requests` | `admin-place-requests.tsx` | إدارة طلبات الأماكن |
-| `/(main)/admin-users` | `admin-users.tsx` | إدارة المستخدمين |
-| `/(main)/admin-reports` | `admin-reports.tsx` | الإبلاغات |
-| `/(main)/admin-settings` | `admin-settings.tsx` | الإعدادات |
-| `/(main)/admin-activity` | `admin-activity.tsx` | سجل النشاط |
-| `/(main)/admin-backup` | `admin-backup.tsx` | النسخ الاحتياطي والاستيراد |
-
----
-
-## الفرق بين الموبايل والويب
-
-المشروع **موحد** بين الموبايل والويب: نفس الشاشات، نفس الواجهة، نفس الميزات. الأساس هو الموبايل وتُطبَّق التغييرات على الويب تلقائياً.
-
-| الميزة | الموبايل | الويب |
-|--------|----------|-------|
-| الخريطة | Google Maps (react-native-maps) | Google Maps / Leaflet (@react-google-maps/api) |
-| موقع المستخدم | ✅ GPS | ✅ Geolocation API |
-| المسافة للأماكن | ✅ تُعرض | ✅ تُعرض |
-| إضافة مكان | النقر على الخريطة + صور وفيديو | نفس الواجهة (النقر + صور + فيديو) |
-| تعديل/حذف المتجر (أدمن) | ✅ | ✅ |
-| Geofencing | ✅ إشعارات دخول/خروج (dev build) | ❌ غير مدعوم (محدودية المتصفح) |
-
----
-
-## قاعدة البيانات والتخزين
-
-### قاعدة البيانات: PostgreSQL
-
-قاعدة بيانات المشروع المخططة والمعتمدة هي **PostgreSQL**.  
-> ⚠️ **حالياً:** لا يتم استخدام أي قاعدة بيانات في المشروع. كل البيانات تُخزَّن محلياً في **AsyncStorage** على الجهاز. هذا القسم يوضح تصميم قاعدة البيانات عند ربط المشروع بخادم وPostgreSQL لاحقاً.
-
----
-
-### التخزين الحالي (AsyncStorage)
-
-| المفتاح | المحتوى | ملاحظة |
-|---------|---------|--------|
-| `users` | قائمة المستخدمين (مسجلين + مدير افتراضي) | سيصبح جدول `users` |
-| `currentUser` | المستخدم الحالي المُسجّل دخوله | خاص بالعميل (session)، لا يُخزَّن في قاعدة البيانات |
-| `stores` | قائمة المتاجر والأماكن المعتمدة | سيصبح جدول `stores` |
-| `place_requests` | طلبات إضافة أماكن من المستخدمين | سيصبح جدول `place_requests` |
-| `categories` | الفئات (تسوق، مطاعم، صحة، إلخ) | سيصبح جدول `categories` |
-| `onboarding_seen` | هل تم عرض شاشة الترحيب | يبقى في العميل فقط |
-| `stores_legacy_seed_cleared` | تنظيف بيانات تجريبية قديمة | داخلي، يمكن تجاهله عند الترحيل |
-
----
-
-### مخطط PostgreSQL (عند التطبيق)
-
-#### جدول `users`
-| العمود | النوع | القيود | الشرح |
-|--------|-------|--------|-------|
-| `id` | UUID | PRIMARY KEY, DEFAULT gen_random_uuid() | معرّف فريد للمستخدم |
-| `name` | VARCHAR(255) | NOT NULL | الاسم الكامل |
-| `email` | VARCHAR(255) | UNIQUE, NOT NULL | البريد الإلكتروني |
-| `password_hash` | VARCHAR(255) | NOT NULL | كلمة المرور مُشَفَّرة (مثل bcrypt) |
-| `is_admin` | BOOLEAN | DEFAULT false | هل المستخدم مديراً |
-| `created_at` | TIMESTAMPTZ | DEFAULT now() | تاريخ الإنشاء |
-
-> **ملاحظة:** في التطبيق الحالي تُخزَّن كلمة المرور كنص صريح في AsyncStorage. في PostgreSQL يُفضَّل استخدام `password_hash` مع bcrypt أو argon2.
-
----
-
-#### جدول `categories`
-| العمود | النوع | القيود | الشرح |
-|--------|-------|--------|-------|
-| `id` | UUID | PRIMARY KEY, DEFAULT gen_random_uuid() | معرّف الفئة |
-| `name` | VARCHAR(100) | UNIQUE, NOT NULL | اسم الفئة (تسوق، مطاعم، إلخ) |
-| `emoji` | VARCHAR(10) | NOT NULL | إيموجي الفئة |
-| `color` | VARCHAR(7) | NOT NULL | اللون بصيغة HEX (#2E86AB) |
-| `sort_order` | INTEGER | DEFAULT 0 | ترتيب العرض (اختياري) |
-
-**الفئات الافتراضية:** تسوق، مطاعم، صحة، خدمات، ترفيه، تعليم.
-
----
-
-#### جدول `stores`
-| العمود | النوع | القيود | الشرح |
-|--------|-------|--------|-------|
-| `id` | UUID | PRIMARY KEY, DEFAULT gen_random_uuid() | معرّف المتجر |
-| `name` | VARCHAR(255) | NOT NULL | اسم المكان |
-| `description` | TEXT | NOT NULL | الوصف |
-| `category_id` | UUID | FOREIGN KEY → categories(id) | ربط بالفئة |
-| `latitude` | DECIMAL(10,7) | NOT NULL | خط العرض |
-| `longitude` | DECIMAL(10,7) | NOT NULL | خط الطول |
-| `phone` | VARCHAR(20) | | رقم الهاتف |
-| `photos` | JSONB / TEXT[] | | مصفوفة روابط الصور |
-| `videos` | JSONB / TEXT[] | | مصفوفة روابط الفيديو |
-| `created_at` | TIMESTAMPTZ | DEFAULT now() | تاريخ الإضافة |
-
-**فهرس مكاني (اختياري):** إنشاء index على `(latitude, longitude)` للبحث القريب.
-
----
-
-#### جدول `place_requests`
-| العمود | النوع | القيود | الشرح |
-|--------|-------|--------|-------|
-| `id` | UUID | PRIMARY KEY, DEFAULT gen_random_uuid() | معرّف الطلب |
-| `name` | VARCHAR(255) | NOT NULL | اسم المكان |
-| `description` | TEXT | NOT NULL | الوصف |
-| `category_id` | UUID | FOREIGN KEY → categories(id) | ربط بالفئة |
-| `latitude` | DECIMAL(10,7) | NOT NULL | خط العرض |
-| `longitude` | DECIMAL(10,7) | NOT NULL | خط الطول |
-| `phone` | VARCHAR(20) | | رقم الهاتف |
-| `photos` | JSONB / TEXT[] | | مصفوفة روابط الصور |
-| `videos` | JSONB / TEXT[] | | مصفوفة روابط الفيديو |
-| `status` | VARCHAR(20) | CHECK IN ('pending','accepted','rejected'), DEFAULT 'pending' | حالة الطلب |
-| `created_by` | UUID | FOREIGN KEY → users(id), NULL | من أرسل الطلب (NULL للزائر) |
-| `reviewed_by` | UUID | FOREIGN KEY → users(id), NULL | من راجع الطلب (مدير) |
-| `created_at` | TIMESTAMPTZ | DEFAULT now() | تاريخ الإرسال |
-| `reviewed_at` | TIMESTAMPTZ | | تاريخ المراجعة |
-
----
-
-### العلاقات بين الجداول
-
-```
-users
-  ├── place_requests (created_by) — من أرسل الطلب
-  └── place_requests (reviewed_by) — من راجع الطلب
-
-categories
-  ├── stores (category_id)
-  └── place_requests (category_id)
-
-stores ← تُنشأ من place_requests عند القبول
-```
-
----
-
-### صلاحيات الوصول (عند استخدام PostgreSQL)
-
-| الجدول | الزائر | المستخدم | المدير |
-|--------|--------|----------|--------|
-| `users` | — | قراءة سجلته فقط | قراءة/تعديل (بحدود آمنة) |
-| `categories` | قراءة | قراءة | قراءة + إدراج + تحديث + حذف |
-| `stores` | قراءة | قراءة | قراءة + إدراج + تحديث + حذف |
-| `place_requests` | إدراج فقط | إدراج + قراءة طلباته | قراءة + قبول + رفض + تعديل + حذف |
-
-يمكن تطبيق هذه القواعد عبر **Row Level Security (RLS)** أو **سياسات في طبقة التطبيق (API)**.
-
----
-
-### الترحيل من AsyncStorage إلى PostgreSQL
-
-عند إضافة خادم وربط PostgreSQL:
-
-1. إنشاء جداول `users`, `categories`, `stores`, `place_requests` كما في المخطط.
-2. استبدال استدعاءات AsyncStorage في `AuthContext`, `StoreContext`, `CategoryContext` باستدعاءات API (REST أو GraphQL).
-3. إنشاء واجهات API على الخادم (Node.js/Express، Next.js API Routes، Supabase، إلخ).
-4. تخزين كلمات المرور بشكل آمن (hashing) في قاعدة البيانات.
-5. الاعتماد على JWT أو sessions للمصادقة بدل تخزين `currentUser` محلياً فقط.
-
----
-
-## صلاحيات الأطراف
-
-### 1. الزائر (دخول كضيف)
-
-| الصلاحية | التفاصيل |
-|----------|----------|
-| عرض الخريطة | ✅ مع جميع المتاجر |
-| التصفية حسب الفئة | ✅ |
-| عرض تفاصيل المكان | ✅ |
-| إضافة مكان | ✅ يُرسل طلباً للأدمن للموافقة |
-| التوجه للمكان | ✅ عبر Google Maps |
-| إشعارات الدخول/الخروج | ✅ (موبايل فقط) |
-| تعديل/حذف المتاجر | ❌ |
-| لوحة الإدارة | ❌ |
-
-### 2. المستخدم المسجّل
-
-نفس صلاحيات الزائر، مع تسجيل دخول بحساب خاص.
-
-### 3. المدير (`isAdmin: true`)
-
-| الصلاحية | التفاصيل |
-|----------|----------|
-| كل صلاحيات الزائر/المستخدم | ✅ |
-| لوحة الإدارة | ✅ |
-| إضافة متجر مباشرة | ✅ |
-| تعديل المتاجر | ✅ |
-| حذف المتاجر | ✅ |
-| إدارة الفئات | ✅ إضافة/تعديل/حذف |
-| طلبات الأماكن | ✅ قبول/رفض/تعديل/حذف |
-| تعديل المتجر من الخريطة | ✅ من نافذة التفاصيل |
-
-**حساب المدير الافتراضي:**
-- البريد: `admin@tulkarm.com`
-- كلمة المرور: `admin123`
-
----
-
-## هيكل الملفات
-
-### `app/`
-
-| الملف | الوظيفة التفصيلية |
-|-------|-------------------|
-| `_layout.tsx` | التخطيط الجذر؛ يضم AuthProvider، CategoryProvider، StoreProvider؛ يستدعي `setupNotificationHandler` |
-| `index.tsx` | يقرأ `onboarding_seen` و `currentUser`؛ يوجّه إلى onboarding إن لم يُشاهد، وإلى map إن كان مسجلاً، وإلى login إن لم يكن |
-| `onboarding.tsx` | 3 شرائح تعريفية + أزرار تسجيل دخول / إنشاء حساب / دخول كضيف |
-
-### `app/(auth)/`
-
-| الملف | الوظيفة التفصيلية |
-|-------|-------------------|
-| `_layout.tsx` | Stack للمسارات login و register |
-| `login.tsx` | نموذج بريد وكلمة مرور، زر زائر، رابط للتسجيل؛ يتحقق من المستخدمين في AsyncStorage |
-| `register.tsx` | نموذج اسم، بريد، كلمة مرور، تأكيد؛ يتحقق من صحة البريد وعدم التكرار |
-
-### `app/(main)/`
-
-| الملف | الوظيفة التفصيلية |
-|-------|-------------------|
-| `_layout.tsx` | Stack للمسارات: map، admin، admin-stores، admin-categories، admin-place-requests |
-| `map.tsx` | خريطة تفاعلية (Google Maps على الموبايل والويب)، موقع المستخدم، geofencing، إضافة مكان بالنقر، تصفية بالفئة، تفاصيل المتجر، تعديل/حذف للأدمن، إعادة توجيه للموقع |
-| `admin.tsx` | لوحة إحصائيات (عدد المتاجر، الفئات، طلبات الانتظار) مع روابط للصفحات الفرعية |
-| `admin-stores.tsx` | قائمة المتاجر، إضافة، تعديل، حذف؛ يتحقق من صلاحية الأدمن |
-| `admin-categories.tsx` | قائمة الفئات، إضافة، تعديل، حذف؛ يحدّث المتاجر وطلبات الأماكن عند تغيير اسم الفئة |
-| `admin-place-requests.tsx` | قائمة الطلبات مع فلتر (قيد الانتظار/مقبول/مرفوض)، قبول/رفض/تعديل/حذف |
-
-### `context/`
-
-| الملف | الوظيفة التفصيلية |
-|-------|-------------------|
-| `AuthContext.tsx` | users في AsyncStorage؛ مدير افتراضي (admin@tulkarm.com)؛ login، register، loginAsGuest، logout |
-| `StoreContext.tsx` | stores و place_requests؛ addStore، updateStore، deleteStore؛ addPlaceRequest، acceptPlaceRequest، rejectPlaceRequest؛ تحديث الفئات عند تغيير الاسم |
-| `CategoryContext.tsx` | categories مع 6 فئات افتراضية؛ addCategory، updateCategory، deleteCategory؛ لا يسمح بحذف آخر فئة |
-
-### `components/`
-
-| الملف | الوظيفة التفصيلية |
-|-------|-------------------|
-| `AddPlaceModal.tsx` | نموذج موحد: اسم، وصف، فئة، هاتف، حتى 3 صور، حتى 1 فيديو؛ اختيار الصور والفيديو من المعرض (موبايل وويب) |
-| `MapWrapper/index.tsx` | تصدير MapView، Marker، Circle، PROVIDER_GOOGLE من react-native-maps |
-| `MapWrapper/index.web.tsx` | تطبيق خريطة Google Maps للويب باستخدام @react-google-maps/api (نفس واجهة MapView/Marker/Circle) |
-
-### `utils/`
-
-| الملف | الوظيفة التفصيلية |
-|-------|-------------------|
-| `geofencing.ts` | حدود طولكرم (TULKARM_BOUNDS)، منطقة geofencing (TULKARM_REGION)، إشعارات دخول/خروج؛ لا يعمل على Expo Go |
-| `geofencing.web.ts` | TULKARM_BOUNDS، TULKARM_REGION، isInsideTulkarm؛ دوال geofencing فارغة (غير مدعومة على الويب) |
-| `notifications.ts` | setupNotificationHandler لعارض الإشعارات |
-| `notifications.web.ts` | دوال فارغة (الإشعارات غير مدعومة على الويب) |
-| `shadowStyles.ts` | دالة shadow() لأنماط ظلال متوافقة مع الموبايل والويب |
-
-### `constants/`
-
-| الملف | الوظيفة التفصيلية |
-|-------|-------------------|
-| `tulkarmRegion.ts` | إحداثيات مركز طولكرم (32.327, 35.088) |
-| `categoryColors.ts` | مصفوفة PRESET_COLORS (12 لوناً) لاختيار ألوان الفئات |
-| `mapStyle.ts` | MAP_STYLE_NO_POI — يخفي كل POIs المدمجة في Google Maps (صيدليات، بنوك، مطاعم افتراضية، إلخ) لعرض أماكنك فقط |
-
----
-
-## سير عمل طلب إضافة مكان
-
-1. **المستخدم/الزائر** ينقر على نقطة فارغة داخل حدود طولكرم على الخريطة (موبايل وويب).
-2. يظهر **AddPlaceModal** لملء: الاسم، الوصف، الفئة، الهاتف، صور، فيديو.
-3. يُرسل الطلب عبر `addPlaceRequest` → يُحفظ كـ **PlaceRequest** بحالة `pending`.
-4. **المدير** يفتح لوحة طلبات الأماكن، يراجع الطلب، ويختار:
-   - **قبول** → يُنشأ Store جديد ويُضاف للخريطة، وتُحدَّث حالة الطلب إلى `accepted`.
-   - **رفض** → تُحدَّث الحالة إلى `rejected`.
-   - **تعديل** → يُعدّل بيانات الطلب قبل القبول.
+## هيكل الـ API
+
+جميع المسارات تحت `/api/`. المسارات المحمية تتطلب `Authorization: Bearer <token>`.
+
+### المصادقة
+| الطريقة | المسار | الوصف |
+|---------|--------|-------|
+| POST | `/api/auth/register` | تسجيل مستخدم جديد |
+| POST | `/api/auth/login` | تسجيل دخول، يرجع `accessToken` + `refreshToken` |
+| POST | `/api/auth/refresh` | تجديد الـ access token |
+| POST | `/api/auth/logout` | إلغاء الـ refresh token |
+| GET  | `/api/auth/me` | بيانات المستخدم الحالي |
+
+### أنواع الأماكن (place_types)
+| الطريقة | المسار | الوصف |
+|---------|--------|-------|
+| GET  | `/api/place-types` | قائمة جميع الأنواع |
+| POST | `/api/place-types` | إنشاء نوع (مدير فقط) |
+| PATCH | `/api/place-types/:id` | تعديل نوع (مدير فقط) |
+
+### الأماكن (places)
+| الطريقة | المسار | الوصف |
+|---------|--------|-------|
+| GET  | `/api/places` | قائمة الأماكن مع pagination وفلاتر |
+| GET  | `/api/places/:id` | تفاصيل مكان |
+| POST | `/api/places` | إضافة مكان (مسجّل دخول) |
+| PATCH | `/api/places/:id` | تعديل مكان (مالك أو مدير) |
+| DELETE | `/api/places/:id` | حذف مكان (مالك أو مدير) |
+| POST | `/api/places/:id/images` | إضافة صورة |
+| DELETE | `/api/places/:id/images/:imgId` | حذف صورة |
+
+### التقييمات
+| الطريقة | المسار | الوصف |
+|---------|--------|-------|
+| GET  | `/api/places/:id/ratings` | تقييمات مكان |
+| POST | `/api/ratings` | إضافة تقييم |
+| PATCH | `/api/ratings/:id` | تعديل تقييم |
+| DELETE | `/api/ratings/:id` | حذف تقييم |
+
+### رفع الصور
+| الطريقة | المسار | الوصف |
+|---------|--------|-------|
+| POST | `/api/upload/base64` | رفع صورة Base64 إلى Cloudinary |
+
+### الإدارة (مدير فقط)
+| الطريقة | المسار | الوصف |
+|---------|--------|-------|
+| GET  | `/api/admin/stats` | إحصائيات عامة |
+| GET  | `/api/users` | قائمة المستخدمين |
+| PATCH | `/api/users/:id` | تعديل دور المستخدم |
+| DELETE | `/api/users/:id` | حذف مستخدم |
+| GET  | `/api/reports` | قائمة الإبلاغات |
+| POST | `/api/reports` | إرسال إبلاغ |
+| PATCH | `/api/reports/:id` | تعديل حالة إبلاغ |
+| GET  | `/api/activity-log` | سجل النشاط |
+| GET/PATCH | `/api/settings` | إعدادات التطبيق |
+| GET  | `/api/my-stores` | أماكن المستخدم الحالي |
+| GET  | `/api/places/:id/full` | تفاصيل مكان كاملة (للمدير) |
+| PATCH | `/api/places/:id/owner` | تعيين مالك لمكان |
 
 ---
 
@@ -460,59 +263,217 @@ stores ← تُنشأ من place_requests عند القبول
 
 ### User
 ```typescript
-{ id, name, email, password, isAdmin, createdAt }
+{ id, name, email, role: 'user'|'admin', is_admin, created_at }
 ```
 
-### Store
+### PlaceType
 ```typescript
-{ id, name, description, category, latitude, longitude, phone?, photos?, videos?, createdAt }
+{ id, name, emoji?, color?, created_at }
 ```
 
-### PlaceRequest
+### Place
 ```typescript
-{ id, name, description, category, latitude, longitude, phone?, photos?, videos?, status: 'pending'|'accepted'|'rejected', createdAt }
+{
+  id, name, description?,
+  type_id, type_name?,
+  latitude, longitude,
+  status: 'active'|'pending'|'rejected',
+  avg_rating, rating_count,
+  attributes: { key, value, value_type }[],
+  images: { id, image_url, sort_order }[],
+  created_by?, created_at
+}
 ```
 
-### Category
+### Rating
 ```typescript
-{ id, name, emoji, color }
+{ id, rating: 1-5, comment?, user_name, user_id, created_at }
 ```
 
 ---
 
-## الملفات والتكوينات الإضافية
+## مخطط قاعدة البيانات
 
-### `app.json`
-- اسم التطبيق، bundleIdentifier، أذونات الموقع (عند الاستخدام، دائم، في الخلفية)
-- مفاتيح Google Maps لـ iOS و Android
-- إعدادات expo-router، expo-location، expo-notifications، expo-image-picker، expo-splash-screen
-- صور: icon، adaptive-icon، favicon، splash-icon
+### الجداول الرئيسية
 
-### `assets/images/`
-| الملف | الاستخدام |
-|-------|-----------|
-| `icon.png` | أيقونة التطبيق |
-| `adaptive-icon.png` | أيقونة Android التكيفية |
-| `favicon.png` | أيقونة المتصفح للويب |
-| `splash-icon.png` | شاشة البداية |
+#### `users`
+| العمود | النوع | الشرح |
+|--------|-------|-------|
+| `id` | UUID | PRIMARY KEY |
+| `name` | VARCHAR(255) | الاسم |
+| `email` | VARCHAR(255) | UNIQUE |
+| `password_hash` | VARCHAR(255) | bcrypt |
+| `is_admin` | BOOLEAN | DEFAULT false |
+| `role` | VARCHAR(20) | `'user'` أو `'admin'` |
+| `created_at` | TIMESTAMPTZ | |
+| `deleted_at` | TIMESTAMPTZ | حذف ناعم |
 
-### ملفات التكوين
-| الملف | الوظيفة |
-|-------|---------|
-| `package.json` | الاعتماديات والسكربتات (start، android، ios، web، lint) |
-| `tsconfig.json` | إعدادات TypeScript |
-| `eslint.config.js` | إعدادات ESLint |
+#### `place_types`
+| العمود | النوع | الشرح |
+|--------|-------|-------|
+| `id` | UUID | PRIMARY KEY |
+| `name` | VARCHAR(100) | UNIQUE |
+| `emoji` | VARCHAR(32) | أيقونة العرض |
+| `color` | VARCHAR(32) | لون HEX |
+| `created_at` | TIMESTAMPTZ | |
 
-### `scripts/reset-project.js`
-> ⚠️ **تحذير:** سكربت قالب Expo لإعادة ضبط المشروع. **لا تشغّله** — سينقل أو يحذف مجلدات app و components و constants ويعيد إنشاء مشروع فارغ.
+**أنواع افتراضية:** منزل، محل تجاري، مجمع سكني، مجمع تجاري، أخرى
 
-### ملفات قالب Expo غير مستخدمة
-الملفات التالية من قالب `create-expo-app` ولا يُستدعَى أي منها من شاشات التطبيق الرئيسية؛ يمكن حذفها إن أردت تبسيط المشروع:
-- `components/themed-text.tsx`, `themed-view.tsx`
-- `components/parallax-scroll-view.tsx`, `external-link.tsx`, `hello-wave.tsx`, `haptic-tab.tsx`
-- `components/ui/icon-symbol.tsx`, `icon-symbol.ios.tsx`, `collapsible.tsx`
-- `hooks/use-theme-color.ts`, `use-color-scheme.ts`, `use-color-scheme.web.ts`
-- `constants/theme.ts`
+#### `places`
+| العمود | النوع | الشرح |
+|--------|-------|-------|
+| `id` | UUID | PRIMARY KEY |
+| `name` | VARCHAR(255) | |
+| `description` | TEXT | |
+| `type_id` | UUID | FK → place_types |
+| `created_by` | UUID | FK → users |
+| `status` | VARCHAR(20) | `active`/`pending`/`rejected` |
+| `created_at` | TIMESTAMPTZ | |
+| `deleted_at` | TIMESTAMPTZ | حذف ناعم |
+
+#### `place_locations`
+| العمود | النوع | الشرح |
+|--------|-------|-------|
+| `place_id` | UUID | PK + FK → places |
+| `latitude` | DECIMAL(10,7) | |
+| `longitude` | DECIMAL(10,7) | |
+
+#### `ratings`
+| العمود | النوع | الشرح |
+|--------|-------|-------|
+| `id` | UUID | PRIMARY KEY |
+| `place_id` | UUID | FK → places |
+| `user_id` | UUID | FK → users |
+| `rating` | SMALLINT | 1–5 |
+| `comment` | TEXT | |
+
+#### `refresh_tokens`
+| العمود | النوع | الشرح |
+|--------|-------|-------|
+| `id` | UUID | PRIMARY KEY |
+| `user_id` | UUID | FK → users |
+| `token_hash` | TEXT | hash للـ refresh token |
+| `expires_at` | TIMESTAMPTZ | |
+| `revoked_at` | TIMESTAMPTZ | |
+
+### الجداول القديمة (محتفظ بها للتوافق)
+`categories`, `stores`, `place_requests` — تُقرأ فقط كـ fallback للبيانات القديمة.
+
+---
+
+## صلاحيات الأطراف
+
+### الزائر (بدون تسجيل دخول)
+| الصلاحية | |
+|----------|--|
+| عرض الخريطة والأماكن | ✅ |
+| التصفية حسب النوع | ✅ |
+| عرض تفاصيل مكان | ✅ |
+| إرسال إبلاغ | ✅ |
+| إضافة مكان | ❌ (يلزم تسجيل دخول) |
+| لوحة الإدارة | ❌ |
+
+### المستخدم المسجّل
+نفس صلاحيات الزائر، إضافةً إلى:
+| الصلاحية | |
+|----------|--|
+| إضافة مكان (يصبح pending للمراجعة) | ✅ |
+| تعديل/حذف أماكنه | ✅ |
+| إضافة وتعديل وحذف تقييماته | ✅ |
+| لوحة المالك (owner-dashboard) | ✅ |
+
+### المدير (`role: 'admin'`)
+كل صلاحيات المستخدم، إضافةً إلى:
+| الصلاحية | |
+|----------|--|
+| لوحة الإدارة الكاملة | ✅ |
+| قبول/رفض الأماكن المعلّقة | ✅ |
+| إدارة المستخدمين (ترقية/تخفيض/حذف) | ✅ |
+| إدارة أنواع الأماكن (إضافة/تعديل) | ✅ |
+| مراجعة الإبلاغات | ✅ |
+| عرض سجل النشاط | ✅ |
+
+**حساب المدير الافتراضي:**
+- البريد: `admin@tulkarm.com`
+- كلمة المرور: `admin123`
+
+---
+
+## التوجيه (Routing)
+
+| المسار | الملف | الشرح |
+|--------|-------|-------|
+| `/` | `app/index.tsx` | نقطة البداية — يوجّه حسب حالة تسجيل الدخول |
+| `/onboarding` | `app/onboarding.tsx` | شاشة الترحيب (3 شرائح) |
+| `/(auth)/login` | `login.tsx` | تسجيل الدخول |
+| `/(auth)/register` | `register.tsx` | إنشاء حساب |
+| `/(main)/map` | `map.tsx` | الخريطة التفاعلية |
+| `/(main)/admin` | `admin.tsx` | لوحة الإدارة |
+| `/(main)/admin-stores` | `admin-stores.tsx` | إدارة الأماكن |
+| `/(main)/admin-categories` | `admin-categories.tsx` | إدارة أنواع الأماكن |
+| `/(main)/admin-place-requests` | `admin-place-requests.tsx` | الأماكن المعلّقة |
+| `/(main)/admin-users` | `admin-users.tsx` | إدارة المستخدمين |
+| `/(main)/admin-reports` | `admin-reports.tsx` | الإبلاغات |
+| `/(main)/admin-settings` | `admin-settings.tsx` | إعدادات التطبيق |
+| `/(main)/admin-activity` | `admin-activity.tsx` | سجل النشاط |
+| `/(main)/admin-backup` | `admin-backup.tsx` | النسخ الاحتياطي |
+| `/(main)/owner-dashboard` | `owner-dashboard.tsx` | لوحة مالك المكان |
+
+---
+
+## هيكل الملفات
+
+```
+tulkarm-map/
+├── app/
+│   ├── (auth)/          # تسجيل الدخول والتسجيل
+│   ├── (main)/          # الشاشات الرئيسية
+│   ├── index.tsx        # التوجيه الأولي
+│   └── onboarding.tsx   # شاشة الترحيب
+├── api/
+│   └── client.ts        # عميل HTTP الموحّد (JWT + refresh + جميع endpoints)
+├── components/
+│   ├── AddPlaceModal.tsx # نموذج إضافة مكان
+│   ├── ReportModal.tsx   # نموذج إبلاغ
+│   └── MapWrapper/      # مجلّد: index.tsx (موبايل) + index.web.tsx (ويب)
+├── context/
+│   ├── AuthContext.tsx   # المصادقة + JWT
+│   ├── StoreContext.tsx  # تحميل الأماكن من API
+│   └── CategoryContext.tsx # تحميل أنواع الأماكن من API
+├── constants/
+│   ├── tulkarmRegion.ts  # إحداثيات مركز طولكرم
+│   ├── categoryColors.ts # 12 لوناً مسبق
+│   └── mapStyle.ts       # إخفاء POIs من Google Maps
+├── utils/
+│   ├── geofencing.ts     # حدود طولكرم + إشعارات (موبايل)
+│   ├── geofencing.web.ts # stub للويب
+│   └── shadowStyles.ts   # ظلال متوافقة
+└── server/
+    ├── src/
+    │   ├── app.js        # Express app + كل الـ routes
+    │   ├── server.js     # نقطة الدخول (listen)
+    │   ├── config/       # db.js، env.js
+    │   ├── middleware/   # auth، role، validate، error
+    │   ├── modules/      # auth، places، placeTypes، ratings، uploads، orders، admin
+    │   └── utils/        # ApiError، jwt، hash، response
+    ├── scripts/
+    │   ├── migrate-v3.js
+    │   ├── migrate-v4.js
+    │   └── migrate-v5.js
+    ├── index.js          # يستورد src/server.js (للتوافق مع Vercel القديم)
+    └── package.json
+```
+
+---
+
+## سير عمل إضافة مكان
+
+1. المستخدم المسجّل ينقر على نقطة فارغة في خريطة طولكرم.
+2. يظهر **AddPlaceModal**: اسم، نوع المكان، وصف، صور.
+3. يُرسل الطلب إلى `POST /api/places` بحالة `pending`.
+4. المدير يراجع الطلب في **admin-place-requests**:
+   - **قبول** → تتغير الحالة إلى `active` ويظهر على الخريطة.
+   - **رفض** → تتغير الحالة إلى `rejected`.
 
 ---
 
@@ -521,6 +482,8 @@ stores ← تُنشأ من place_requests عند القبول
 - [Expo Documentation](https://docs.expo.dev/)
 - [Expo Router](https://docs.expo.dev/router/introduction/)
 - [React Native Maps](https://github.com/react-native-maps/react-native-maps)
+- [Neon PostgreSQL](https://neon.tech)
+- [Cloudinary](https://cloudinary.com)
 - [Discord مجتمع Expo](https://chat.expo.dev)
 
 ---

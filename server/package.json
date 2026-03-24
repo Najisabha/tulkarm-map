@@ -1,20 +1,28 @@
 {
   "name": "tulkarm-map-server",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Backend API for tulkarm-map app - PostgreSQL",
-  "main": "index.js",
+  "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
     "init-db": "node scripts/init-db.js",
     "migrate": "node scripts/migrate-v2.js",
-    "dev": "node --watch index.js"
+    "migrate:v3": "node scripts/migrate-v3.js",
+    "migrate:v4": "node scripts/migrate-v4.js",
+    "migrate:v5": "node scripts/migrate-v5.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "cloudinary": "^2.5.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
-    "pg": "^8.13.0"
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.13.0",
+    "zod": "^3.23.0"
   }
 }
