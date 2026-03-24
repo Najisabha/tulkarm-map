@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -46,7 +46,14 @@ export function AddPlaceModal({
   const { categories } = useCategories();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState(categories[0]?.name ?? 'تسوق');
+  const [category, setCategory] = useState(categories[0]?.name ?? '');
+
+  useEffect(() => {
+    if (categories.length > 0) {
+      setCategory((prev) => (prev.trim() ? prev : categories[0].name));
+    }
+  }, [categories]);
+
   const [phone, setPhone] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const [videos, setVideos] = useState<string[]>([]);
@@ -55,7 +62,7 @@ export function AddPlaceModal({
   const reset = () => {
     setName('');
     setDescription('');
-    setCategory(categories[0]?.name ?? 'تسوق');
+    setCategory(categories[0]?.name ?? '');
     setPhone('');
     setPhotos([]);
     setVideos([]);
@@ -71,10 +78,12 @@ export function AddPlaceModal({
       Alert.alert('تنبيه', `الحد الأقصى ${MAX_PHOTOS} صور`);
       return;
     }
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('تنبيه', 'نحتاج إذن الوصول للصور');
-      return;
+    if (Platform.OS !== 'web') {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('تنبيه', 'نحتاج إذن الوصول للصور');
+        return;
+      }
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -92,10 +101,12 @@ export function AddPlaceModal({
       Alert.alert('تنبيه', `الحد الأقصى ${MAX_VIDEOS} فيديو`);
       return;
     }
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('تنبيه', 'نحتاج إذن الوصول للملفات');
-      return;
+    if (Platform.OS !== 'web') {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('تنبيه', 'نحتاج إذن الوصول للملفات');
+        return;
+      }
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
@@ -113,6 +124,10 @@ export function AddPlaceModal({
   const handleSubmit = async () => {
     if (!name.trim() || !description.trim()) {
       Alert.alert('تنبيه', 'يرجى تعبئة الاسم والوصف');
+      return;
+    }
+    if (!category.trim() || categories.length === 0) {
+      Alert.alert('تنبيه', 'لا توجد فئات. يرجى طلب المدير إضافة فئات أولاً.');
       return;
     }
     setLoading(true);
@@ -173,6 +188,9 @@ export function AddPlaceModal({
             />
 
             <Text style={styles.label}>الفئة</Text>
+            {categories.length === 0 ? (
+              <Text style={styles.emptyCategoriesText}>لا توجد فئات. يرجى طلب المدير إضافة فئات أولاً.</Text>
+            ) : (
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -193,6 +211,7 @@ export function AddPlaceModal({
                 </TouchableOpacity>
               ))}
             </ScrollView>
+            )}
 
             <Text style={styles.label}>رقم الهاتف</Text>
             <TextInput
@@ -205,45 +224,41 @@ export function AddPlaceModal({
               textAlign="right"
             />
 
-            {Platform.OS !== 'web' && (
-              <>
-                <Text style={styles.label}>صور ({photos.length}/{MAX_PHOTOS})</Text>
-                <View style={styles.mediaRow}>
-                  {photos.map((uri, i) => (
-                    <View key={i} style={styles.thumbWrap}>
-                      <Image source={{ uri }} style={styles.thumb} />
-                      <TouchableOpacity style={styles.removeThumb} onPress={() => removePhoto(i)}>
-                        <Text style={styles.removeThumbText}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                  {photos.length < MAX_PHOTOS && (
-                    <TouchableOpacity style={styles.addMediaBtn} onPress={pickImage}>
-                      <Text style={styles.addMediaText}>📷 إضافة صورة</Text>
-                    </TouchableOpacity>
-                  )}
+            <Text style={styles.label}>صور ({photos.length}/{MAX_PHOTOS})</Text>
+            <View style={styles.mediaRow}>
+              {photos.map((uri, i) => (
+                <View key={i} style={styles.thumbWrap}>
+                  <Image source={{ uri }} style={styles.thumb} />
+                  <TouchableOpacity style={styles.removeThumb} onPress={() => removePhoto(i)}>
+                    <Text style={styles.removeThumbText}>✕</Text>
+                  </TouchableOpacity>
                 </View>
+              ))}
+              {photos.length < MAX_PHOTOS && (
+                <TouchableOpacity style={styles.addMediaBtn} onPress={pickImage}>
+                  <Text style={styles.addMediaText}>📷 إضافة صورة</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
-                <Text style={styles.label}>فيديو ({videos.length}/{MAX_VIDEOS})</Text>
-                <View style={styles.mediaRow}>
-                  {videos.map((uri, i) => (
-                    <View key={i} style={styles.thumbWrap}>
-                      <View style={styles.videoPlaceholder}>
-                      <Text style={{ fontSize: 24 }}>🎬</Text>
-                    </View>
-                      <TouchableOpacity style={styles.removeThumb} onPress={() => removeVideo(i)}>
-                        <Text style={styles.removeThumbText}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                  {videos.length < MAX_VIDEOS && (
-                    <TouchableOpacity style={styles.addMediaBtn} onPress={pickVideo}>
-                      <Text style={styles.addMediaText}>🎬 إضافة فيديو</Text>
-                    </TouchableOpacity>
-                  )}
+            <Text style={styles.label}>فيديو ({videos.length}/{MAX_VIDEOS})</Text>
+            <View style={styles.mediaRow}>
+              {videos.map((uri, i) => (
+                <View key={i} style={styles.thumbWrap}>
+                  <View style={styles.videoPlaceholder}>
+                    <Text style={{ fontSize: 24 }}>🎬</Text>
+                  </View>
+                  <TouchableOpacity style={styles.removeThumb} onPress={() => removeVideo(i)}>
+                    <Text style={styles.removeThumbText}>✕</Text>
+                  </TouchableOpacity>
                 </View>
-              </>
-            )}
+              ))}
+              {videos.length < MAX_VIDEOS && (
+                <TouchableOpacity style={styles.addMediaBtn} onPress={pickVideo}>
+                  <Text style={styles.addMediaText}>🎬 إضافة فيديو</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
             <TouchableOpacity
               style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
@@ -294,6 +309,7 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
   },
   textarea: { minHeight: 80 },
+  emptyCategoriesText: { fontSize: 14, color: '#9CA3AF', marginBottom: 16, textAlign: 'right' },
   catRow: { marginBottom: 16 },
   catRowContent: { flexDirection: 'row-reverse', gap: 8, paddingVertical: 4 },
   catChip: {

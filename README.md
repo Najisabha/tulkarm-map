@@ -125,12 +125,22 @@ npx expo start
 
 التطبيق يستخدم Google Maps ويخفي POIs المدمجة لعرض أماكنك المخصصة فقط. للتفعيل:
 
-1. أنشئ مشروعاً في [Google Cloud](https://console.cloud.google.com) وفعّل **Maps SDK for Android** و **Maps SDK for iOS**.
-2. أنشئ مفاتيح API (واحد لـ Android وواحد لـ iOS) من Credentials.
+1. أنشئ مشروعاً في [Google Cloud](https://console.cloud.google.com) وفعّل **Maps SDK for Android** و **Maps SDK for iOS** و **Maps JavaScript API** (للويب).
+2. أنشئ مفاتيح API من Credentials (واحد لـ Android، واحد لـ iOS، والويب يقرأ من .env).
 3. في `app.json` استبدل `YOUR_ANDROID_GOOGLE_MAPS_API_KEY` و `YOUR_IOS_GOOGLE_MAPS_API_KEY` بمفاتيحك.
-4. أعد بناء التطبيق الأصلي (Expo Go يستخدم خرائطه الخاصة؛ الـ development build مطلوب لاستخدام مفاتيحك).
+4. **للويب (مهم):** انسخ `.env.example` إلى `.env` وضع مفتاحك في `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`. أعد تشغيل السيرفر (`npx expo start --web`) بعد أي تعديل على `.env`.
+5. أعد بناء التطبيق الأصلي (Expo Go يستخدم خرائطه الخاصة؛ الـ development build مطلوب لاستخدام مفاتيحك على الموبايل).
 
-> **ملاحظة:** نسخة الويب تستخدم OpenStreetMap embed بدلاً من Google Maps.
+### استكشاف أخطاء "This page didn't load Google Maps correctly"
+
+إذا ظهر هذا الخطأ على الويب:
+
+1. **تفعيل الفوترة (Billing):** يجب ربط مشروع Google Cloud بحساب فوترة (حتى مع الاستخدام المجاني).
+2. **تفعيل Maps JavaScript API:** من [المكتبات](https://console.cloud.google.com/apis/library) ابحث عن "Maps JavaScript API" وثبّته.
+3. **تقييدات المفتاح:** إن كانت لديك قيود HTTP referrer، أضف:
+   - `http://localhost:*`
+   - `http://127.0.0.1:*`
+4. **إعادة تشغيل:** بعد أي تغيير في `.env` أعد تشغيل `npx expo start`.
 
 ---
 
@@ -139,7 +149,7 @@ npx expo start
 - **قاعدة البيانات:** PostgreSQL (مدعومة عبر خادم API في مجلد `server/`).
 - **التخزين الافتراضي:** محلي عبر AsyncStorage؛ فعّل `EXPO_PUBLIC_USE_API=true` للاتصال بـ PostgreSQL.
 - **المصادقة:** مستخدمين محليين + زائر + مدير افتراضي.
-- **الخريطة:** Google Maps على الموبايل، OpenStreetMap على الويب.
+- **الخريطة:** Google Maps على الموبايل والويب.
 - **Geofencing:** إشعارات الدخول/الخروج عند محافظة طولكرم (موبايل فقط، يتطلب development build).
 
 ---
@@ -154,8 +164,8 @@ npx expo start
 | `/onboarding` | `app/onboarding.tsx` | شاشة الترحيب (3 شرائح) |
 | `/(auth)/login` | `app/(auth)/login.tsx` | تسجيل الدخول |
 | `/(auth)/register` | `app/(auth)/register.tsx` | إنشاء حساب |
-| `/(main)/map` | `map.tsx` (موبايل) / `map.web.tsx` (ويب) | الخريطة — يتم اختيار الملف حسب المنصة تلقائياً |
-| `/(main)/admin` | `admin.tsx` (موبايل) / `admin.web.tsx` (ويب) | لوحة الإدارة |
+| `/(main)/map` | `map.tsx` | الخريطة — ملف موحد للموبايل والويب |
+| `/(main)/admin` | `admin.tsx` | لوحة الإدارة — ملف موحد للموبايل والويب |
 | `/(main)/admin-stores` | `admin-stores.tsx` | إدارة المتاجر |
 | `/(main)/admin-categories` | `admin-categories.tsx` | إدارة الفئات |
 | `/(main)/admin-place-requests` | `admin-place-requests.tsx` | إدارة طلبات الأماكن |
@@ -164,14 +174,16 @@ npx expo start
 
 ## الفرق بين الموبايل والويب
 
+المشروع **موحد** بين الموبايل والويب: نفس الشاشات، نفس الواجهة، نفس الميزات. الأساس هو الموبايل وتُطبَّق التغييرات على الويب تلقائياً.
+
 | الميزة | الموبايل | الويب |
 |--------|----------|-------|
-| الخريطة | Google Maps (react-native-maps) | OpenStreetMap iframe |
-| موقع المستخدم | ✅ GPS | ❌ غير متاح |
-| المسافة للأماكن | ✅ تُعرض | ❌ لا تُعرض |
-| Geofencing | ✅ إشعارات دخول/خروج | ❌ غير مدعوم |
-| إضافة مكان | النقر على الخريطة | زر "اقترح مكاناً" (إحداثيات ثابتة) |
+| الخريطة | Google Maps (react-native-maps) | Google Maps / Leaflet (@react-google-maps/api) |
+| موقع المستخدم | ✅ GPS | ✅ Geolocation API |
+| المسافة للأماكن | ✅ تُعرض | ✅ تُعرض |
+| إضافة مكان | النقر على الخريطة + صور وفيديو | نفس الواجهة (النقر + صور + فيديو) |
 | تعديل/حذف المتجر (أدمن) | ✅ | ✅ |
+| Geofencing | ✅ إشعارات دخول/خروج (dev build) | ❌ غير مدعوم (محدودية المتصفح) |
 
 ---
 
@@ -367,10 +379,8 @@ stores ← تُنشأ من place_requests عند القبول
 | الملف | الوظيفة التفصيلية |
 |-------|-------------------|
 | `_layout.tsx` | Stack للمسارات: map، admin، admin-stores، admin-categories، admin-place-requests |
-| `map.tsx` | خريطة تفاعلية، موقع المستخدم، geofencing، إضافة مكان بالنقر، تصفية بالفئة، تفاصيل المتجر، تعديل/حذف للأدمن، إعادة توجيه للموقع |
-| `map.web.tsx` | iframe لـ OpenStreetMap، تصفية بالفئة، قائمة المتاجر، تفاصيل المتجر، تعديل/حذف للأدمن، زر "اقترح مكاناً" |
+| `map.tsx` | خريطة تفاعلية (Google Maps على الموبايل والويب)، موقع المستخدم، geofencing، إضافة مكان بالنقر، تصفية بالفئة، تفاصيل المتجر، تعديل/حذف للأدمن، إعادة توجيه للموقع |
 | `admin.tsx` | لوحة إحصائيات (عدد المتاجر، الفئات، طلبات الانتظار) مع روابط للصفحات الفرعية |
-| `admin.web.tsx` | نفس لوحة الإدارة للويب |
 | `admin-stores.tsx` | قائمة المتاجر، إضافة، تعديل، حذف؛ يتحقق من صلاحية الأدمن |
 | `admin-categories.tsx` | قائمة الفئات، إضافة، تعديل، حذف؛ يحدّث المتاجر وطلبات الأماكن عند تغيير اسم الفئة |
 | `admin-place-requests.tsx` | قائمة الطلبات مع فلتر (قيد الانتظار/مقبول/مرفوض)، قبول/رفض/تعديل/حذف |
@@ -387,9 +397,9 @@ stores ← تُنشأ من place_requests عند القبول
 
 | الملف | الوظيفة التفصيلية |
 |-------|-------------------|
-| `AddPlaceModal.tsx` | نموذج: اسم، وصف، فئة، هاتف، حتى 3 صور، حتى 1 فيديو؛ اختيار الصور والفيديو من المعرض (غير متاح على الويب) |
+| `AddPlaceModal.tsx` | نموذج موحد: اسم، وصف، فئة، هاتف، حتى 3 صور، حتى 1 فيديو؛ اختيار الصور والفيديو من المعرض (موبايل وويب) |
 | `MapWrapper/index.tsx` | تصدير MapView، Marker، Circle، PROVIDER_GOOGLE من react-native-maps |
-| `MapWrapper/index.web.tsx` | placeholder عند استيراد MapWrapper على الويب (لا يُستخدم لأن map.web.tsx يستخدم iframe مباشرة) |
+| `MapWrapper/index.web.tsx` | تطبيق خريطة Google Maps للويب باستخدام @react-google-maps/api (نفس واجهة MapView/Marker/Circle) |
 
 ### `utils/`
 
@@ -413,7 +423,7 @@ stores ← تُنشأ من place_requests عند القبول
 
 ## سير عمل طلب إضافة مكان
 
-1. **المستخدم/الزائر** ينقر على نقطة داخل طولكرم (موبايل) أو يضغط "اقترح مكاناً" (ويب).
+1. **المستخدم/الزائر** ينقر على نقطة فارغة داخل حدود طولكرم على الخريطة (موبايل وويب).
 2. يظهر **AddPlaceModal** لملء: الاسم، الوصف، الفئة، الهاتف، صور، فيديو.
 3. يُرسل الطلب عبر `addPlaceRequest` → يُحفظ كـ **PlaceRequest** بحالة `pending`.
 4. **المدير** يفتح لوحة طلبات الأماكن، يراجع الطلب، ويختار:

@@ -12,15 +12,6 @@ export interface Category {
 
 const CATEGORIES_KEY = 'categories';
 
-const DEFAULT_CATEGORIES: Category[] = [
-  { id: 'cat-1', name: 'تسوق', emoji: '🛍️', color: '#F59E0B' },
-  { id: 'cat-2', name: 'مطاعم', emoji: '🍽️', color: '#EF4444' },
-  { id: 'cat-3', name: 'صحة', emoji: '💊', color: '#10B981' },
-  { id: 'cat-4', name: 'خدمات', emoji: '🔧', color: '#8B5CF6' },
-  { id: 'cat-5', name: 'ترفيه', emoji: '🎭', color: '#EC4899' },
-  { id: 'cat-6', name: 'تعليم', emoji: '📚', color: '#3B82F6' },
-];
-
 interface CategoryContextType {
   categories: Category[];
   addCategory: (cat: Omit<Category, 'id'>) => Promise<void>;
@@ -32,7 +23,7 @@ interface CategoryContextType {
 const CategoryContext = createContext<CategoryContextType | null>(null);
 
 export function CategoryProvider({ children }: { children: React.ReactNode }) {
-  const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
+  const [categories, setCategories] = useState<Category[]>([]);
 
   useEffect(() => {
     loadCategories();
@@ -60,7 +51,7 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } catch {
-      setCategories(DEFAULT_CATEGORIES);
+      setCategories([]);
     }
   };
 

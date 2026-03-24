@@ -64,9 +64,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const loadPlaceRequests = async () => {
     try {
       if (USE_API) {
-        const list = await api.getPlaceRequests();
-        setPlaceRequests(list as PlaceRequest[]);
-        return;
+        try {
+          const list = await api.getPlaceRequests();
+          setPlaceRequests(list as PlaceRequest[]);
+          return;
+        } catch {
+          const json = await AsyncStorage.getItem(PLACE_REQUESTS_KEY);
+          setPlaceRequests(json ? JSON.parse(json) : []);
+          return;
+        }
       }
       const json = await AsyncStorage.getItem(PLACE_REQUESTS_KEY);
       setPlaceRequests(json ? JSON.parse(json) : []);
@@ -75,33 +81,40 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const loadStoresFromStorage = async (): Promise<Store[]> => {
+    const storesJson = await AsyncStorage.getItem('stores');
+    if (!storesJson) return [];
+    let list: Store[] = JSON.parse(storesJson);
+    const seedCleared = await AsyncStorage.getItem(LEGACY_SEED_CLEARED_KEY);
+    if (!seedCleared) {
+      const next = list.filter((s) => !LEGACY_SEED_IDS.has(s.id));
+      if (next.length !== list.length) {
+        await AsyncStorage.setItem('stores', JSON.stringify(next));
+      }
+      await AsyncStorage.setItem(LEGACY_SEED_CLEARED_KEY, '1');
+      list = next;
+    }
+    return list;
+  };
+
   const loadStores = async () => {
     try {
       if (USE_API) {
-        const list = await api.getStores();
-        setStores(list);
-        return;
-      }
-      const storesJson = await AsyncStorage.getItem('stores');
-      if (storesJson) {
-        let list: Store[] = JSON.parse(storesJson);
-        const seedCleared = await AsyncStorage.getItem(LEGACY_SEED_CLEARED_KEY);
-        if (!seedCleared) {
-          const next = list.filter((s) => !LEGACY_SEED_IDS.has(s.id));
-          if (next.length !== list.length) {
-            await AsyncStorage.setItem('stores', JSON.stringify(next));
-          }
-          await AsyncStorage.setItem(LEGACY_SEED_CLEARED_KEY, '1');
-          list = next;
+        try {
+          const list = await api.getStores();
+          setStores(list);
+          return;
+        } catch (apiError) {
+          // عند فشل الاتصال (مثلاً على الموبايل مع localhost)، نستخدم التخزين المحلي
+          const local = await loadStoresFromStorage();
+          setStores(local);
+          return;
         }
-        setStores(list);
-      } else {
-        await AsyncStorage.setItem('stores', JSON.stringify([]));
-        await AsyncStorage.setItem(LEGACY_SEED_CLEARED_KEY, '1');
-        setStores([]);
       }
+      const list = await loadStoresFromStorage();
+      setStores(list);
     } catch (error) {
-      console.error('Error loading stores:', error);
+      console.warn('Error loading stores:', error);
       setStores([]);
     }
   };

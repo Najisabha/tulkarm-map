@@ -6,7 +6,19 @@ import pg from 'pg';
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const { escapeLiteral } = pg;
+
+const connStr = process.env.DATABASE_URL;
+if (!connStr || connStr.includes('YOUR_PASSWORD') || connStr.includes('localhost:5432/tulkarm-map')) {
+  console.error('❌ يُرجى تعديل server/.env وإضافة رابط اتصال Neon:');
+  console.error('   1. افتح Neon Console → اضغط Connect');
+  console.error('   2. انسخ Connection string');
+  console.error('   3. ضعه في server/.env كقيمة لـ DATABASE_URL');
+  console.error('   مثال: DATABASE_URL=postgresql://user:pass@ep-xxx.aws.neon.tech/neondb?sslmode=require');
+  process.exit(1);
+}
+
+const pool = new pg.Pool({ connectionString: connStr });
 
 const schema = `
 -- جدول المستخدمين
@@ -62,32 +74,12 @@ CREATE TABLE IF NOT EXISTS place_requests (
 CREATE INDEX IF NOT EXISTS idx_stores_location ON stores(latitude, longitude);
 `;
 
-const defaultCategories = [
-  { name: 'تسوق', emoji: '🛍️', color: '#F59E0B' },
-  { name: 'مطاعم', emoji: '🍽️', color: '#EF4444' },
-  { name: 'صحة', emoji: '💊', color: '#10B981' },
-  { name: 'خدمات', emoji: '🔧', color: '#8B5CF6' },
-  { name: 'ترفيه', emoji: '🎭', color: '#EC4899' },
-  { name: 'تعليم', emoji: '📚', color: '#3B82F6' },
-];
-
 async function init() {
   const client = await pool.connect();
   try {
     console.log('إنشاء الجداول...');
     await client.query(schema);
-
-    // إدراج الفئات الافتراضية إذا كانت فارغة
-    const { rows: catRows } = await client.query('SELECT COUNT(*) FROM categories');
-    if (parseInt(catRows[0].count) === 0) {
-      console.log('إضافة الفئات الافتراضية...');
-      for (const c of defaultCategories) {
-        await client.query(
-          'INSERT INTO categories (name, emoji, color) VALUES ($1, $2, $3)',
-          [c.name, c.emoji, c.color]
-        );
-      }
-    }
+    console.log('(الفئات تُضاف يدوياً من لوحة الإدارة)');
 
     // إدراج المدير الافتراضي إذا لم يكن موجوداً
     const { rows: adminRows } = await client.query(
@@ -97,7 +89,7 @@ async function init() {
       const hash = await bcrypt.hash('admin123', 10);
       await client.query(
         `INSERT INTO users (name, email, password_hash, is_admin)
-         VALUES ('مدير التطبيق', 'admin@tulkarm.com', $1, true)`
+         VALUES ('مدير التطبيق', 'admin@tulkarm.com', ${escapeLiteral(hash)}, true)`
       );
       console.log('تم إنشاء حساب المدير: admin@tulkarm.com / admin123');
     }

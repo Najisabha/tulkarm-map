@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { AddPlaceModal } from '../../components/AddPlaceModal';
 import { Circle, MapView, Marker, PROVIDER_GOOGLE } from '../../components/MapWrapper';
+import { LAYOUT } from '../../constants/layout';
 import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
 import { useAuth } from '../../context/AuthContext';
 import { useCategories } from '../../context/CategoryContext';
@@ -100,13 +101,18 @@ export default function MapScreen() {
   const setupLocation = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
+      const isWeb = Platform.OS === 'web';
       Alert.alert(
         'السماح بالوصول للموقع',
-        'نحتاج إذن الموقع لإظهار موقعك على الخريطة وإظهار الأماكن القريبة منك في طولكرم.',
-        [
-          { text: 'إلغاء', style: 'cancel' },
-          { text: 'فتح الإعدادات', onPress: () => Linking.openSettings() },
-        ]
+        isWeb
+          ? 'يرجى السماح بالموقع من إعدادات المتصفح (أيقونة القفل بجانب الرابط) لإظهار موقعك والأماكن القريبة.'
+          : 'نحتاج إذن الموقع لإظهار موقعك على الخريطة وإظهار الأماكن القريبة منك في طولكرم.',
+        isWeb
+          ? [{ text: 'حسناً' }]
+          : [
+              { text: 'إلغاء', style: 'cancel' },
+              { text: 'فتح الإعدادات', onPress: () => Linking.openSettings() },
+            ]
       );
       return;
     }
@@ -318,6 +324,12 @@ export default function MapScreen() {
               title={store.name}
               description={store.description}
               onPress={() => setSelectedStore(store)}
+              icon={{
+                emoji: getCategoryStyle(categoryList, store.category).emoji,
+                color: getCategoryStyle(categoryList, store.category).color,
+                opacity: isActive ? 1 : 0.35,
+                scale: isActive ? 1 : 0.8,
+              }}
             >
               <View
                 style={[
@@ -729,8 +741,14 @@ export default function MapScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  map: { flex: 1 },
+  container: {
+    flex: 1,
+    ...(Platform.OS === 'web' && { minHeight: '100vh' }),
+  },
+  map: {
+    flex: 1,
+    ...(Platform.OS === 'web' && { minHeight: '100%' }),
+  },
 
   banner: {
     position: 'absolute', top: 0, left: 0, right: 0,
@@ -743,7 +761,7 @@ const styles = StyleSheet.create({
 
   topBar: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 54 : 40,
+    top: LAYOUT.headerTop,
     left: 12, right: 12,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
@@ -783,7 +801,7 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#fff',
     paddingVertical: 12,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 14,
+    paddingBottom: LAYOUT.categoryBarPaddingBottom,
     ...shadow({ offset: { width: 0, height: -3 }, opacity: 0.1, radius: 8, elevation: 10 }),
   },
   categoryBarContent: { paddingHorizontal: 14, gap: 8 },
@@ -912,7 +930,7 @@ const styles = StyleSheet.create({
   },
   sidebarHeader: {
     backgroundColor: '#2E86AB', padding: 24,
-    paddingTop: Platform.OS === 'ios' ? 54 : 40, alignItems: 'center',
+    paddingTop: LAYOUT.sidebarHeaderTop, alignItems: 'center',
   },
   avatarCircle: {
     width: 60, height: 60, borderRadius: 30,

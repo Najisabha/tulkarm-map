@@ -8,7 +8,6 @@ import {
   ScrollView,
   Alert,
   Modal,
-  Platform,
   KeyboardAvoidingView,
   ActivityIndicator,
 } from 'react-native';
@@ -16,6 +15,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { useStores, Store } from '../../context/StoreContext';
 import { useCategories } from '../../context/CategoryContext';
+import { LAYOUT } from '../../constants/layout';
 import { TULKARM_REGION } from '../../constants/tulkarmRegion';
 import { shadow } from '../../utils/shadowStyles';
 
@@ -37,11 +37,17 @@ export default function AdminStoresScreen() {
   const [form, setForm] = useState({
     name: '',
     description: '',
-    category: categories[0]?.name ?? 'تسوق',
+    category: categories[0]?.name ?? '',
     phone: '',
     lat: String(TULKARM_REGION.latitude),
     lng: String(TULKARM_REGION.longitude),
   });
+
+  useEffect(() => {
+    if (categories.length > 0 && !form.category?.trim()) {
+      setForm((f) => ({ ...f, category: categories[0].name }));
+    }
+  }, [categories]);
 
   useEffect(() => {
     const id = params.editStoreId;
@@ -73,7 +79,7 @@ export default function AdminStoresScreen() {
     );
   }
 
-  const defaultCategory = categories[0]?.name ?? 'تسوق';
+  const defaultCategory = categories[0]?.name ?? '';
 
   const resetForm = () => {
     setForm({ name: '', description: '', category: defaultCategory, phone: '', lat: String(TULKARM_REGION.latitude), lng: String(TULKARM_REGION.longitude) });
@@ -82,6 +88,10 @@ export default function AdminStoresScreen() {
   const handleAdd = async () => {
     if (!form.name.trim() || !form.description.trim()) {
       Alert.alert('تنبيه', 'يرجى تعبئة الاسم والوصف');
+      return;
+    }
+    if (!form.category.trim() || categories.length === 0) {
+      Alert.alert('تنبيه', 'أضف فئة أولاً من إدارة الفئات');
       return;
     }
     const lat = parseFloat(form.lat);
@@ -198,7 +208,7 @@ export default function AdminStoresScreen() {
 
       {/* Add Modal */}
       <Modal visible={showAddModal} animationType="slide">
-        <KeyboardAvoidingView style={styles.modalContainer} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.modalContainer} behavior={LAYOUT.keyboardBehavior}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => { setShowAddModal(false); resetForm(); }}>
               <Text style={styles.modalCancelText}>إلغاء</Text>
@@ -246,7 +256,7 @@ export default function AdminStoresScreen() {
 
       {/* Edit Modal */}
       <Modal visible={!!editingStore} animationType="slide">
-        <KeyboardAvoidingView style={styles.modalContainer} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.modalContainer} behavior={LAYOUT.keyboardBehavior}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setEditingStore(null)}>
               <Text style={styles.modalCancelText}>إلغاء</Text>
@@ -305,7 +315,7 @@ const styles = StyleSheet.create({
   unauthorized: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   unauthorizedText: { fontSize: 20, color: '#EF4444', marginBottom: 16 },
   backLink: { color: '#2E86AB', fontSize: 16 },
-  header: { backgroundColor: '#1A3A5C', paddingTop: Platform.OS === 'ios' ? 54 : 40, paddingBottom: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
+  header: { backgroundColor: '#1A3A5C', paddingTop: LAYOUT.headerTop, paddingBottom: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
   backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
   backBtnText: { color: '#fff', fontSize: 20 },
   headerTitle: { color: '#fff', fontSize: 20, fontWeight: '700', marginRight: 12 },
@@ -333,7 +343,7 @@ const styles = StyleSheet.create({
   storeCardEmoji: { fontSize: 28, marginLeft: 12 },
   editHint: { fontSize: 12, color: '#2E86AB', fontWeight: '600', marginLeft: 6 },
   modalContainer: { flex: 1, backgroundColor: '#F0F4F8' },
-  modalHeader: { backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: Platform.OS === 'ios' ? 54 : 24, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
+  modalHeader: { backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: LAYOUT.modalHeaderTop, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
   modalCancelText: { color: '#EF4444', fontSize: 16, fontWeight: '600' },
   modalTitle: { color: '#1A3A5C', fontSize: 17, fontWeight: '700' },
   modalSaveText: { color: '#2E86AB', fontSize: 16, fontWeight: '700' },

@@ -1,12 +1,10 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  FlatList,
-  Dimensions,
-  ViewToken,
+  Animated,
   I18nManager,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -15,7 +13,6 @@ import { useAuth } from '../context/AuthContext';
 
 I18nManager.allowRTL(true);
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ONBOARDING_SEEN_KEY = 'onboarding_seen';
 
 const SLIDES = [
@@ -43,21 +40,117 @@ function saveOnboardingSeen() {
   AsyncStorage.setItem(ONBOARDING_SEEN_KEY, '1');
 }
 
+function AnimatedPaginationDot({ isActive }: { isActive: boolean }) {
+  const widthAnim = React.useRef(new Animated.Value(isActive ? 24 : 8)).current;
+  React.useEffect(() => {
+    Animated.spring(widthAnim, {
+      toValue: isActive ? 24 : 8,
+      tension: 180,
+      friction: 14,
+      useNativeDriver: false,
+    }).start();
+  }, [isActive]);
+  return (
+    <Animated.View
+      style={[
+        styles.dot,
+        styles.dotBase,
+        {
+          width: widthAnim,
+          backgroundColor: isActive ? '#2E86AB' : '#94A3B8',
+        },
+      ]}
+    />
+  );
+}
+
 export default function OnboardingScreen() {
   const router = useRouter();
   const { loginAsGuest } = useAuth();
   const [currentIndex, setCurrentIndex] = useState(0);
-  const flatListRef = useRef<FlatList>(null);
+  const currentSlide = SLIDES[currentIndex];
+  const emojiOpacity = useRef(new Animated.Value(1)).current;
+  const emojiScale = useRef(new Animated.Value(1)).current;
+  const titleOpacity = useRef(new Animated.Value(1)).current;
+  const titleTranslate = useRef(new Animated.Value(0)).current;
+  const descOpacity = useRef(new Animated.Value(1)).current;
+  const descTranslate = useRef(new Animated.Value(0)).current;
+  const btnScale = useRef(new Animated.Value(1)).current;
 
-  const onViewableItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      if (viewableItems[0]) {
-        setCurrentIndex(viewableItems[0].index ?? 0);
-      }
-    }
-  ).current;
+  const handleNextPress = () => {
+    Animated.sequence([
+      Animated.timing(btnScale, {
+        toValue: 0.95,
+        duration: 80,
+        useNativeDriver: true,
+      }),
+      Animated.spring(btnScale, {
+        toValue: 1,
+        tension: 200,
+        friction: 12,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    setCurrentIndex(currentIndex + 1);
+  };
 
-  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
+  useEffect(() => {
+    const springConfig = { tension: 80, friction: 12 };
+    const duration = 280;
+
+    emojiOpacity.setValue(0);
+    emojiScale.setValue(0.3);
+    titleOpacity.setValue(0);
+    titleTranslate.setValue(20);
+    descOpacity.setValue(0);
+    descTranslate.setValue(15);
+
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(emojiOpacity, {
+          toValue: 1,
+          duration: duration,
+          useNativeDriver: true,
+        }),
+        Animated.spring(emojiScale, {
+          toValue: 1.15,
+          ...springConfig,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(titleOpacity, {
+          toValue: 1,
+          duration: duration,
+          useNativeDriver: true,
+        }),
+        Animated.spring(titleTranslate, {
+          toValue: 0,
+          ...springConfig,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(descOpacity, {
+          toValue: 1,
+          duration: duration,
+          useNativeDriver: true,
+        }),
+        Animated.spring(descTranslate, {
+          toValue: 0,
+          ...springConfig,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start(() => {
+      Animated.spring(emojiScale, {
+        toValue: 1,
+        tension: 120,
+        friction: 8,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [currentIndex]);
 
   const handleLogin = () => {
     saveOnboardingSeen();
@@ -75,50 +168,53 @@ export default function OnboardingScreen() {
     router.replace('/(main)/map');
   };
 
-  const getItemLayout = (
-    _: unknown,
-    index: number
-  ): { length: number; offset: number; index: number } => ({
-    length: SCREEN_WIDTH,
-    offset: SCREEN_WIDTH * index,
-    index,
-  });
-
-  const renderSlide = ({ item }: { item: (typeof SLIDES)[0] }) => (
-    <View style={styles.slide}>
-      <Text style={styles.slideEmoji}>{item.emoji}</Text>
-      <Text style={styles.slideTitle}>{item.title}</Text>
-      <Text style={styles.slideDesc}>{item.desc}</Text>
-    </View>
-  );
-
   const isLastSlide = currentIndex === SLIDES.length - 1;
 
   return (
     <View style={styles.container}>
       <View style={styles.sliderContainer}>
-        <FlatList
-          ref={flatListRef}
-          data={SLIDES}
-          renderItem={renderSlide}
-          keyExtractor={(item) => item.id}
-          getItemLayout={getItemLayout}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={viewabilityConfig}
-        />
+        <View style={styles.slide}>
+          <Animated.Text
+            style={[
+              styles.slideEmoji,
+              {
+                opacity: emojiOpacity,
+                transform: [{ scale: emojiScale }],
+              },
+            ]}
+          >
+            {currentSlide.emoji}
+          </Animated.Text>
+          <Animated.Text
+            style={[
+              styles.slideTitle,
+              {
+                opacity: titleOpacity,
+                transform: [{ translateY: titleTranslate }],
+              },
+            ]}
+          >
+            {currentSlide.title}
+          </Animated.Text>
+          <Animated.Text
+            style={[
+              styles.slideDesc,
+              {
+                opacity: descOpacity,
+                transform: [{ translateY: descTranslate }],
+              },
+            ]}
+          >
+            {currentSlide.desc}
+          </Animated.Text>
+        </View>
       </View>
 
       <View style={styles.pagination}>
         {SLIDES.map((_, i) => (
-          <View
+          <AnimatedPaginationDot
             key={i}
-            style={[
-              styles.dot,
-              i === currentIndex && styles.dotActive,
-            ]}
+            isActive={i === currentIndex}
           />
         ))}
       </View>
@@ -138,15 +234,17 @@ export default function OnboardingScreen() {
           </>
         ) : (
           <TouchableOpacity
-            style={styles.nextBtn}
-            onPress={() =>
-              flatListRef.current?.scrollToIndex({
-                index: currentIndex + 1,
-                animated: true,
-              })
-            }
+            activeOpacity={1}
+            onPress={handleNextPress}
           >
-            <Text style={styles.nextBtnText}>التالي</Text>
+            <Animated.View
+              style={[
+                styles.nextBtn,
+                { transform: [{ scale: btnScale }] },
+              ]}
+            >
+              <Text style={styles.nextBtnText}>التالي</Text>
+            </Animated.View>
           </TouchableOpacity>
         )}
       </View>
@@ -164,7 +262,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   slide: {
-    width: SCREEN_WIDTH,
     paddingHorizontal: 32,
     alignItems: 'center',
     justifyContent: 'center',
@@ -189,18 +286,16 @@ const styles = StyleSheet.create({
   pagination: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 8,
+    alignItems: 'center',
+    gap: 10,
     marginBottom: 24,
+  },
+  dotBase: {
+    height: 8,
+    borderRadius: 4,
   },
   dot: {
     width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#94A3B8',
-  },
-  dotActive: {
-    backgroundColor: '#2E86AB',
-    width: 24,
   },
   buttonsContainer: {
     paddingHorizontal: 24,

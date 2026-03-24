@@ -1,9 +1,10 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { useStores } from '../../context/StoreContext';
 import { useCategories } from '../../context/CategoryContext';
+import { LAYOUT } from '../../constants/layout';
 import { shadow } from '../../utils/shadowStyles';
 
 export default function AdminScreen() {
@@ -71,7 +72,7 @@ const styles = StyleSheet.create({
   backLink: { color: '#2E86AB', fontSize: 16 },
   header: {
     backgroundColor: '#1A3A5C',
-    paddingTop: Platform.OS === 'ios' ? 54 : 40,
+    paddingTop: LAYOUT.headerTop,
     paddingBottom: 16,
     paddingHorizontal: 16,
     flexDirection: 'row',

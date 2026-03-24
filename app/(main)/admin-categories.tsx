@@ -3,7 +3,6 @@ import React, { useState } from 'react';
 import {
     Alert,
     Modal,
-    Platform,
     ScrollView,
     StyleSheet,
     Text,
@@ -12,6 +11,7 @@ import {
     View,
 } from 'react-native';
 import { PRESET_COLORS } from '../../constants/categoryColors';
+import { LAYOUT } from '../../constants/layout';
 import { useAuth } from '../../context/AuthContext';
 import { Category, useCategories } from '../../context/CategoryContext';
 import { useStores } from '../../context/StoreContext';
@@ -260,7 +260,7 @@ const styles = StyleSheet.create({
   backLink: { color: '#2E86AB', fontSize: 16 },
   header: {
     backgroundColor: '#1A3A5C',
-    paddingTop: Platform.OS === 'ios' ? 54 : 40,
+    paddingTop: LAYOUT.headerTop,
     paddingBottom: 16,
     paddingHorizontal: 16,
     flexDirection: 'row',
