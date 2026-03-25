@@ -423,46 +423,348 @@ EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=مفتاحك_هنا
 
 ## هيكل الملفات
 
-```
+> هذه الشجرة تشمل الملفات الفعلية الحالية في المشروع (بدون `node_modules`).
+
+```text
 tulkarm-map/
-├── app/
-│   ├── (auth)/          # تسجيل الدخول والتسجيل
-│   ├── (main)/          # الشاشات الرئيسية
-│   ├── index.tsx        # التوجيه الأولي
-│   └── onboarding.tsx   # شاشة الترحيب
+├── .env.example
+├── .gitignore
+├── README.md
+├── app.config.js
+├── app.json
+├── eslint.config.js
+├── package-lock.json
+├── package.json
+├── tsconfig.json
+├── .vscode/
+│   ├── extensions.json
+│   └── settings.json
 ├── api/
-│   └── client.ts        # عميل HTTP الموحّد (JWT + refresh + جميع endpoints)
+│   ├── client.ts
+│   └── config.ts
+├── app/
+│   ├── _layout.tsx
+│   ├── index.tsx
+│   ├── onboarding.tsx
+│   ├── (auth)/
+│   │   ├── _layout.tsx
+│   │   ├── login.tsx
+│   │   └── register.tsx
+│   └── (main)/
+│       ├── _layout.tsx
+│       ├── admin.tsx
+│       ├── admin-activity.tsx
+│       ├── admin-backup.tsx
+│       ├── admin-categories.tsx
+│       ├── admin-place-requests.tsx
+│       ├── admin-reports.tsx
+│       ├── admin-settings.tsx
+│       ├── admin-stores.tsx
+│       ├── admin-users.tsx
+│       ├── map.tsx
+│       └── owner-dashboard.tsx
+├── assets/
+│   └── images/
+│       ├── adaptive-icon.png
+│       ├── favicon.png
+│       ├── icon.png
+│       └── splash-icon.png
 ├── components/
-│   ├── AddPlaceModal.tsx # نموذج إضافة مكان
-│   ├── ReportModal.tsx   # نموذج إبلاغ
-│   └── MapWrapper/      # مجلّد: index.tsx (موبايل) + index.web.tsx (ويب)
-├── context/
-│   ├── AuthContext.tsx   # المصادقة + JWT
-│   ├── StoreContext.tsx  # تحميل الأماكن من API
-│   └── CategoryContext.tsx # تحميل أنواع الأماكن من API
+│   ├── AddPlaceModal.tsx
+│   ├── ReportModal.tsx
+│   ├── external-link.tsx
+│   ├── haptic-tab.tsx
+│   ├── hello-wave.tsx
+│   ├── parallax-scroll-view.tsx
+│   ├── themed-text.tsx
+│   ├── themed-view.tsx
+│   ├── MapWrapper/
+│   │   ├── index.tsx
+│   │   └── index.web.tsx
+│   └── ui/
+│       ├── collapsible.tsx
+│       ├── icon-symbol.ios.tsx
+│       └── icon-symbol.tsx
 ├── constants/
-│   ├── tulkarmRegion.ts  # إحداثيات مركز طولكرم
-│   ├── categoryColors.ts # 12 لوناً مسبق
-│   └── mapStyle.ts       # إخفاء POIs من Google Maps
-├── utils/
-│   ├── geofencing.ts     # حدود طولكرم + إشعارات (موبايل)
-│   ├── geofencing.web.ts # stub للويب
-│   └── shadowStyles.ts   # ظلال متوافقة
-└── server/
-    ├── src/
-    │   ├── app.js        # Express app + كل الـ routes
-    │   ├── server.js     # نقطة الدخول (listen)
-    │   ├── config/       # db.js، env.js
-    │   ├── middleware/   # auth، role، validate، error
-    │   ├── modules/      # auth، places، placeTypes، ratings، uploads، orders، admin
-    │   └── utils/        # ApiError، jwt، hash، response
-    ├── scripts/
-    │   ├── migrate-v3.js
-    │   ├── migrate-v4.js
-    │   └── migrate-v5.js
-    ├── index.js          # يستورد src/server.js (للتوافق مع Vercel القديم)
-    └── package.json
+│   ├── categoryColors.ts
+│   ├── layout.ts
+│   ├── mapStyle.ts
+│   ├── theme.ts
+│   └── tulkarmRegion.ts
+├── context/
+│   ├── AuthContext.tsx
+│   ├── CategoryContext.tsx
+│   ├── GoogleMapsLoaderContext.tsx
+│   ├── GoogleMapsLoaderContext.web.tsx
+│   └── StoreContext.tsx
+├── hooks/
+│   ├── use-color-scheme.ts
+│   ├── use-color-scheme.web.ts
+│   └── use-theme-color.ts
+├── scripts/
+│   └── reset-project.js
+├── server/
+│   ├── .env.example
+│   ├── db.js
+│   ├── index.js
+│   ├── index.legacy.js
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── scripts/
+│   │   ├── init-db.js
+│   │   ├── migrate-v2.js
+│   │   ├── migrate-v3.js
+│   │   ├── migrate-v4.js
+│   │   └── migrate-v5.js
+│   └── src/
+│       ├── app.js
+│       ├── legacy-bridge.js
+│       ├── server.js
+│       ├── config/
+│       │   ├── db.js
+│       │   └── env.js
+│       ├── middleware/
+│       │   ├── auth.middleware.js
+│       │   ├── error.middleware.js
+│       │   ├── role.middleware.js
+│       │   └── validate.middleware.js
+│       ├── modules/
+│       │   ├── admin/
+│       │   │   └── admin.routes.js
+│       │   ├── auth/
+│       │   │   ├── auth.controller.js
+│       │   │   ├── auth.repository.js
+│       │   │   ├── auth.routes.js
+│       │   │   ├── auth.schema.js
+│       │   │   └── auth.service.js
+│       │   ├── orders/
+│       │   │   └── orders.routes.js
+│       │   ├── placeTypes/
+│       │   │   ├── placeTypes.controller.js
+│       │   │   ├── placeTypes.repository.js
+│       │   │   ├── placeTypes.routes.js
+│       │   │   ├── placeTypes.schema.js
+│       │   │   └── placeTypes.service.js
+│       │   ├── places/
+│       │   │   ├── places.controller.js
+│       │   │   ├── places.repository.js
+│       │   │   ├── places.routes.js
+│       │   │   ├── places.schema.js
+│       │   │   └── places.service.js
+│       │   ├── ratings/
+│       │   │   ├── ratings.controller.js
+│       │   │   ├── ratings.repository.js
+│       │   │   ├── ratings.routes.js
+│       │   │   ├── ratings.schema.js
+│       │   │   └── ratings.service.js
+│       │   ├── storeProducts/
+│       │   │   └── storeProducts.routes.js
+│       │   ├── storeServices/
+│       │   │   └── storeServices.routes.js
+│       │   └── uploads/
+│       │       ├── uploads.controller.js
+│       │       ├── uploads.routes.js
+│       │       └── uploads.service.js
+│       └── utils/
+│           ├── ApiError.js
+│           ├── hash.js
+│           ├── jwt.js
+│           └── response.js
+└── utils/
+    ├── geofencing.ts
+    ├── geofencing.web.ts
+    ├── notifications.ts
+    ├── notifications.web.ts
+    └── shadowStyles.ts
 ```
+
+### شرح كل ملف (للمبتدئ)
+
+#### 1) ملفات الجذر
+
+- `README.md`: دليل المشروع الكامل (هذا الملف).
+- `.env.example`: قالب متغيرات البيئة للواجهة الأمامية (`EXPO_PUBLIC_*`).
+- `.gitignore`: يحدد الملفات/المجلدات التي لا تُرفع إلى Git.
+- `package.json`: سكربتات ومكتبات تطبيق Expo (الواجهة).
+- `package-lock.json`: قفل نسخ مكتبات npm للواجهة.
+- `tsconfig.json`: إعدادات TypeScript.
+- `app.json`: إعدادات Expo القياسية (اسم التطبيق/الأيقونات/المفاتيح).
+- `app.config.js`: إعداد Expo الديناميكي (حسب البيئة عند الحاجة).
+- `eslint.config.js`: قواعد فحص الكود (Lint).
+
+#### 2) إعدادات المحرر
+
+- `.vscode/extensions.json`: إضافات VS Code/Cursor الموصى بها.
+- `.vscode/settings.json`: إعدادات المحرر الخاصة بهذا المشروع.
+
+#### 3) الواجهة الأمامية - API
+
+- `api/config.ts`: يحدد عنوان الخادم الأساسي (`API URL`) حسب البيئة.
+- `api/client.ts`: عميل HTTP موحد؛ يدير التوكن، التحديث التلقائي (`refresh`) وكل استدعاءات API.
+
+#### 4) الواجهة الأمامية - التوجيه والشاشات (`app/`)
+
+- `app/_layout.tsx`: الجذر العام للتطبيق (Providers + Stack + تهيئة RTL للويب).
+- `app/index.tsx`: شاشة البداية الذكية؛ توجه إلى `onboarding` أو `login` أو `map`.
+- `app/onboarding.tsx`: شاشة الترحيب/الشرح الأولي للمستخدم الجديد.
+- `app/(auth)/_layout.tsx`: Layout لمجموعة شاشات المصادقة.
+- `app/(auth)/login.tsx`: شاشة تسجيل الدخول.
+- `app/(auth)/register.tsx`: شاشة إنشاء حساب جديد.
+- `app/(main)/_layout.tsx`: Layout لشاشات ما بعد تسجيل الدخول.
+- `app/(main)/map.tsx`: الشاشة الأساسية (الخريطة، الفئات، إضافة مكان، المسارات، تفاصيل المكان).
+- `app/(main)/admin.tsx`: لوحة الإدارة الرئيسية.
+- `app/(main)/admin-stores.tsx`: إدارة الأماكن (عرض/تعديل/حذف).
+- `app/(main)/admin-categories.tsx`: إدارة أنواع الأماكن.
+- `app/(main)/admin-place-requests.tsx`: مراجعة طلبات الإضافة (`pending`).
+- `app/(main)/admin-users.tsx`: إدارة المستخدمين والأدوار.
+- `app/(main)/admin-reports.tsx`: إدارة البلاغات.
+- `app/(main)/admin-settings.tsx`: إعدادات التطبيق العامة.
+- `app/(main)/admin-activity.tsx`: سجل نشاط الإدارة.
+- `app/(main)/admin-backup.tsx`: واجهة النسخ الاحتياطي (إداري).
+- `app/(main)/owner-dashboard.tsx`: لوحة صاحب المتجر (الطلبات/الخدمات/المنتجات).
+
+#### 5) الواجهة الأمامية - المكونات (`components/`)
+
+- `components/AddPlaceModal.tsx`: نافذة إضافة مكان جديد (نماذج، حقول ديناميكية، صور).
+- `components/ReportModal.tsx`: نافذة إرسال بلاغ عن مكان.
+- `components/external-link.tsx`: مكون رابط خارجي متوافق مع المنصات.
+- `components/haptic-tab.tsx`: زر/تبويب مع اهتزاز (Haptics) على الأجهزة المدعومة.
+- `components/hello-wave.tsx`: مكون UI بسيط (تحريك/ترحيب).
+- `components/parallax-scroll-view.tsx`: ScrollView بتأثير Parallax.
+- `components/themed-text.tsx`: نص يدعم الثيم (داكن/فاتح).
+- `components/themed-view.tsx`: View يدعم الثيم.
+- `components/MapWrapper/index.tsx`: تغليف مكونات الخريطة للموبايل (`react-native-maps`).
+- `components/MapWrapper/index.web.tsx`: تغليف الخريطة للويب (`@react-google-maps/api`/Leaflet حسب التنفيذ).
+- `components/ui/collapsible.tsx`: عنصر واجهة قابل للطي/الفتح.
+- `components/ui/icon-symbol.tsx`: أيقونات عامة عبر المنصات.
+- `components/ui/icon-symbol.ios.tsx`: تنفيذ أيقونات مخصص لـ iOS.
+
+#### 6) الواجهة الأمامية - الحالة العامة (`context/`)
+
+- `context/AuthContext.tsx`: إدارة حالة المستخدم، تسجيل الدخول/الخروج، حفظ الجلسة.
+- `context/CategoryContext.tsx`: تحميل/تخزين أنواع الأماكن على مستوى التطبيق.
+- `context/StoreContext.tsx`: تحميل/إدارة الأماكن (stores/places) وتحديثها.
+- `context/GoogleMapsLoaderContext.tsx`: تحميل مكتبة Google Maps وإدارة حالتها.
+- `context/GoogleMapsLoaderContext.web.tsx`: نسخة ويب خاصة لتحميل Google Maps.
+
+#### 7) الواجهة الأمامية - الثوابت (`constants/`)
+
+- `constants/tulkarmRegion.ts`: مركز طولكرم وحدود/نطاق الخريطة.
+- `constants/mapStyle.ts`: نمط الخريطة (مثل إخفاء POI).
+- `constants/layout.ts`: ثوابت قياسات الواجهة (هوامش/ارتفاعات).
+- `constants/theme.ts`: ألوان/ثيم التطبيق.
+- `constants/categoryColors.ts`: ألوان افتراضية للفئات/الأنواع.
+
+#### 8) الواجهة الأمامية - أدوات مساعدة (`utils/`)
+
+- `utils/geofencing.ts`: منطق geofencing للموبايل (داخل/خارج حدود طولكرم).
+- `utils/geofencing.web.ts`: بديل ويب لمنطق geofencing.
+- `utils/notifications.ts`: تهيئة وإرسال إشعارات للموبايل.
+- `utils/notifications.web.ts`: بديل ويب للإشعارات.
+- `utils/shadowStyles.ts`: توحيد أنماط الظلال بين iOS/Android/Web.
+
+#### 9) الواجهة الأمامية - Hooks
+
+- `hooks/use-color-scheme.ts`: قراءة نظام الألوان (فاتح/داكن) على الموبايل.
+- `hooks/use-color-scheme.web.ts`: قراءة نظام الألوان على الويب.
+- `hooks/use-theme-color.ts`: إرجاع لون مناسب حسب الثيم.
+
+#### 10) الواجهة الأمامية - سكربتات وموارد
+
+- `scripts/reset-project.js`: سكربت لإعادة ضبط مشروع Expo (تنظيف/تهيئة).
+- `assets/images/icon.png`: أيقونة التطبيق الأساسية.
+- `assets/images/adaptive-icon.png`: أيقونة Android adaptive.
+- `assets/images/splash-icon.png`: صورة شاشة الإقلاع.
+- `assets/images/favicon.png`: أيقونة المتصفح للويب.
+
+#### 11) الخادم (`server/`) - ملفات الجذر
+
+- `server/package.json`: تبعيات وسكربتات الخادم.
+- `server/package-lock.json`: قفل تبعيات الخادم.
+- `server/.env.example`: قالب متغيرات بيئة الخادم (DB/JWT/Cloudinary).
+- `server/index.js`: نقطة دخول للتشغيل/التوافق (يوجه لتطبيق الخادم).
+- `server/index.legacy.js`: نقطة دخول قديمة للتوافق مع نشر/بنية سابقة.
+- `server/db.js`: جسر/مدخل قديم للاتصال بقاعدة البيانات.
+
+#### 12) الخادم - سكربتات قاعدة البيانات
+
+- `server/scripts/init-db.js`: إنشاء الجداول الأساسية لأول مرة.
+- `server/scripts/migrate-v2.js`: هجرة الإصدار 2 (الجداول القديمة).
+- `server/scripts/migrate-v3.js`: هجرة الإصدار 3 (نظام الأماكن الحديث).
+- `server/scripts/migrate-v4.js`: هجرة الإصدار 4 (سجلات إدارية وتحسينات).
+- `server/scripts/migrate-v5.js`: هجرة الإصدار 5 (emoji/color لأنواع الأماكن).
+
+#### 13) الخادم - النواة (`server/src/`)
+
+- `server/src/server.js`: تشغيل الخادم (`listen`) بعد التحقق من اتصال قاعدة البيانات.
+- `server/src/app.js`: إعداد Express وربط جميع المسارات والميدل وير.
+- `server/src/legacy-bridge.js`: جسر توافق بين البنية القديمة والجديدة.
+
+#### 14) الخادم - الإعدادات
+
+- `server/src/config/env.js`: تحميل/تحقق متغيرات البيئة.
+- `server/src/config/db.js`: إنشاء Pool اتصال PostgreSQL.
+
+#### 15) الخادم - Middleware
+
+- `server/src/middleware/auth.middleware.js`: يتحقق من JWT ويثبت المستخدم في الطلب.
+- `server/src/middleware/role.middleware.js`: يتحقق من الصلاحيات (مثل admin).
+- `server/src/middleware/validate.middleware.js`: يطبّق التحقق عبر Zod schemas.
+- `server/src/middleware/error.middleware.js`: معالجة أخطاء 404 والأخطاء العامة.
+
+#### 16) الخادم - وحدات الأعمال (Modules)
+
+**auth**
+- `server/src/modules/auth/auth.routes.js`: مسارات المصادقة.
+- `server/src/modules/auth/auth.controller.js`: يستقبل الطلبات ويرجع الاستجابات.
+- `server/src/modules/auth/auth.service.js`: منطق الأعمال (register/login/refresh/logout).
+- `server/src/modules/auth/auth.repository.js`: استعلامات قاعدة البيانات الخاصة بالمستخدمين/التوكن.
+- `server/src/modules/auth/auth.schema.js`: مخططات التحقق لطلبات المصادقة.
+
+**placeTypes**
+- `server/src/modules/placeTypes/placeTypes.routes.js`: مسارات أنواع الأماكن.
+- `server/src/modules/placeTypes/placeTypes.controller.js`: تحكم API لأنواع الأماكن.
+- `server/src/modules/placeTypes/placeTypes.service.js`: قواعد الأعمال لأنواع الأماكن.
+- `server/src/modules/placeTypes/placeTypes.repository.js`: استعلامات DB لأنواع الأماكن وخصائصها.
+- `server/src/modules/placeTypes/placeTypes.schema.js`: تحقق الإدخال لأنواع الأماكن.
+
+**places**
+- `server/src/modules/places/places.routes.js`: مسارات الأماكن (CRUD + صور + ملكية).
+- `server/src/modules/places/places.controller.js`: طبقة التحكم لعمليات الأماكن.
+- `server/src/modules/places/places.service.js`: المنطق الرئيسي للأماكن (حالات pending/active/rejected).
+- `server/src/modules/places/places.repository.js`: استعلامات DB للأماكن، المواقع، الصور، الخصائص.
+- `server/src/modules/places/places.schema.js`: التحقق من طلبات إنشاء/تعديل الأماكن.
+
+**ratings**
+- `server/src/modules/ratings/ratings.routes.js`: مسارات التقييمات.
+- `server/src/modules/ratings/ratings.controller.js`: طبقة التحكم للتقييمات.
+- `server/src/modules/ratings/ratings.service.js`: منطق الأعمال للتقييمات ومتوسطات التقييم.
+- `server/src/modules/ratings/ratings.repository.js`: استعلامات DB للتقييمات.
+- `server/src/modules/ratings/ratings.schema.js`: تحقق الإدخال لطلبات التقييم.
+
+**uploads**
+- `server/src/modules/uploads/uploads.routes.js`: مسارات رفع الصور.
+- `server/src/modules/uploads/uploads.controller.js`: استقبال ومعالجة طلبات الرفع.
+- `server/src/modules/uploads/uploads.service.js`: رفع فعلي إلى Cloudinary وإرجاع الرابط.
+
+**orders**
+- `server/src/modules/orders/orders.routes.js`: مسارات الطلبات (إنشاء طلب/تتبع/تحديث الحالة).
+
+**storeServices**
+- `server/src/modules/storeServices/storeServices.routes.js`: مسارات خدمات المتاجر.
+
+**storeProducts**
+- `server/src/modules/storeProducts/storeProducts.routes.js`: مسارات منتجات المتاجر.
+
+**admin**
+- `server/src/modules/admin/admin.routes.js`: مسارات الإدارة (stats/users/reports/settings/activity/ownership).
+
+#### 17) الخادم - أدوات مساعدة
+
+- `server/src/utils/ApiError.js`: كلاس موحّد لأخطاء API مع status code.
+- `server/src/utils/hash.js`: دوال تشفير/مطابقة كلمات المرور.
+- `server/src/utils/jwt.js`: إنشاء/التحقق من access و refresh tokens.
+- `server/src/utils/response.js`: توحيد شكل الاستجابة الناجحة/الفاشلة.
 
 ---
 
