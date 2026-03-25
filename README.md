@@ -80,21 +80,13 @@ CLOUDINARY_API_SECRET=سر_cloudinary
 cd server
 
 # إنشاء الجداول الأساسية للمرة الأولى
-npm run init-db
-
-# إضافة الجداول الموسّعة (place_types، places، ratings، refresh_tokens، ...)
-npm run migrate:v3
-
-# إضافة جدول admin_logs وتحسينات
-npm run migrate:v4
-
-# إضافة أعمدة emoji و color لـ place_types
-npm run migrate:v5
+# إنشاء الجداول الأساسية + تشغيل الهجرات كلها (سكربت v1 موحّد)
+npm run migrate:v1
 ```
 
 > يمكن تشغيل الهجرات من جذر المشروع أيضاً:
 > ```bash
-> npm run migrate:v3   # أو v4 أو v5
+> npm run migrate:v1
 > ```
 
 ### 4. تشغيل الخادم
@@ -129,12 +121,9 @@ EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=مفتاحك_هنا
 
 | الهجرة | ما تضيفه |
 |--------|----------|
-| `migrate:v2` / `init-db` | جداول `users`, `categories`, `stores`, `place_requests` |
-| `migrate:v3` | `place_types`, `places`, `place_locations`, `place_attributes`, `place_images`, `ratings`, `refresh_tokens`, `place_type_attribute_definitions` — مع ترحيل البيانات من الجداول القديمة |
-| `migrate:v4` | `admin_logs`, أعمدة `owner_id` في `places` |
-| `migrate:v5` | أعمدة `emoji` و `color` في `place_types` |
+| `migrate:v1` | إنشاء الجداول الأساسية + ترحيلات `v2..v8` + seed لأنواع الأماكن الأساسية (`place_types`) + (اختياري) حذف `place_requests` عبر `--drop-unused-tables` |
 
-> الهجرات آمنة للتشغيل أكثر من مرة (`IF NOT EXISTS`). الجداول القديمة **لا تُحذف**.
+> السكربت موحّد وآمن للتشغيل أكثر من مرة (معظم DDL تستخدم `IF NOT EXISTS`). الحذف تدميري ويظل اختياري.
 
 ---
 
@@ -157,7 +146,7 @@ EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=مفتاحك_هنا
 5. شغّل الهجرات على قاعدة بيانات الإنتاج (Neon):
    ```bash
    # من جهازك المحلي مع DATABASE_URL تشير لـ Neon
-   npm run migrate:v3 && npm run migrate:v4 && npm run migrate:v5
+   npm run migrate:v1
    ```
 
 > **ملاحظة:** Vercel يشغّل `npm start` الذي يُشغّل `node src/server.js` — وهو نفس ما يُشغّله `node index.js` الآن.
@@ -511,11 +500,7 @@ tulkarm-map/
 │   ├── package-lock.json # قفل نسخ الخادم
 │   ├── package.json # سكربتات وتبعيات الخادم
 │   ├── scripts/
-│   │   ├── init-db.js # إنشاء الجداول الأساسية
-│   │   ├── migrate-v2.js # هجرة v2 (legacy)
-│   │   ├── migrate-v3.js # هجرة v3 (Places)
-│   │   ├── migrate-v4.js # هجرة v4 (admin_logs/owner)
-│   │   └── migrate-v5.js # هجرة v5 (emoji/color)
+│   │   └── migrate-v1.js # سكربت موحّد شامل (init-db + v2..v8 + seed + حذف اختياري)
 │   └── src/
 │       ├── app.js # Express + ربط routes
 │       ├── legacy-bridge.js # جسر توافق بين النسخ
@@ -580,7 +565,7 @@ tulkarm-map/
 
 ## هيكل قاعدة البيانات
 
-> هذه الشجرة تمثل الجداول الفعلية في PostgreSQL (بعد تشغيل `npm run init-db` ثم `migrate:v3` و `migrate:v4` و `migrate:v5`).
+> هذه الشجرة تمثل الجداول الفعلية في PostgreSQL (بعد تشغيل `npm run migrate:v1`).
 
 ### Extensions
 
@@ -1009,11 +994,7 @@ tulkarm-map/
 
 #### 12) الخادم - سكربتات قاعدة البيانات
 
-- `server/scripts/init-db.js`: إنشاء الجداول الأساسية لأول مرة.
-- `server/scripts/migrate-v2.js`: هجرة الإصدار 2 (الجداول القديمة).
-- `server/scripts/migrate-v3.js`: هجرة الإصدار 3 (نظام الأماكن الحديث).
-- `server/scripts/migrate-v4.js`: هجرة الإصدار 4 (سجلات إدارية وتحسينات).
-- `server/scripts/migrate-v5.js`: هجرة الإصدار 5 (emoji/color لأنواع الأماكن).
+- `server/scripts/migrate-v1.js`: سكربت موحّد شامل (init-db + v2..v8 + seed + دعم حذف اختياري لـ `place_requests`).
 
 #### 13) الخادم - النواة (`server/src/`)
 

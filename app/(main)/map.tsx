@@ -25,6 +25,7 @@ import { useCategories } from '../../context/CategoryContext';
 import { Store, useStores } from '../../context/StoreContext';
 import { isInsideTulkarm, startGeofencing, TULKARM_REGION } from '../../utils/geofencing';
 import { shadow } from '../../utils/shadowStyles';
+import { getPlaceTypeDisplayName } from '../../utils/placeTypeLabels';
 
 function getCategoryStyle(categories: { name: string; emoji: string; color: string }[], name: string) {
   const c = categories.find((x) => x.name === name);
@@ -209,6 +210,16 @@ function StoreServicesSheet({ store, user, onClose }: { store: Store; user: any;
                     <View style={{ flex: 1 }}>
                       <Text style={styles.servicesItemText}>{prod.name}</Text>
                       {prod.description && <Text style={{ fontSize: 12, color: '#6B7280' }}>{prod.description}</Text>}
+                      {prod.company_name ? (
+                        <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '700', marginTop: 2 }}>
+                          🏢 {prod.company_name}
+                        </Text>
+                      ) : null}
+                      {prod.main_category ? (
+                        <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '700' }}>
+                          📚 {prod.main_category}{prod.sub_category ? ` / ${prod.sub_category}` : ''}
+                        </Text>
+                      ) : null}
                       <Text style={{ fontSize: 14, fontWeight: '700', color: '#10B981', marginTop: 4 }}>{prod.price} ₪</Text>
                     </View>
                     {user?.id !== 'guest' && (
@@ -295,6 +306,25 @@ function StoreDetailSheet({
     ? haversineDistance(userLocation.latitude, userLocation.longitude, store.latitude, store.longitude)
     : null;
 
+  const attrs = store.attributes || [];
+  const attr = (key: string) => attrs.find((a) => a.key === key)?.value;
+
+  const typeName = store.category;
+  const isHouse = typeName === 'منزل';
+  const isStoreLike = typeName === 'متجر تجاري' || typeName === 'مجمّع تجاري';
+  const isResidentialComplex = typeName === 'مجمّع سكني';
+  const isCommercialComplex = typeName === 'مجمّع تجاري';
+
+  const locationText = attr('location_text');
+  const houseNumber = attr('house_number');
+  const storeType = attr('store_type');
+  const storeCategory = attr('store_category');
+  const storeNumber = attr('store_number');
+  const complexNumber = attr('complex_number');
+  const floorsCount = attr('floors_count');
+  const housesPerFloor = attr('houses_per_floor');
+  const storesPerFloor = attr('stores_per_floor');
+
   return (
     <View style={styles.overlayContainer} pointerEvents="box-none">
       <TouchableOpacity style={styles.overlayBackdrop} onPress={onClose} activeOpacity={1} />
@@ -312,7 +342,7 @@ function StoreDetailSheet({
           <Text style={styles.storeModalName}>{store.name}</Text>
           <View style={styles.storeModalPillsRow}>
             <View style={[styles.storeModalCategoryPill, { backgroundColor: catStyle.color + '18' }]}>
-              <Text style={[styles.storeModalCategoryText, { color: catStyle.color }]}>{store.category}</Text>
+              <Text style={[styles.storeModalCategoryText, { color: catStyle.color }]}>{getPlaceTypeDisplayName(store.category)}</Text>
             </View>
             {dist !== null && (
               <View style={styles.storeModalDistancePill}>
@@ -329,6 +359,52 @@ function StoreDetailSheet({
               <Text style={styles.storeModalPhoneText}>{store.phone}</Text>
             </TouchableOpacity>
           )}
+
+          {/* Typed details (fixed schema keys) */}
+          {locationText ? (
+            <Text style={styles.storeModalDescription}>{'📍 '}{locationText}</Text>
+          ) : null}
+
+          {isHouse && houseNumber ? (
+            <Text style={styles.storeModalDescription}>{'🏠 رقم المنزل: '}{houseNumber}</Text>
+          ) : null}
+
+          {isStoreLike && storeNumber ? (
+            <Text style={styles.storeModalDescription}>{'🏪 رقم المتجر: '}{storeNumber}</Text>
+          ) : null}
+
+          {isStoreLike && storeType ? (
+            <Text style={styles.storeModalDescription}>{'🧩 نوع المتجر: '}{storeType}</Text>
+          ) : null}
+
+          {isStoreLike && storeCategory ? (
+            <Text style={styles.storeModalDescription}>{'🏷️ تصنيف المتجر: '}{storeCategory}</Text>
+          ) : null}
+
+          {isResidentialComplex && complexNumber ? (
+            <Text style={styles.storeModalDescription}>{'🏘️ رقم المجمع: '}{complexNumber}</Text>
+          ) : null}
+
+          {isResidentialComplex && floorsCount ? (
+            <Text style={styles.storeModalDescription}>{'📚 عدد طوابق المجمع: '}{floorsCount}</Text>
+          ) : null}
+
+          {isResidentialComplex && housesPerFloor ? (
+            <Text style={styles.storeModalDescription}>{'🏠 عدد المنازل داخل كل طابق: '}{housesPerFloor}</Text>
+          ) : null}
+
+          {isCommercialComplex && complexNumber ? (
+            <Text style={styles.storeModalDescription}>{'🏬 رقم المجمع التجاري: '}{complexNumber}</Text>
+          ) : null}
+
+          {isCommercialComplex && floorsCount ? (
+            <Text style={styles.storeModalDescription}>{'📚 عدد طوابق المجمع التجاري: '}{floorsCount}</Text>
+          ) : null}
+
+          {isCommercialComplex && storesPerFloor ? (
+            <Text style={styles.storeModalDescription}>{'🏬 عدد المتاجر داخل كل طابق: '}{storesPerFloor}</Text>
+          ) : null}
+
           <View style={styles.storeModalBtnRow}>
             <TouchableOpacity
               style={[styles.storeModalActionBtn, styles.storeModalNavigateBtn]}
@@ -341,10 +417,14 @@ function StoreDetailSheet({
                 <Text style={styles.storeModalNavigateBtnSub}>يبعد {formatDistance(dist)}</Text>
               )}
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.storeModalActionBtn, styles.storeModalServicesBtn]} onPress={onServices}>
-              <Text style={styles.storeModalServicesBtnIcon}>🛍️</Text>
-              <Text style={styles.storeModalServicesBtnText}>خدمات المتجر</Text>
-            </TouchableOpacity>
+            {isStoreLike ? (
+              <TouchableOpacity style={[styles.storeModalActionBtn, styles.storeModalServicesBtn]} onPress={onServices}>
+                <Text style={styles.storeModalServicesBtnIcon}>🛍️</Text>
+                <Text style={styles.storeModalServicesBtnText}>خدمات المتجر</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={{ flex: 1 }} />
+            )}
           </View>
           {user?.id !== 'guest' && (
             <TouchableOpacity style={styles.storeModalReportBtn} onPress={onReport}>
@@ -983,7 +1063,7 @@ export default function MapScreen() {
                           {s.name}
                         </Text>
                         <Text style={styles.placeSearchItemMeta} numberOfLines={1}>
-                          {s.category}
+                          {getPlaceTypeDisplayName(s.category)}
                         </Text>
                       </View>
                       {s.phone ? (
@@ -1133,7 +1213,7 @@ export default function MapScreen() {
                     active && styles.categoryChipTextActive,
                   ]}
                 >
-                  {cat}
+                  {getPlaceTypeDisplayName(cat)}
                 </Text>
                 <View
                   style={[
@@ -1181,7 +1261,7 @@ export default function MapScreen() {
                   {getCategoryStyle(categoryList, selectedCategory ?? '').emoji}
                 </Text>
                 <View>
-                  <Text style={styles.sheetTitle}>{selectedCategory}</Text>
+                  <Text style={styles.sheetTitle}>{getPlaceTypeDisplayName(selectedCategory)}</Text>
                   <Text style={styles.sheetSubtitle}>
                     {categoryStores.length} مكان
                     {userLocation ? ' · مرتّب حسب المسافة' : ''}
@@ -1246,7 +1326,7 @@ export default function MapScreen() {
                       <Text style={[styles.sidebarCatCountText, { color: getCategoryStyle(categoryList, cat).color }]}>{catCount}</Text>
                     </View>
                     <View style={styles.sidebarCatInfo}>
-                      <Text style={styles.sidebarCatName}>{cat}</Text>
+                      <Text style={styles.sidebarCatName}>{getPlaceTypeDisplayName(cat)}</Text>
                     </View>
                     <Text style={styles.sidebarCatEmoji}>{getCategoryStyle(categoryList, cat).emoji}</Text>
                   </TouchableOpacity>

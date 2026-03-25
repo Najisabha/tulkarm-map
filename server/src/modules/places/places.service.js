@@ -1,6 +1,7 @@
 import { placesRepo } from './places.repository.js';
 import { placeTypesRepo } from '../placeTypes/placeTypes.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
+import pool from '../../config/db.js';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -67,6 +68,9 @@ export const placesService = {
       }
     }
 
+    // Sync typed detail tables + legacy stores table (for buying/services) when needed
+    await syncTypedDetailsAndLegacyStore(place.id);
+
     return placesRepo.findById(place.id);
   },
 
@@ -101,6 +105,8 @@ export const placesService = {
       const st = String(place.status || '').toLowerCase();
       if (st === 'pending') {
         await placesRepo.hardDelete(id);
+        // Remove legacy store row to avoid dangling purchase/services
+        await pool.query('DELETE FROM stores WHERE id = $1', [id]);
         return null;
       }
       throw ApiError.badRequest(
@@ -134,6 +140,9 @@ export const placesService = {
       }
     }
 
+    // Sync typed detail tables + legacy stores table (for buying/services) when needed
+    await syncTypedDetailsAndLegacyStore(id);
+
     return placesRepo.findById(id);
   },
 
@@ -148,8 +157,11 @@ export const placesService = {
     const st = String(place.status || '').toLowerCase();
     const unpublished = st !== 'active';
     if (unpublished) {
+      await pool.query('DELETE FROM stores WHERE id = $1', [id]);
       return placesRepo.hardDelete(id);
     }
+    // For soft delete: also delete legacy stores row to prevent purchase of hidden places
+    await pool.query('DELETE FROM stores WHERE id = $1', [id]);
     return placesRepo.softDelete(id);
   },
 
@@ -173,3 +185,262 @@ export const placesService = {
     return deleted;
   },
 };
+
+async function getPlaceContext(placeId) {
+  const { rows: placeRows } = await pool.query(
+    `
+      SELECT
+        p.id,
+        p.name,
+        p.description,
+        p.status,
+        p.created_at,
+        pt.name AS type_name,
+        pl.latitude,
+        pl.longitude
+      FROM places p
+      LEFT JOIN place_types pt ON pt.id = p.type_id
+      LEFT JOIN place_locations pl ON pl.place_id = p.id
+      WHERE p.id = $1 AND p.deleted_at IS NULL
+    `,
+    [placeId]
+  );
+  if (!placeRows[0]) return null;
+  const place = placeRows[0];
+
+  const { rows: attrRows } = await pool.query(
+    'SELECT key, value, value_type FROM place_attributes WHERE place_id = $1',
+    [placeId]
+  );
+  const attrs = {};
+  for (const a of attrRows) attrs[a.key] = a.value;
+
+  const { rows: images } = await pool.query(
+    'SELECT image_url FROM place_images WHERE place_id = $1 ORDER BY sort_order ASC',
+    [placeId]
+  );
+
+  return { place, attrs, images };
+}
+
+function parseJsonMaybe(value) {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function toIntMaybe(value) {
+  if (value == null) return null;
+  const n = parseInt(String(value), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function upsertTypedDetails(placeId) {
+  const ctx = await getPlaceContext(placeId);
+  if (!ctx) return;
+
+  const { place, attrs, images } = ctx;
+  const typeName = place.type_name;
+  const imageUrl = images?.[0]?.image_url || null;
+
+  const commonCols = {
+    place_id: place.id,
+    name: place.name,
+    location_text: attrs.location_text ?? null,
+    description: place.description ?? null,
+  };
+
+  switch (typeName) {
+    case 'منزل': {
+      await pool.query(
+        `
+          INSERT INTO house_details (place_id, name, house_number, location_text, description, image_url)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (place_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            house_number = EXCLUDED.house_number,
+            location_text = EXCLUDED.location_text,
+            description = EXCLUDED.description,
+            image_url = EXCLUDED.image_url
+        `,
+        [
+          commonCols.place_id,
+          commonCols.name,
+          attrs.house_number ?? null,
+          commonCols.location_text,
+          commonCols.description,
+          imageUrl,
+        ]
+      );
+      return;
+    }
+
+    case 'متجر تجاري': {
+      await pool.query(
+        `
+          INSERT INTO store_details (place_id, name, store_type, store_category, store_number, location_text, description)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (place_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            store_type = EXCLUDED.store_type,
+            store_category = EXCLUDED.store_category,
+            store_number = EXCLUDED.store_number,
+            location_text = EXCLUDED.location_text,
+            description = EXCLUDED.description
+        `,
+        [
+          commonCols.place_id,
+          commonCols.name,
+          attrs.store_type ?? null,
+          attrs.store_category ?? null,
+          attrs.store_number ?? null,
+          commonCols.location_text,
+          commonCols.description,
+        ]
+      );
+      return;
+    }
+
+    case 'مجمّع سكني': {
+      const housesPerFloor = parseJsonMaybe(attrs.houses_per_floor);
+      const housesPerFloorParam = housesPerFloor != null ? JSON.stringify(housesPerFloor) : null;
+      await pool.query(
+        `
+          INSERT INTO residential_complex_details (
+            place_id, name, complex_number, location_text, description, floors_count, houses_per_floor
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (place_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            complex_number = EXCLUDED.complex_number,
+            location_text = EXCLUDED.location_text,
+            description = EXCLUDED.description,
+            floors_count = EXCLUDED.floors_count,
+            houses_per_floor = EXCLUDED.houses_per_floor
+        `,
+        [
+          commonCols.place_id,
+          commonCols.name,
+          attrs.complex_number ?? null,
+          commonCols.location_text,
+          commonCols.description,
+          toIntMaybe(attrs.floors_count),
+          housesPerFloorParam,
+        ]
+      );
+      return;
+    }
+
+    case 'مجمّع تجاري': {
+      const storesPerFloor = parseJsonMaybe(attrs.stores_per_floor);
+      const storesPerFloorParam = storesPerFloor != null ? JSON.stringify(storesPerFloor) : null;
+      await pool.query(
+        `
+          INSERT INTO commercial_complex_details (
+            place_id, name, complex_number, location_text, description, floors_count, stores_per_floor
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (place_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            complex_number = EXCLUDED.complex_number,
+            location_text = EXCLUDED.location_text,
+            description = EXCLUDED.description,
+            floors_count = EXCLUDED.floors_count,
+            stores_per_floor = EXCLUDED.stores_per_floor
+        `,
+        [
+          commonCols.place_id,
+          commonCols.name,
+          attrs.complex_number ?? null,
+          commonCols.location_text,
+          commonCols.description,
+          toIntMaybe(attrs.floors_count),
+          storesPerFloorParam,
+        ]
+      );
+      return;
+    }
+
+    default: {
+      await pool.query(
+        `
+          INSERT INTO other_place_details (place_id, name, location_text, description)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (place_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            location_text = EXCLUDED.location_text,
+            description = EXCLUDED.description
+        `,
+        [commonCols.place_id, commonCols.name, commonCols.location_text, commonCols.description]
+      );
+      return;
+    }
+  }
+}
+
+async function syncLegacyStoreFromPlace(placeId) {
+  const ctx = await getPlaceContext(placeId);
+  if (!ctx) return;
+  const { place, attrs, images } = ctx;
+
+  const typeName = place.type_name;
+  const isStoreType = typeName === 'متجر تجاري' || typeName === 'مجمّع تجاري';
+  const isActive = String(place.status || '').toLowerCase() === 'active';
+
+  if (!isStoreType || !isActive) {
+    await pool.query('DELETE FROM stores WHERE id = $1', [placeId]);
+    return;
+  }
+
+  const { rows: catRows } = await pool.query(
+    'SELECT id FROM categories WHERE name = $1 LIMIT 1',
+    [typeName]
+  );
+  const categoryId = catRows[0]?.id ?? null;
+
+  const photos = (images || []).map((img) => img.image_url);
+  const phone = attrs.phone ?? null;
+  const description = place.description ?? '';
+
+  await pool.query(
+    `
+      INSERT INTO stores (
+        id, name, description, category_id,
+        latitude, longitude, phone, photos, videos,
+        created_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        description = EXCLUDED.description,
+        category_id = EXCLUDED.category_id,
+        latitude = EXCLUDED.latitude,
+        longitude = EXCLUDED.longitude,
+        phone = EXCLUDED.phone,
+        photos = EXCLUDED.photos,
+        videos = EXCLUDED.videos
+    `,
+    [
+      place.id,
+      place.name,
+      description,
+      categoryId,
+      Number(place.latitude ?? 0),
+      Number(place.longitude ?? 0),
+      phone,
+      JSON.stringify(photos || []),
+      JSON.stringify([]),
+      place.created_at ?? new Date().toISOString(),
+    ]
+  );
+}
+
+async function syncTypedDetailsAndLegacyStore(placeId) {
+  await upsertTypedDetails(placeId);
+  await syncLegacyStoreFromPlace(placeId);
+}

@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useCategories } from '../../context/CategoryContext';
 import { useStores } from '../../context/StoreContext';
 import { shadow } from '../../utils/shadowStyles';
+import { normalizePlaceTypeKind } from '../../utils/placeTypeLabels';
 
 export default function AdminScreen() {
   const router = useRouter();
@@ -17,6 +18,14 @@ export default function AdminScreen() {
   const activePlacesCount = useMemo(
     () => stores.filter((s) => String(s.status || '').toLowerCase() === 'active').length,
     [stores]
+  );
+  const storePlaceTypesCount = useMemo(
+    () =>
+      categories.filter((c) => {
+        const kind = normalizePlaceTypeKind(c.name);
+        return kind === 'store' || kind === 'commercialComplex';
+      }).length,
+    [categories]
   );
   const [stats, setStats] = useState<Partial<AdminStats>>({});
 
@@ -68,9 +77,13 @@ export default function AdminScreen() {
             <Text style={styles.statNumber}>{stats.places ?? activePlacesCount}</Text>
             <Text style={styles.statLabel}>الأماكن المنشورة</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-categories')} activeOpacity={0.7}>
-            <Text style={styles.statNumber}>{stats.placeTypes ?? categories.length}</Text>
-            <Text style={styles.statLabel}>أنواع الأماكن</Text>
+          <TouchableOpacity
+            style={styles.statCard}
+            onPress={() => router.push('/(main)/admin-categories?filterKind=store')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.statNumber}>{storePlaceTypesCount}</Text>
+            <Text style={styles.statLabel}>أنواع المتاجر</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-users')} activeOpacity={0.7}>
             <Text style={styles.statNumber}>{stats.users ?? '-'}</Text>
@@ -86,7 +99,10 @@ export default function AdminScreen() {
             <Text style={styles.statNumber}>{stats.pendingPlaceRequests ?? 0}</Text>
             <Text style={styles.statLabel}>طلبات إضافة الأماكن</Text>
           </TouchableOpacity>
-          <View style={styles.statColumnSpacer} />
+          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-categories')} activeOpacity={0.7}>
+            <Text style={styles.statNumber}>{stats.placeTypes ?? categories.length}</Text>
+            <Text style={styles.statLabel}>أنواع الأماكن</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.menuSection}>

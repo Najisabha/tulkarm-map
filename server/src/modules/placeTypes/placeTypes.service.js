@@ -6,6 +6,10 @@ export const placeTypesService = {
     return placeTypesRepo.findAll();
   },
 
+  async getById(id) {
+    return placeTypesRepo.findById(id);
+  },
+
   async create(data) {
     const { name } = data;
     const emoji = data.emoji ?? null;

@@ -7,11 +7,15 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "init-db": "node scripts/init-db.js",
-    "migrate": "node scripts/migrate-v2.js",
-    "migrate:v3": "node scripts/migrate-v3.js",
-    "migrate:v4": "node scripts/migrate-v4.js",
-    "migrate:v5": "node scripts/migrate-v5.js"
+    "init-db": "node scripts/migrate-v1.js",
+    "migrate": "node scripts/migrate-v1.js",
+    "migrate:v1": "node scripts/migrate-v1.js",
+    "migrate:v3": "node scripts/migrate-v1.js",
+    "migrate:v4": "node scripts/migrate-v1.js",
+    "migrate:v5": "node scripts/migrate-v1.js",
+    "migrate:v6": "node scripts/migrate-v1.js",
+    "migrate:v7": "node scripts/migrate-v1.js",
+    "migrate:v8": "node scripts/migrate-v1.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

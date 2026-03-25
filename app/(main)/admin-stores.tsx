@@ -59,15 +59,25 @@ export default function AdminStoresScreen() {
     lat: String(TULKARM_REGION.latitude),
     lng: String(TULKARM_REGION.longitude),
     dynamicAttrs: {} as Record<string, string>,
+    ownerId: null as string | null,
   });
   const [attrDefs, setAttrDefs] = useState<AttrDef[]>([]);
   const [editAttrDefs, setEditAttrDefs] = useState<AttrDef[]>([]);
+  const [owners, setOwners] = useState<{ id: string; name: string; email: string; role: string }[]>([]);
 
   useEffect(() => {
     if (categories.length > 0 && !form.category?.trim()) {
       setForm((f) => ({ ...f, category: categories[0].name }));
     }
   }, [categories]);
+
+  useEffect(() => {
+    if (!user?.isAdmin) return;
+    void api
+      .getUsers()
+      .then((res) => setOwners(res.data || []))
+      .catch(() => setOwners([]));
+  }, [user?.isAdmin]);
 
   useEffect(() => {
     const id = params.editStoreId;
@@ -116,7 +126,15 @@ export default function AdminStoresScreen() {
   const defaultCategory = categories[0]?.name ?? '';
 
   const resetForm = () => {
-    setForm({ name: '', description: '', category: defaultCategory, lat: String(TULKARM_REGION.latitude), lng: String(TULKARM_REGION.longitude), dynamicAttrs: {} });
+    setForm({
+      name: '',
+      description: '',
+      category: defaultCategory,
+      lat: String(TULKARM_REGION.latitude),
+      lng: String(TULKARM_REGION.longitude),
+      dynamicAttrs: {},
+      ownerId: null,
+    });
     setAttrDefs([]);
   };
 
@@ -157,7 +175,7 @@ export default function AdminStoresScreen() {
           const def = attrDefs.find((d) => d.key === key);
           return { key, value: value.trim(), value_type: def?.value_type || 'string' };
         });
-      await api.createPlaceFromAdmin({
+      const created = await api.createPlaceFromAdmin({
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         type_id: cat.id,
@@ -165,6 +183,11 @@ export default function AdminStoresScreen() {
         longitude: lng,
         attributes: attributes.length ? attributes : undefined,
       });
+
+      const placeId = created?.data?.id;
+      if (placeId && form.ownerId) {
+        await api.assignStoreOwner(placeId, form.ownerId);
+      }
       await refreshStores();
       setShowAddModal(false);
       resetForm();
@@ -235,7 +258,19 @@ export default function AdminStoresScreen() {
   const handleDelete = (store: Store) => {
     Alert.alert('\u062D\u0630\u0641 \u0627\u0644\u0645\u0643\u0627\u0646', `\u0647\u0644 \u0623\u0646\u062A \u0645\u062A\u0623\u0643\u062F \u0645\u0646 \u062D\u0630\u0641 "${store.name}"\u061F`, [
       { text: '\u0625\u0644\u063A\u0627\u0621', style: 'cancel' },
-      { text: '\u062D\u0630\u0641', style: 'destructive', onPress: async () => { await deleteStore(store.id); setEditingStore(null); Alert.alert('\u062A\u0645', '\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0645\u0643\u0627\u0646'); } },
+      {
+        text: '\u062D\u0630\u0641',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteStore(store.id);
+            setEditingStore(null);
+            Alert.alert('\u062A\u0645', '\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0645\u0643\u0627\u0646');
+          } catch (e: any) {
+            Alert.alert('\u062E\u0637\u0623', e?.message || '\u0641\u0634\u0644 \u0627\u0644\u062D\u0630\u0641');
+          }
+        },
+      },
     ]);
   };
 
@@ -375,6 +410,30 @@ export default function AdminStoresScreen() {
                 ))}
               </ScrollView>
             </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>
+                {'\u0635\u0627\u062d\u0628 \u0627\u0644\u0645\u062a\u062c\u0631'} <Text style={{ color: '#9CA3AF' }}>{'(اختياري)'}</Text>
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <TouchableOpacity
+                  style={[styles.categoryChip, !form.ownerId && styles.categoryChipActive]}
+                  onPress={() => setForm((p) => ({ ...p, ownerId: null }))}
+                >
+                  <Text style={[styles.categoryChipText, !form.ownerId && styles.categoryChipTextActive]}>بدون</Text>
+                </TouchableOpacity>
+                {owners.map((o) => (
+                  <TouchableOpacity
+                    key={o.id}
+                    style={[styles.categoryChip, form.ownerId === o.id && styles.categoryChipActive]}
+                    onPress={() => setForm((p) => ({ ...p, ownerId: o.id }))}
+                  >
+                    <Text style={[styles.categoryChipText, form.ownerId === o.id && styles.categoryChipTextActive]}>
+                      {o.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
             {renderAttrFields(attrDefs, form.dynamicAttrs, (key, value) => setForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, [key]: value } })))}
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>{'\u0627\u0644\u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A'}</Text>
@@ -502,13 +561,23 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
   },
   storeChipMutedText: { fontSize: 12, color: '#4B5563', fontWeight: '600', textAlign: 'right' },
-  storeActionRow: { flexDirection: 'row-reverse', gap: 10, paddingHorizontal: 16, paddingBottom: 16 },
+  storeActionRow: {
+    flexDirection: 'row-reverse',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    position: 'relative',
+    zIndex: 10,
+  },
   storeActionBtn: {
     flex: 1,
     minHeight: 46,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+    zIndex: 11,
+    pointerEvents: 'auto',
   },
   storeActionEdit: { backgroundColor: '#EBF5FB', borderWidth: 1.5, borderColor: '#2E86AB' },
   storeActionEditText: { fontSize: 14, fontWeight: '800', color: '#2E86AB' },

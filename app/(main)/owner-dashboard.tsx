@@ -33,6 +33,9 @@ interface Product {
   name: string;
   description: string | null;
   price: number;
+  main_category?: string | null;
+  sub_category?: string | null;
+  company_name?: string | null;
   stock: number;
   is_available: boolean;
 }
@@ -68,6 +71,9 @@ export default function OwnerDashboard() {
   const [prodDesc, setProdDesc] = useState('');
   const [prodPrice, setProdPrice] = useState('');
   const [prodStock, setProdStock] = useState('');
+  const [prodMainCategory, setProdMainCategory] = useState('');
+  const [prodSubCategory, setProdSubCategory] = useState('');
+  const [prodCompanyName, setProdCompanyName] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const isOwnerOrAdmin = user?.role === 'owner' || user?.isAdmin;
@@ -146,8 +152,17 @@ export default function OwnerDashboard() {
         description: prodDesc.trim() || undefined,
         price: parseFloat(prodPrice),
         stock: prodStock ? parseInt(prodStock) : -1,
+        main_category: prodMainCategory.trim() || null,
+        sub_category: prodSubCategory.trim() || null,
+        company_name: prodCompanyName.trim() || null,
       });
-      setProdName(''); setProdDesc(''); setProdPrice(''); setProdStock('');
+      setProdName('');
+      setProdDesc('');
+      setProdPrice('');
+      setProdStock('');
+      setProdMainCategory('');
+      setProdSubCategory('');
+      setProdCompanyName('');
       setShowAddProduct(false);
       loadStoreData(selectedStore.id);
     } catch (err: any) {
@@ -331,6 +346,50 @@ export default function OwnerDashboard() {
                       <Text style={s.cardPrice}>💰 {prod.price} ₪</Text>
                       {prod.stock !== -1 && <Text style={s.cardStock}>المخزون: {prod.stock}</Text>}
                     </View>
+                    {(prod.main_category || prod.sub_category || prod.company_name) ? (
+                      <View style={{ marginTop: 8 }}>
+                        {prod.company_name ? (
+                          <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '700', textAlign: 'right' }}>
+                            🏢 {prod.company_name}
+                          </Text>
+                        ) : null}
+                        {prod.main_category ? (
+                          <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '700', textAlign: 'right' }}>
+                            📚 {prod.main_category}{prod.sub_category ? ` / ${prod.sub_category}` : ''}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+                    <TouchableOpacity
+                      style={{
+                        marginTop: 12,
+                        backgroundColor: prod.is_available ? '#DCFCE7' : '#FEF2F2',
+                        borderRadius: 10,
+                        paddingVertical: 10,
+                        alignItems: 'center',
+                        borderWidth: 1,
+                        borderColor: prod.is_available ? '#86EFAC' : '#FECACA',
+                      }}
+                      onPress={async () => {
+                        setSubmitting(true);
+                        try {
+                          await api.updateStoreProduct(selectedStore?.id ?? prod.store_id, prod.id, {
+                            is_available: !prod.is_available,
+                          });
+                          if (selectedStore) loadStoreData(selectedStore.id);
+                          else loadStoreData(prod.store_id);
+                        } catch (e: any) {
+                          Alert.alert('خطأ', e?.message || 'فشل تحديث حالة المنتج');
+                        } finally {
+                          setSubmitting(false);
+                        }
+                      }}
+                      disabled={submitting}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#374151' }}>
+                        {prod.is_available ? 'مفعّل' : 'مخفي'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 ))}
               </>
@@ -423,6 +482,30 @@ export default function OwnerDashboard() {
             <TextInput style={[s.input, s.textarea]} placeholder="وصف المنتج" value={prodDesc} onChangeText={setProdDesc} multiline textAlign="right" placeholderTextColor="#9CA3AF" />
             <TextInput style={s.input} placeholder="السعر *" value={prodPrice} onChangeText={setProdPrice} keyboardType="decimal-pad" textAlign="right" placeholderTextColor="#9CA3AF" />
             <TextInput style={s.input} placeholder="المخزون (فارغ = غير محدود)" value={prodStock} onChangeText={setProdStock} keyboardType="number-pad" textAlign="right" placeholderTextColor="#9CA3AF" />
+            <TextInput
+              style={s.input}
+              placeholder="الصنف الرئيسي (اختياري)"
+              value={prodMainCategory}
+              onChangeText={setProdMainCategory}
+              textAlign="right"
+              placeholderTextColor="#9CA3AF"
+            />
+            <TextInput
+              style={s.input}
+              placeholder="الصنف الفرعي (اختياري)"
+              value={prodSubCategory}
+              onChangeText={setProdSubCategory}
+              textAlign="right"
+              placeholderTextColor="#9CA3AF"
+            />
+            <TextInput
+              style={s.input}
+              placeholder="اسم الشركة (اختياري)"
+              value={prodCompanyName}
+              onChangeText={setProdCompanyName}
+              textAlign="right"
+              placeholderTextColor="#9CA3AF"
+            />
             <TouchableOpacity style={[s.submitBtn, submitting && s.submitBtnDisabled]} onPress={handleAddProduct} disabled={submitting}>
               {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>إضافة</Text>}
             </TouchableOpacity>

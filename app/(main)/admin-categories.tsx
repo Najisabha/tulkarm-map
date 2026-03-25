@@ -1,5 +1,5 @@
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -18,6 +18,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Category, useCategories } from '../../context/CategoryContext';
 import { useStores } from '../../context/StoreContext';
 import { shadow } from '../../utils/shadowStyles';
+import { normalizePlaceTypeKind } from '../../utils/placeTypeLabels';
 
 interface AttrDef {
   id: string;
@@ -37,9 +38,25 @@ const VALUE_TYPES = [
 
 export default function AdminCategoriesScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ filterKind?: string }>();
   const { user } = useAuth();
   const { categories, addCategory, updateCategory, deleteCategory, refreshCategories } = useCategories();
   const { stores } = useStores();
+  // expo-router أحياناً قد يبدّل/يوحّد casing لأسماء query params،
+  // فخلي القراءة مرنة حتى يشتغل فلتر "أنواع المتاجر" دائماً.
+  const filterKindRaw = (() => {
+    const p: any = params ?? {};
+    return p.filterKind ?? p.filterkind ?? p.filter_kind ?? 'all';
+  })();
+  const filterKind = String(filterKindRaw ?? 'all').toLowerCase();
+
+  const visibleCategories = useMemo(() => {
+    if (filterKind !== 'store') return categories;
+    return categories.filter((c) => {
+      const kind = normalizePlaceTypeKind(c.name);
+      return kind === 'store' || kind === 'commercialComplex';
+    });
+  }, [categories, filterKind]);
 
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
@@ -164,8 +181,8 @@ export default function AdminCategoriesScreen() {
 
   const q = searchQuery.trim().toLowerCase();
   const filtered = (q
-    ? categories.filter((c) => c.name.toLowerCase().includes(q))
-    : categories
+    ? visibleCategories.filter((c) => c.name.toLowerCase().includes(q))
+    : visibleCategories
   ).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
   return (
@@ -176,7 +193,7 @@ export default function AdminCategoriesScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{'\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0641\u0626\u0627\u062A'}</Text>
         <View style={styles.headerBadge}>
-          <Text style={styles.headerBadgeText}>{categories.length} {'\u0641\u0626\u0629'}</Text>
+          <Text style={styles.headerBadgeText}>{visibleCategories.length} {'\u0641\u0626\u0629'}</Text>
         </View>
       </View>
 

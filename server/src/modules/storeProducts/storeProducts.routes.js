@@ -29,13 +29,23 @@ router.get('/', async (req, res, next) => {
 router.post('/', authenticate, async (req, res, next) => {
   try {
     await assertOwnerOrAdmin(req, req.params.storeId);
-    const { name, description, price, image_url, stock } = req.body;
+    const { name, description, price, image_url, stock, main_category, sub_category, company_name } = req.body;
     if (!name?.trim()) throw ApiError.badRequest('اسم المنتج مطلوب');
     if (price === undefined || price === null) throw ApiError.badRequest('السعر مطلوب');
     const { rows } = await pool.query(
-      `INSERT INTO store_products (store_id, name, description, price, image_url, stock)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [req.params.storeId, name.trim(), description || null, price, image_url || null, stock ?? -1]
+      `INSERT INTO store_products (store_id, name, description, price, image_url, stock, main_category, sub_category, company_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [
+        req.params.storeId,
+        name.trim(),
+        description || null,
+        price,
+        image_url || null,
+        stock ?? -1,
+        main_category || null,
+        sub_category || null,
+        company_name || null,
+      ]
     );
     return success(res, rows[0], 201);
   } catch (err) { next(err); }
@@ -45,7 +55,7 @@ router.post('/', authenticate, async (req, res, next) => {
 router.patch('/:id', authenticate, async (req, res, next) => {
   try {
     await assertOwnerOrAdmin(req, req.params.storeId);
-    const { name, description, price, image_url, stock, is_available, sort_order } = req.body;
+    const { name, description, price, image_url, stock, is_available, sort_order, main_category, sub_category, company_name } = req.body;
     const updates = [];
     const values = [];
     let i = 1;
@@ -56,6 +66,9 @@ router.patch('/:id', authenticate, async (req, res, next) => {
     if (stock !== undefined) { updates.push(`stock = $${i++}`); values.push(stock); }
     if (is_available !== undefined) { updates.push(`is_available = $${i++}`); values.push(is_available); }
     if (sort_order !== undefined) { updates.push(`sort_order = $${i++}`); values.push(sort_order); }
+    if (main_category !== undefined) { updates.push(`main_category = $${i++}`); values.push(main_category); }
+    if (sub_category !== undefined) { updates.push(`sub_category = $${i++}`); values.push(sub_category); }
+    if (company_name !== undefined) { updates.push(`company_name = $${i++}`); values.push(company_name); }
     if (updates.length === 0) throw ApiError.badRequest('لا يوجد شيء للتحديث');
     updates.push('updated_at = now()');
     values.push(req.params.id, req.params.storeId);

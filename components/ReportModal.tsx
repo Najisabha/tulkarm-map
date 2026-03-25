@@ -61,7 +61,7 @@ export function ReportModal({ visible, storeId, storeName, onClose }: ReportModa
     <Modal visible transparent animationType="fade">
       <View style={styles.overlay}>
         <View style={styles.modal}>
-          <Text style={styles.title}>الإبلاغ عن "{storeName}"</Text>
+          <Text style={styles.title}>الإبلاغ عن «{storeName}»</Text>
           <Text style={styles.label}>سبب الإبلاغ</Text>
           <View style={styles.reasonRow}>
             {REASONS.map((r) => (

@@ -15,6 +15,12 @@ import {
 } from 'react-native';
 import { api, PlaceType } from '../api/client';
 import { shadow } from '../utils/shadowStyles';
+import {
+  getPlaceTypeDisplayName,
+  getPlaceTypePluralLabel,
+  normalizePlaceTypeKind,
+  type PlaceTypeKind,
+} from '../utils/placeTypeLabels';
 
 const MAX_PHOTOS = 3;
 const MAX_VIDEOS = 1;
@@ -75,26 +81,54 @@ export function AddPlaceModal({
   const [attrDefs, setAttrDefs] = useState<AttributeDefinition[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  /** يُحفظ في place_attributes كـ key=phone إن لم يكن هناك حقل ديناميكي بنفس المفتاح */
-  const [phone, setPhone] = useState('');
   const [dynamicValues, setDynamicValues] = useState<Record<string, string>>({});
   const [photos, setPhotos] = useState<string[]>([]);
   const [videos, setVideos] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const selectedTypeSingularLabel = selectedType ? getPlaceTypeDisplayName(selectedType.name) : 'مكان';
 
   const loadPlaceTypes = async () => {
     setLoadingTypes(true);
     try {
       const res = await api.getPlaceTypes();
       const apiTypes: PlaceType[] = res.data || [];
-      setPlaceTypes(
-        apiTypes.map((t) => ({
+
+      // توحيد عرض الخيارات وإزالة التكرار:
+      // أحياناً يحصل fallback لـ `/api/categories` وتطلع أنواع إضافية/مكررة
+      // بنفس “اللايبل” (مثل عدة عناصر تنطبع كلها كـ "أخرى").
+      // المطلوب دائماً: منزل، متجر تجاري، مجمع تجاري، مجمع سكني، أخرى (كل نوع مرة واحدة فقط).
+      const canonicalNameByKind: Record<PlaceTypeKind, string> = {
+        house: 'منزل',
+        store: 'متجر تجاري',
+        commercialComplex: 'مجمّع تجاري',
+        residentialComplex: 'مجمّع سكني',
+        other: 'أخرى',
+      };
+
+      const kindOrder: PlaceTypeKind[] = ['house', 'store', 'commercialComplex', 'residentialComplex', 'other'];
+
+      const byKind: Partial<Record<PlaceTypeKind, PlaceTypeUI>> = {};
+
+      for (const t of apiTypes) {
+        const kind = normalizePlaceTypeKind(t.name);
+        const ui: PlaceTypeUI = {
           id: t.id,
           name: t.name,
           emoji: t.emoji || '\u{1F4CD}',
           color: t.color || '#2E86AB',
-        }))
-      );
+        };
+
+        const existing = byKind[kind];
+        const canonicalName = canonicalNameByKind[kind];
+
+        // إذا فيه أكثر من نوع ينمط لنفس الـkind، نُفضّل الـentry المطابقة للاسم الكنسي (إن وجد).
+        if (!existing || ui.name === canonicalName) {
+          byKind[kind] = ui;
+        }
+      }
+
+      setPlaceTypes(kindOrder.map((k) => byKind[k]).filter(Boolean) as PlaceTypeUI[]);
     } catch {
       setPlaceTypes([]);
     } finally {
@@ -102,12 +136,54 @@ export function AddPlaceModal({
     }
   };
 
-  const loadAttributeDefs = async (typeId: string) => {
-    try {
-      const res = await api.getAttributeDefinitions(typeId);
-      setAttrDefs(res.data || []);
-    } catch {
-      setAttrDefs([]);
+  const getFixedAttrDefsForType = (typeName: string): AttributeDefinition[] => {
+    const kind = normalizePlaceTypeKind(typeName);
+    const uid = (s: string) => `fixed-${kind}-${s}`;
+
+    switch (kind) {
+      case 'house':
+        return [
+          { id: uid('house_number'), key: 'house_number', label: 'رقم المنزل', value_type: 'string', is_required: true },
+          { id: uid('location_text'), key: 'location_text', label: 'مكان المنزل', value_type: 'string', is_required: true },
+        ];
+      case 'store':
+        return [
+          { id: uid('store_type'), key: 'store_type', label: 'نوع المتجر', value_type: 'string', is_required: true },
+          { id: uid('store_category'), key: 'store_category', label: 'تصنيف المتجر', value_type: 'string', is_required: true },
+          { id: uid('store_number'), key: 'store_number', label: 'رقم المتجر', value_type: 'string', is_required: true },
+          { id: uid('location_text'), key: 'location_text', label: 'مكان المتجر', value_type: 'string', is_required: true },
+        ];
+      case 'residentialComplex':
+        return [
+          { id: uid('complex_number'), key: 'complex_number', label: 'رقم المجمع', value_type: 'string', is_required: true },
+          { id: uid('location_text'), key: 'location_text', label: 'مكان المجمع', value_type: 'string', is_required: true },
+          { id: uid('floors_count'), key: 'floors_count', label: 'عدد طوابق المجمع', value_type: 'number', is_required: true },
+          {
+            id: uid('houses_per_floor'),
+            key: 'houses_per_floor',
+            label: 'عدد المنازل داخل كل طابق (JSON)',
+            value_type: 'json',
+            is_required: true,
+          },
+        ];
+      case 'commercialComplex':
+        return [
+          { id: uid('complex_number'), key: 'complex_number', label: 'رقم المجمع التجاري', value_type: 'string', is_required: true },
+          { id: uid('location_text'), key: 'location_text', label: 'مكان المجمع التجاري', value_type: 'string', is_required: true },
+          { id: uid('floors_count'), key: 'floors_count', label: 'عدد طوابق المجمع التجاري', value_type: 'number', is_required: true },
+          {
+            id: uid('stores_per_floor'),
+            key: 'stores_per_floor',
+            label: 'عدد المتاجر داخل كل طابق (JSON)',
+            value_type: 'json',
+            is_required: true,
+          },
+        ];
+      case 'other':
+      default:
+        return [
+          { id: uid('location_text'), key: 'location_text', label: 'مكان المكان', value_type: 'string', is_required: false },
+        ];
     }
   };
 
@@ -117,7 +193,6 @@ export function AddPlaceModal({
     setAttrDefs([]);
     setName('');
     setDescription('');
-    setPhone('');
     setDynamicValues({});
     setPhotos([]);
     setVideos([]);
@@ -137,7 +212,7 @@ export function AddPlaceModal({
   const handleSelectType = (type: PlaceTypeUI) => {
     setSelectedType(type);
     setDynamicValues({});
-    loadAttributeDefs(type.id);
+    setAttrDefs(getFixedAttrDefsForType(type.name));
     setStep('form');
   };
 
@@ -220,12 +295,6 @@ export function AddPlaceModal({
           return { key, value: value.trim(), value_type: def?.value_type || 'string' };
         });
 
-      const hasPhoneInDynamic = attrDefs.some((d) => d.key === 'phone');
-      const phoneTrim = phone.trim();
-      if (!hasPhoneInDynamic && phoneTrim && !attrs.some((a) => a.key === 'phone')) {
-        attrs.push({ key: 'phone', value: phoneTrim, value_type: 'string' });
-      }
-
       await onSubmit({
         name: name.trim(),
         description: description.trim(),
@@ -258,7 +327,7 @@ export function AddPlaceModal({
                 ? '\u0637\u0644\u0628\u0643 \u0642\u064A\u062F \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0629'
                 : step === 'type'
                   ? '\u0627\u062E\u062A\u0631 \u0646\u0648\u0639 \u0627\u0644\u0645\u0643\u0627\u0646'
-                  : `\u0625\u0636\u0627\u0641\u0629 ${selectedType?.name || '\u0645\u0643\u0627\u0646'}`}
+                  : `\u0625\u0636\u0627\u0641\u0629 ${selectedTypeSingularLabel}`}
             </Text>
             <TouchableOpacity onPress={handleClose}>
               <Text style={styles.closeBtn}>{'\u2715'}</Text>
@@ -285,7 +354,7 @@ export function AddPlaceModal({
                     <View style={[styles.typeIconCircle, { backgroundColor: type.color + '18' }]}>
                       <Text style={styles.typeEmoji}>{type.emoji}</Text>
                     </View>
-                    <Text style={styles.typeLabel}>{type.name}</Text>
+                    <Text style={styles.typeLabel}>{getPlaceTypePluralLabel(type.name)}</Text>
                     <Text style={styles.typeArrow}>{'\u2190'}</Text>
                   </TouchableOpacity>
                 ))
@@ -306,17 +375,37 @@ export function AddPlaceModal({
                     <Text style={styles.selectedTypeBadgeArrow}>{'\u2192'}</Text>
                     <View style={[styles.selectedTypeDot, { backgroundColor: selectedType.color }]} />
                     <Text style={styles.selectedTypeBadgeText}>
-                      {selectedType.emoji} {selectedType.name}
+                      {selectedType.emoji} {selectedTypeSingularLabel}
                     </Text>
                     <Text style={styles.selectedTypeChange}>{'\u062A\u063A\u064A\u064A\u0631'}</Text>
                   </TouchableOpacity>
 
                   <Text style={styles.coords}>{'\u{1F4CC}'} {latitude.toFixed(5)}, {longitude.toFixed(5)}</Text>
 
-                  <Text style={styles.label}>{'\u0627\u0644\u0627\u0633\u0645 *'}</Text>
+                  <Text style={styles.label}>
+                    {selectedTypeSingularLabel === 'منزل'
+                      ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u0632\u0644 *'
+                      : selectedTypeSingularLabel === 'متجر تجاري'
+                        ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062a\u062c\u0631 *'
+                        : selectedTypeSingularLabel === 'مجمّع سكني'
+                          ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062c\u0645\u0651\u0639 *'
+                          : selectedTypeSingularLabel === 'مجمّع تجاري'
+                            ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062c\u0645\u0651\u0639 \u0627\u0644\u062a\u062c\u0627\u0631\u064a *'
+                            : '\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646 *'}
+                  </Text>
                   <TextInput
                     style={styles.input}
-                    placeholder={'\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646'}
+                    placeholder={
+                      selectedTypeSingularLabel === 'منزل'
+                        ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u0632\u0644'
+                        : selectedTypeSingularLabel === 'متجر تجاري'
+                          ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062a\u062c\u0631'
+                          : selectedTypeSingularLabel === 'مجمّع سكني'
+                            ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062c\u0645\u0651\u0639'
+                            : selectedTypeSingularLabel === 'مجمّع تجاري'
+                              ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062c\u0645\u0651\u0639 \u0627\u0644\u062a\u062c\u0627\u0631\u064a'
+                              : '\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646'
+                    }
                     placeholderTextColor="#9CA3AF"
                     value={name}
                     onChangeText={setName}
@@ -334,28 +423,11 @@ export function AddPlaceModal({
                     textAlign="right"
                   />
 
-                  {!attrDefs.some((d) => d.key === 'phone') ? (
-                    <>
-                      <Text style={styles.label}>
-                        {'\u0631\u0642\u0645 \u0627\u0644\u0647\u0627\u062A\u0641 (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)'}
-                      </Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder={'\u0645\u062B\u0627\u0644: 0591234567'}
-                        placeholderTextColor="#9CA3AF"
-                        value={phone}
-                        onChangeText={setPhone}
-                        keyboardType={Platform.OS === 'web' ? 'default' : 'phone-pad'}
-                        textAlign="right"
-                      />
-                    </>
-                  ) : null}
-
-                  {/* Dynamic attribute fields from place_type_attribute_definitions */}
+                  {/* Fixed schema fields per place type (client-side) */}
                   {attrDefs.map((def) => (
                     <View key={def.id}>
                       <Text style={styles.label}>
-                        {def.label}{def.is_required ? ' *' : ''}
+                        {def.label + (def.is_required ? ' *' : '')}
                       </Text>
                       {def.value_type === 'boolean' ? (
                         <TouchableOpacity
@@ -385,22 +457,30 @@ export function AddPlaceModal({
                     </View>
                   ))}
 
-                  <Text style={styles.label}>{'\u0635\u0648\u0631'} ({photos.length}/{MAX_PHOTOS})</Text>
-                  <View style={styles.mediaRow}>
-                    {photos.map((uri, i) => (
-                      <View key={i} style={styles.thumbWrap}>
-                        <Image source={{ uri }} style={styles.thumb} />
-                        <TouchableOpacity style={styles.removeThumb} onPress={() => removePhoto(i)}>
-                          <Text style={styles.removeThumbText}>{'\u2715'}</Text>
-                        </TouchableOpacity>
+                  {(selectedTypeSingularLabel === 'منزل' || selectedTypeSingularLabel === 'متجر تجاري') && (
+                    <>
+                      <Text style={styles.label}>
+                        {selectedTypeSingularLabel === 'منزل' ? '\u0635\u0648\u0631 \u0627\u0644\u0645\u0646\u0632\u0644' : '\u0635\u0648\u0631 \u0627\u0644\u0645\u062a\u062c\u0631'} ({photos.length}/{MAX_PHOTOS})
+                      </Text>
+                      <View style={styles.mediaRow}>
+                        {photos.map((uri, i) => (
+                          <View key={i} style={styles.thumbWrap}>
+                            <Image source={{ uri }} style={styles.thumb} />
+                            <TouchableOpacity style={styles.removeThumb} onPress={() => removePhoto(i)}>
+                              <Text style={styles.removeThumbText}>{'\u2715'}</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                        {photos.length < MAX_PHOTOS && (
+                          <TouchableOpacity style={styles.addMediaBtn} onPress={pickImage}>
+                            <Text style={styles.addMediaText}>
+                              {'\u{1F4F7} '}{selectedTypeSingularLabel === 'منزل' ? '\u0625\u0636\u0627\u0641\u0629 \u0635\u0648\u0631 \u0627\u0644\u0645\u0646\u0632\u0644' : '\u0625\u0636\u0627\u0641\u0629 \u0635\u0648\u0631 \u0627\u0644\u0645\u062a\u062c\u0631'}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
-                    ))}
-                    {photos.length < MAX_PHOTOS && (
-                      <TouchableOpacity style={styles.addMediaBtn} onPress={pickImage}>
-                        <Text style={styles.addMediaText}>{'\u{1F4F7} \u0625\u0636\u0627\u0641\u0629 \u0635\u0648\u0631\u0629'}</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
+                    </>
+                  )}
 
                   <Text style={styles.label}>{'\u0641\u064A\u062F\u064A\u0648'} ({videos.length}/{MAX_VIDEOS})</Text>
                   <Text style={styles.videoHint}>{'\u0627\u0644\u0641\u064A\u062F\u064A\u0648 \u0644\u0627 \u064A\u064F\u062D\u0641\u0638 \u0639\u0644\u0649 \u0627\u0644\u062E\u0627\u062F\u0645 \u062D\u0627\u0644\u064A\u0627\u064B\u061B \u064A\u064F\u0633\u062A\u062E\u062F\u0645 \u0644\u0644\u0645\u0639\u0627\u064A\u0646\u0629 \u0627\u0644\u0645\u062D\u0644\u064A\u0629 \u0641\u0642\u0637.'}</Text>

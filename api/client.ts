@@ -219,6 +219,9 @@ export interface StoreProduct {
   image_url: string | null;
   stock: number;
   is_available: boolean;
+  main_category?: string | null;
+  sub_category?: string | null;
+  company_name?: string | null;
   sort_order: number;
 }
 
@@ -526,7 +529,7 @@ export const api = {
   getStoreProducts: (storeId: string) =>
     request<ApiResponse<StoreProduct[]>>(`/api/stores/${storeId}/products`),
 
-  addStoreProduct: (storeId: string, data: { name: string; description?: string; price: number; image_url?: string; stock?: number }) =>
+  addStoreProduct: (storeId: string, data: { name: string; description?: string; price: number; image_url?: string; stock?: number; main_category?: string | null; sub_category?: string | null; company_name?: string | null }) =>
     request<ApiResponse<StoreProduct>>(`/api/stores/${storeId}/products`, {
       method: 'POST',
       body: JSON.stringify(data),
