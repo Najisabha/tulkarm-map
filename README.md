@@ -427,156 +427,477 @@ EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=مفتاحك_هنا
 
 ```text
 tulkarm-map/
-├── .env.example
-├── .gitignore
-├── README.md
-├── app.config.js
-├── app.json
-├── eslint.config.js
-├── package-lock.json
-├── package.json
-├── tsconfig.json
+├── .env.example # قالب متغيرات البيئة (Front/Expo)
+├── .gitignore # تجاهل ملفات غير لازمة لـ Git
+├── README.md # توثيق المشروع
+├── app.config.js # إعدادات Expo حسب البيئة
+├── app.json # إعدادات Expo الأساسية
+├── eslint.config.js # قواعد ESLint
+├── package-lock.json # قفل نسخ npm
+├── package.json # سكربتات وتبعيات الواجهة
+├── tsconfig.json # إعدادات TypeScript
 ├── .vscode/
-│   ├── extensions.json
-│   └── settings.json
+│   ├── extensions.json # إضافات مقترحة
+│   └── settings.json # إعدادات المحرر
 ├── api/
-│   ├── client.ts
-│   └── config.ts
+│   ├── client.ts # عميل API + JWT/refresh
+│   └── config.ts # تحديد عنوان API
 ├── app/
-│   ├── _layout.tsx
-│   ├── index.tsx
-│   ├── onboarding.tsx
+│   ├── _layout.tsx # Providers + Stack + RTL(web)
+│   ├── index.tsx # شاشة البداية (redirect)
+│   ├── onboarding.tsx # شاشة الترحيب
 │   ├── (auth)/
-│   │   ├── _layout.tsx
-│   │   ├── login.tsx
-│   │   └── register.tsx
+│   │   ├── _layout.tsx # layout للمصادقة
+│   │   ├── login.tsx # تسجيل دخول
+│   │   └── register.tsx # إنشاء حساب
 │   └── (main)/
-│       ├── _layout.tsx
-│       ├── admin.tsx
-│       ├── admin-activity.tsx
-│       ├── admin-backup.tsx
-│       ├── admin-categories.tsx
-│       ├── admin-place-requests.tsx
-│       ├── admin-reports.tsx
-│       ├── admin-settings.tsx
-│       ├── admin-stores.tsx
-│       ├── admin-users.tsx
-│       ├── map.tsx
-│       └── owner-dashboard.tsx
+│       ├── _layout.tsx # layout بعد تسجيل الدخول
+│       ├── admin.tsx # لوحة الإدارة
+│       ├── admin-stores.tsx # إدارة الأماكن/المتاجر
+│       ├── admin-categories.tsx # إدارة أنواع الأماكن
+│       ├── admin-place-requests.tsx # مراجعة الطلبات المعلّقة
+│       ├── admin-users.tsx # إدارة المستخدمين
+│       ├── admin-reports.tsx # إدارة البلاغات
+│       ├── admin-settings.tsx # إعدادات التطبيق
+│       ├── admin-activity.tsx # سجل نشاط الإدارة
+│       ├── admin-backup.tsx # واجهة نسخ/إداري
+│       ├── map.tsx # الخريطة (المكان/الفئات/الطلبات)
+│       └── owner-dashboard.tsx # لوحة صاحب المتجر
 ├── assets/
 │   └── images/
-│       ├── adaptive-icon.png
-│       ├── favicon.png
-│       ├── icon.png
-│       └── splash-icon.png
+│       ├── adaptive-icon.png # أيقونة Android
+│       ├── favicon.png # favicon للويب
+│       ├── icon.png # أيقونة التطبيق
+│       └── splash-icon.png # شاشة البداية
 ├── components/
-│   ├── AddPlaceModal.tsx
-│   ├── ReportModal.tsx
-│   ├── external-link.tsx
-│   ├── haptic-tab.tsx
-│   ├── hello-wave.tsx
-│   ├── parallax-scroll-view.tsx
-│   ├── themed-text.tsx
-│   ├── themed-view.tsx
+│   ├── AddPlaceModal.tsx # نافذة إضافة مكان
+│   ├── ReportModal.tsx # نافذة إرسال بلاغ
+│   ├── external-link.tsx # رابط خارجي
+│   ├── haptic-tab.tsx # زر باهتزاز/UX
+│   ├── hello-wave.tsx # عنصر ترحيبي
+│   ├── parallax-scroll-view.tsx # Parallax Scroll
+│   ├── themed-text.tsx # Text حسب الثيم
+│   ├── themed-view.tsx # View حسب الثيم
 │   ├── MapWrapper/
-│   │   ├── index.tsx
-│   │   └── index.web.tsx
+│   │   ├── index.tsx # Map للموبايل
+│   │   └── index.web.tsx # Map للويب
 │   └── ui/
-│       ├── collapsible.tsx
-│       ├── icon-symbol.ios.tsx
-│       └── icon-symbol.tsx
+│       ├── collapsible.tsx # عنصر قابل للطي
+│       ├── icon-symbol.ios.tsx # أيقونات iOS
+│       └── icon-symbol.tsx # أيقونات عامة
 ├── constants/
-│   ├── categoryColors.ts
-│   ├── layout.ts
-│   ├── mapStyle.ts
-│   ├── theme.ts
-│   └── tulkarmRegion.ts
+│   ├── categoryColors.ts # ألوان الفئات
+│   ├── layout.ts # مقاسات ثابتة للواجهة
+│   ├── mapStyle.ts # نمط الخريطة
+│   ├── theme.ts # ألوان/ثيم عام
+│   └── tulkarmRegion.ts # حدود/إحداثيات طولكرم
 ├── context/
-│   ├── AuthContext.tsx
-│   ├── CategoryContext.tsx
-│   ├── GoogleMapsLoaderContext.tsx
-│   ├── GoogleMapsLoaderContext.web.tsx
-│   └── StoreContext.tsx
+│   ├── AuthContext.tsx # جلسة/صلاحيات المستخدم
+│   ├── CategoryContext.tsx # تحميل أنواع الأماكن
+│   ├── GoogleMapsLoaderContext.tsx # تحميل Google Maps (موبايل)
+│   ├── GoogleMapsLoaderContext.web.tsx # تحميل Google Maps (ويب)
+│   └── StoreContext.tsx # تحميل الأماكن/المتاجر
 ├── hooks/
-│   ├── use-color-scheme.ts
-│   ├── use-color-scheme.web.ts
-│   └── use-theme-color.ts
+│   ├── use-color-scheme.ts # ثيم النظام (موبايل)
+│   ├── use-color-scheme.web.ts # ثيم النظام (ويب)
+│   └── use-theme-color.ts # لون حسب الثيم
 ├── scripts/
-│   └── reset-project.js
+│   └── reset-project.js # تنظيف/إعادة تهيئة المشروع
 ├── server/
-│   ├── .env.example
-│   ├── db.js
-│   ├── index.js
-│   ├── index.legacy.js
-│   ├── package-lock.json
-│   ├── package.json
+│   ├── .env.example # قالب بيئة الخادم (DB/JWT/Cloudinary)
+│   ├── db.js # (قديم) اتصال/تهيئة DB
+│   ├── index.js # تشغيل (entrypoint)
+│   ├── index.legacy.js # entrypoint توافق قديم
+│   ├── package-lock.json # قفل نسخ الخادم
+│   ├── package.json # سكربتات وتبعيات الخادم
 │   ├── scripts/
-│   │   ├── init-db.js
-│   │   ├── migrate-v2.js
-│   │   ├── migrate-v3.js
-│   │   ├── migrate-v4.js
-│   │   └── migrate-v5.js
+│   │   ├── init-db.js # إنشاء الجداول الأساسية
+│   │   ├── migrate-v2.js # هجرة v2 (legacy)
+│   │   ├── migrate-v3.js # هجرة v3 (Places)
+│   │   ├── migrate-v4.js # هجرة v4 (admin_logs/owner)
+│   │   └── migrate-v5.js # هجرة v5 (emoji/color)
 │   └── src/
-│       ├── app.js
-│       ├── legacy-bridge.js
-│       ├── server.js
+│       ├── app.js # Express + ربط routes
+│       ├── legacy-bridge.js # جسر توافق بين النسخ
+│       ├── server.js # listen + تحقق DB
 │       ├── config/
-│       │   ├── db.js
-│       │   └── env.js
+│       │   ├── db.js # Pool PostgreSQL
+│       │   └── env.js # قراءة/تحقق متغيرات البيئة
 │       ├── middleware/
-│       │   ├── auth.middleware.js
-│       │   ├── error.middleware.js
-│       │   ├── role.middleware.js
-│       │   └── validate.middleware.js
+│       │   ├── auth.middleware.js # JWT حماية
+│       │   ├── error.middleware.js # معالجة الأخطاء
+│       │   ├── role.middleware.js # صلاحيات admin/owner
+│       │   └── validate.middleware.js # تحقق عبر Zod
 │       ├── modules/
 │       │   ├── admin/
-│       │   │   └── admin.routes.js
+│       │   │   └── admin.routes.js # مسارات admin
 │       │   ├── auth/
-│       │   │   ├── auth.controller.js
-│       │   │   ├── auth.repository.js
-│       │   │   ├── auth.routes.js
-│       │   │   ├── auth.schema.js
-│       │   │   └── auth.service.js
+│       │   │   ├── auth.controller.js # handlers المصادقة
+│       │   │   ├── auth.repository.js # استعلامات users/tokens
+│       │   │   ├── auth.routes.js # endpoints auth
+│       │   │   ├── auth.schema.js # Zod schemas
+│       │   │   └── auth.service.js # منطق register/login/refresh
 │       │   ├── orders/
-│       │   │   └── orders.routes.js
+│       │   │   └── orders.routes.js # endpoints الطلبات
 │       │   ├── placeTypes/
-│       │   │   ├── placeTypes.controller.js
-│       │   │   ├── placeTypes.repository.js
-│       │   │   ├── placeTypes.routes.js
-│       │   │   ├── placeTypes.schema.js
-│       │   │   └── placeTypes.service.js
+│       │   │   ├── placeTypes.controller.js # handlers place types
+│       │   │   ├── placeTypes.repository.js # DB لplace types
+│       │   │   ├── placeTypes.routes.js # endpoints place types
+│       │   │   ├── placeTypes.schema.js # تحقق المدخلات
+│       │   │   └── placeTypes.service.js # منطق الأعمال
 │       │   ├── places/
-│       │   │   ├── places.controller.js
-│       │   │   ├── places.repository.js
-│       │   │   ├── places.routes.js
-│       │   │   ├── places.schema.js
-│       │   │   └── places.service.js
+│       │   │   ├── places.controller.js # handlers للأماكن
+│       │   │   ├── places.repository.js # DB للأماكن/الصور/الخصائص
+│       │   │   ├── places.routes.js # endpoints places
+│       │   │   ├── places.schema.js # تحقق المدخلات
+│       │   │   └── places.service.js # منطق حالات pending/active
 │       │   ├── ratings/
-│       │   │   ├── ratings.controller.js
-│       │   │   ├── ratings.repository.js
-│       │   │   ├── ratings.routes.js
-│       │   │   ├── ratings.schema.js
-│       │   │   └── ratings.service.js
+│       │   │   ├── ratings.controller.js # handlers التقييمات
+│       │   │   ├── ratings.repository.js # DB للتقييمات
+│       │   │   ├── ratings.routes.js # endpoints ratings
+│       │   │   ├── ratings.schema.js # تحقق المدخلات
+│       │   │   └── ratings.service.js # منطق الأعمال + المتوسط
 │       │   ├── storeProducts/
-│       │   │   └── storeProducts.routes.js
+│       │   │   └── storeProducts.routes.js # endpoints المنتجات
 │       │   ├── storeServices/
-│       │   │   └── storeServices.routes.js
+│       │   │   └── storeServices.routes.js # endpoints الخدمات
 │       │   └── uploads/
-│       │       ├── uploads.controller.js
-│       │       ├── uploads.routes.js
-│       │       └── uploads.service.js
+│       │       ├── uploads.controller.js # استقبال رفع الصور
+│       │       ├── uploads.routes.js # endpoints رفع
+│       │       └── uploads.service.js # رفع Cloudinary + إرجاع URL
 │       └── utils/
-│           ├── ApiError.js
-│           ├── hash.js
-│           ├── jwt.js
-│           └── response.js
+│           ├── ApiError.js # كلاس أخطاء API
+│           ├── hash.js # تشفير/مطابقة كلمات المرور
+│           ├── jwt.js # إنشاء/تحقق توكنات JWT
+│           └── response.js # توحيد شكل الاستجابة
 └── utils/
-    ├── geofencing.ts
-    ├── geofencing.web.ts
-    ├── notifications.ts
-    ├── notifications.web.ts
-    └── shadowStyles.ts
+    ├── geofencing.ts # geofencing (موبايل)
+    ├── geofencing.web.ts # stub لgeofencing (ويب)
+    ├── notifications.ts # إشعارات (موبايل)
+    ├── notifications.web.ts # stub للإشعارات (ويب)
+    └── shadowStyles.ts # ظلال متوافقة
 ```
+
+## هيكل قاعدة البيانات
+
+> هذه الشجرة تمثل الجداول الفعلية في PostgreSQL (بعد تشغيل `npm run init-db` ثم `migrate:v3` و `migrate:v4` و `migrate:v5`).
+
+### Extensions
+
+| Extension | الهدف |
+|---|---|
+| `uuid-ossp` | دعم توليد UUID |
+| `pgcrypto` | دعم وظائف تشفير/تجزئة |
+
+### Users / Auth
+
+<details>
+<summary><code>users</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()` |
+| `name` | `VARCHAR(255)` | `NOT NULL` |
+| `email` | `VARCHAR(255)` | `UNIQUE`, `NOT NULL` |
+| `password_hash` | `VARCHAR(255)` | `NOT NULL` (bcrypt hash) |
+| `is_admin` | `BOOLEAN` | legacy فقط (default `false`) |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `role` | `VARCHAR(20)` | `DEFAULT 'user'` (قيد: `admin|user|owner`) |
+| `updated_at` | `TIMESTAMPTZ` | (v3) `DEFAULT now()` |
+| `deleted_at` | `TIMESTAMPTZ` | (v3) nullable (حذف ناعم) |
+
+</details>
+
+<details>
+<summary><code>app_settings</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `key` | `VARCHAR(100)` | PK |
+| `value` | `JSONB` | `NOT NULL` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+### Legacy (محتفظ بها للتوافق)
+
+<details>
+<summary><code>categories</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `name` | `VARCHAR(100)` | `UNIQUE` |
+| `emoji` | `VARCHAR(10)` | (legacy) |
+| `color` | `VARCHAR(7)` | (legacy) |
+| `sort_order` | `INTEGER` | `DEFAULT 0` |
+
+</details>
+
+<details>
+<summary><code>stores</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `name` | `VARCHAR(255)` | `NOT NULL` |
+| `description` | `TEXT` | `NOT NULL` |
+| `category_id` | `UUID` | FK -> `categories(id)` `ON DELETE RESTRICT` |
+| `latitude` | `DECIMAL(10,7)` | `NOT NULL` |
+| `longitude` | `DECIMAL(10,7)` | `NOT NULL` |
+| `phone` | `VARCHAR(20)` | nullable |
+| `photos` | `JSONB` | `DEFAULT '[]'` |
+| `videos` | `JSONB` | `DEFAULT '[]'` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `owner_id` | `UUID` | (v4) FK -> `users(id)` `ON DELETE SET NULL` |
+
+</details>
+
+<details>
+<summary><code>place_requests</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `name` | `VARCHAR(255)` | `NOT NULL` |
+| `description` | `TEXT` | `NOT NULL` |
+| `category_id` | `UUID` | FK -> `categories(id)` `ON DELETE RESTRICT` |
+| `latitude` | `DECIMAL(10,7)` | `NOT NULL` |
+| `longitude` | `DECIMAL(10,7)` | `NOT NULL` |
+| `phone` | `VARCHAR(20)` | nullable |
+| `photos` | `JSONB` | `DEFAULT '[]'` |
+| `videos` | `JSONB` | `DEFAULT '[]'` |
+| `status` | `VARCHAR(20)` | `DEFAULT 'pending'` (check: `pending|accepted|rejected`) |
+| `created_by` | `UUID` | FK -> `users(id)` `ON DELETE SET NULL` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>reports</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `store_id` | `UUID` | FK -> `stores(id)` `ON DELETE CASCADE` |
+| `reported_by` | `UUID` | FK -> `users(id)` `ON DELETE SET NULL` |
+| `reason` | `VARCHAR(50)` | `NOT NULL` |
+| `details` | `TEXT` | nullable |
+| `status` | `VARCHAR(20)` | `DEFAULT 'pending'` (check: `pending|resolved|dismissed`) |
+| `resolved_at` | `TIMESTAMPTZ` | nullable |
+| `resolved_by` | `UUID` | FK -> `users(id)` `ON DELETE SET NULL` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>activity_log</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `action` | `VARCHAR(50)` | `NOT NULL` |
+| `entity_type` | `VARCHAR(50)` | `NOT NULL` |
+| `entity_id` | `VARCHAR(100)` | nullable |
+| `details` | `JSONB` | `DEFAULT '{}'` |
+| `actor_name` | `VARCHAR(255)` | nullable |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+### Places (الهيكل الأساسي الحديث)
+
+<details>
+<summary><code>place_types</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `name` | `VARCHAR(100)` | `UNIQUE` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `emoji` | `VARCHAR(32)` | (v5) nullable |
+| `color` | `VARCHAR(32)` | (v5) nullable |
+
+</details>
+
+<details>
+<summary><code>places</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `name` | `VARCHAR(255)` | `NOT NULL` |
+| `description` | `TEXT` | nullable |
+| `type_id` | `UUID` | FK -> `place_types(id)` `ON DELETE SET NULL` |
+| `created_by` | `UUID` | FK -> `users(id)` `ON DELETE SET NULL` |
+| `status` | `VARCHAR(20)` | `DEFAULT 'active'` (check: `active|pending|rejected`) |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `deleted_at` | `TIMESTAMPTZ` | nullable (حذف ناعم) |
+
+</details>
+
+<details>
+<summary><code>place_locations</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `place_id` | `UUID` | PK + FK -> `places(id)` `ON DELETE CASCADE` |
+| `latitude` | `DECIMAL(10,7)` | `NOT NULL` |
+| `longitude` | `DECIMAL(10,7)` | `NOT NULL` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>place_type_attribute_definitions</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `place_type_id` | `UUID` | FK -> `place_types(id)` `ON DELETE CASCADE` |
+| `key` | `VARCHAR(100)` |  |
+| `label` | `VARCHAR(255)` |  |
+| `value_type` | `VARCHAR(20)` | `DEFAULT 'string'` (check: `string|number|boolean|json|date`) |
+| `is_required` | `BOOLEAN` | `DEFAULT false` |
+| `options` | `JSONB` | nullable |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>place_attributes</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `place_id` | `UUID` | FK -> `places(id)` `ON DELETE CASCADE` |
+| `key` | `VARCHAR(100)` |  |
+| `value` | `TEXT` |  |
+| `value_type` | `VARCHAR(20)` | `DEFAULT 'string'` (check: `string|number|boolean|json|date`) |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>place_images</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `place_id` | `UUID` | FK -> `places(id)` `ON DELETE CASCADE` |
+| `image_url` | `TEXT` | `NOT NULL` |
+| `sort_order` | `INTEGER` | `DEFAULT 0` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>ratings</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `place_id` | `UUID` | FK -> `places(id)` `ON DELETE CASCADE` |
+| `user_id` | `UUID` | FK -> `users(id)` `ON DELETE CASCADE` |
+| `rating` | `INTEGER` | `NOT NULL` (check: `BETWEEN 1 AND 5`) |
+| `comment` | `TEXT` | nullable |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `deleted_at` | `TIMESTAMPTZ` | nullable (حذف ناعم) |
+
+</details>
+
+<details>
+<summary><code>refresh_tokens</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `user_id` | `UUID` | FK -> `users(id)` `ON DELETE CASCADE` |
+| `token_hash` | `VARCHAR(255)` | `NOT NULL` |
+| `expires_at` | `TIMESTAMPTZ` | `NOT NULL` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `revoked_at` | `TIMESTAMPTZ` | nullable |
+
+</details>
+
+### Commerce / Owner (v4)
+
+<details>
+<summary><code>store_services</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `store_id` | `UUID` | FK -> `stores(id)` `ON DELETE CASCADE` |
+| `name` | `VARCHAR(255)` | `NOT NULL` |
+| `description` | `TEXT` | nullable |
+| `price` | `DECIMAL(10,2)` | nullable |
+| `currency` | `VARCHAR(10)` | `DEFAULT 'ILS'` |
+| `is_available` | `BOOLEAN` | `DEFAULT true` |
+| `sort_order` | `INTEGER` | `DEFAULT 0` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>store_products</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `store_id` | `UUID` | FK -> `stores(id)` `ON DELETE CASCADE` |
+| `name` | `VARCHAR(255)` | `NOT NULL` |
+| `description` | `TEXT` | nullable |
+| `price` | `DECIMAL(10,2)` | `NOT NULL` |
+| `currency` | `VARCHAR(10)` | `DEFAULT 'ILS'` |
+| `image_url` | `TEXT` | nullable |
+| `stock` | `INTEGER` | `DEFAULT -1` |
+| `is_available` | `BOOLEAN` | `DEFAULT true` |
+| `sort_order` | `INTEGER` | `DEFAULT 0` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>orders</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `store_id` | `UUID` | FK -> `stores(id)` `ON DELETE CASCADE` |
+| `user_id` | `UUID` | FK -> `users(id)` `ON DELETE CASCADE` |
+| `status` | `VARCHAR(20)` | `DEFAULT 'pending'` (check: `pending|confirmed|completed|cancelled`) |
+| `total` | `DECIMAL(10,2)` | `NOT NULL` (default `0`) |
+| `currency` | `VARCHAR(10)` | `DEFAULT 'ILS'` |
+| `notes` | `TEXT` | nullable |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+| `updated_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
+
+<details>
+<summary><code>order_items</code></summary>
+
+| Column | DataType | Notes |
+|---|---|---|
+| `id` | `UUID` | PK |
+| `order_id` | `UUID` | FK -> `orders(id)` `ON DELETE CASCADE` |
+| `product_id` | `UUID` | FK -> `store_products(id)` `ON DELETE SET NULL` (nullable) |
+| `product_name` | `VARCHAR(255)` | `NOT NULL` |
+| `quantity` | `INTEGER` | `NOT NULL` (default `1`) |
+| `unit_price` | `DECIMAL(10,2)` | `NOT NULL` |
+| `created_at` | `TIMESTAMPTZ` | `DEFAULT now()` |
+
+</details>
 
 ### شرح كل ملف (للمبتدئ)
 

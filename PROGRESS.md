@@ -3,6 +3,9 @@
 ### Done
 - Updated `README.md` with a full beginner-friendly documentation section.
 - Added a complete project tree in a visual style similar to the requested image.
+- Added a database structure tree in `README.md`.
+- Added column data types (DataType) in the database tree section.
+- Reorganized the database section for better readability (details/tables).
 - Documented the purpose of each file currently موجود in the repository (frontend + backend + configs + assets).
 
 ### Notes
