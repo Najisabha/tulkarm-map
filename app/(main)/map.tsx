@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -73,6 +74,18 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 function isValidPlaceTypeId(id: string): boolean {
   return typeof id === 'string' && UUID_RE.test(id.trim());
+}
+
+function matchesQuery(store: { name: string; description?: string; category: string; phone?: string }, q: string): boolean {
+  const query = q.trim().toLowerCase();
+  if (!query) return true;
+  const phone = store.phone || '';
+  return (
+    store.name.toLowerCase().includes(query) ||
+    (store.description || '').toLowerCase().includes(query) ||
+    (store.category || '').toLowerCase().includes(query) ||
+    phone.toLowerCase().includes(query)
+  );
 }
 
 function StoreServicesSheet({ store, user, onClose }: { store: Store; user: any; onClose: () => void }) {
@@ -374,6 +387,22 @@ export default function MapScreen() {
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
 
+  const defaultRegion = useRef({
+    latitude: TULKARM_REGION.latitude,
+    longitude: TULKARM_REGION.longitude,
+    latitudeDelta: 0.08,
+    longitudeDelta: 0.08,
+  }).current;
+
+  // على الويب أحياناً ref/animateToRegion لا يحرك الخريطة كما نتوقع.
+  // لذلك نستخدم state لتغيير initialRegion أيضاً لضمان عمل الزر على Leaflet/Google web.
+  const [mapRegionOverride, setMapRegionOverride] = useState<{
+    latitude: number;
+    longitude: number;
+    latitudeDelta: number;
+    longitudeDelta: number;
+  } | null>(null);
+
   const [locationGranted, setLocationGranted] = useState(false);
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [inTulkarm, setInTulkarm] = useState<boolean | null>(null);
@@ -387,11 +416,20 @@ export default function MapScreen() {
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(null);
   const [showServicesModal, setShowServicesModal] = useState(false);
 
+  const [placeSearchQuery, setPlaceSearchQuery] = useState('');
+
   const bannerAnim = useRef(new Animated.Value(-100)).current;
   const [bannerMessage, setBannerMessage] = useState('');
 
   // unique categories that have stores
   const categories = Array.from(new Set(stores.map((s) => s.category)));
+
+  const placeSearchQ = placeSearchQuery.trim().toLowerCase();
+  const placeSearchResults = !placeSearchQ
+    ? []
+    : stores
+        .filter((s) => matchesQuery(s, placeSearchQ))
+        .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
   // stores filtered by selected category, sorted by distance
   const categoryStores: (Store & { distance: number | null })[] = stores
@@ -448,6 +486,7 @@ export default function MapScreen() {
       { latitude, longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 },
       800
     );
+    setMapRegionOverride({ latitude, longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 });
 
     Location.watchPositionAsync(
       { accuracy: Location.Accuracy.Balanced, distanceInterval: 20 },
@@ -476,15 +515,78 @@ export default function MapScreen() {
   };
 
   const centerOnTulkarm = () => {
-    mapRef.current?.animateToRegion(
-      {
-        latitude: TULKARM_REGION.latitude,
-        longitude: TULKARM_REGION.longitude,
-        latitudeDelta: 0.08,
-        longitudeDelta: 0.08,
-      },
-      800
-    );
+    setMapRegionOverride(defaultRegion);
+    mapRef.current?.animateToRegion(defaultRegion, 800);
+  };
+
+  const zoomToNearbyMe = (radiusMeters = 5) => {
+    if (!userLocation) {
+      // على الويب: قد يتأخر/يفشل expo-location بينما navigator.geolocation ما يزال متاح.
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const next = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+            setUserLocation(next);
+            setInTulkarm(isInsideTulkarm(next.latitude, next.longitude));
+
+            // ثم جرّب التقريب باستخدام الإحداثيات الجديدة مباشرة.
+            const diameterMeters = radiusMeters * 2;
+            const PADDING_FACTOR = 6;
+            const viewportHalfSpanMeters = radiusMeters * PADDING_FACTOR;
+
+            const metersPerDegLat = 111_320;
+            const metersPerDegLon = 111_320 * Math.cos((next.latitude * Math.PI) / 180);
+
+            const latDelta = (2 * viewportHalfSpanMeters) / metersPerDegLat;
+            const lonDelta = (2 * viewportHalfSpanMeters) / Math.max(metersPerDegLon, 1e-6);
+
+            const nextRegion = {
+              latitude: next.latitude,
+              longitude: next.longitude,
+              latitudeDelta: Math.max(latDelta, 0.00005),
+              longitudeDelta: Math.max(lonDelta, 0.00005),
+            };
+
+            setMapRegionOverride(nextRegion);
+            mapRef.current?.animateToRegion(nextRegion, 800);
+          },
+          () => {
+            Alert.alert('الموقع غير متاح', 'فعّل خدمة الموقع ليتم التقريب على مكانك.');
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 1000 }
+        );
+        return;
+      }
+
+      Alert.alert('الموقع غير متاح', 'فعّل خدمة الموقع ليتم التقريب على مكانك.');
+      return;
+    }
+
+    // MapView region deltas are in degrees.
+    // latitude: ~111,320 meters per degree
+    // longitude: ~111,320 * cos(latitude) meters per degree
+    //
+    // لاحظ أن `region` يحدد "عرض الشاشة" (view span) وليس دائرة نصف قطرها 5م فقط،
+    // لذا نستخدم عامل Padding لضمان ظهور معالم قريبة حولك بشكل مريح.
+    const PADDING_FACTOR = 6; // نصف قطر العرض = radiusMeters * 6
+    const viewportHalfSpanMeters = radiusMeters * PADDING_FACTOR;
+
+    const metersPerDegLat = 111_320;
+    const metersPerDegLon = 111_320 * Math.cos((userLocation.latitude * Math.PI) / 180);
+
+    const latDelta = (2 * viewportHalfSpanMeters) / metersPerDegLat;
+    const lonDelta = (2 * viewportHalfSpanMeters) / Math.max(metersPerDegLon, 1e-6);
+
+    const nextRegion = {
+      latitude: userLocation.latitude,
+      longitude: userLocation.longitude,
+      // Ensure we don't zoom too aggressively due to tiny/rounded values.
+      latitudeDelta: Math.max(latDelta, 0.00005),
+      longitudeDelta: Math.max(lonDelta, 0.00005),
+    };
+
+    setMapRegionOverride(nextRegion);
+    mapRef.current?.animateToRegion(nextRegion, 800);
   };
 
   const NEAR_STORE_METERS = 2; // الحد الأدنى بين المتاجر:2 أمتار
@@ -693,12 +795,7 @@ export default function MapScreen() {
         provider={PROVIDER_GOOGLE}
         customMapStyle={MAP_STYLE_NO_POI}
         onPress={handleMapPress}
-        initialRegion={{
-          latitude: TULKARM_REGION.latitude,
-          longitude: TULKARM_REGION.longitude,
-          latitudeDelta: 0.08,
-          longitudeDelta: 0.08,
-        }}
+        initialRegion={mapRegionOverride ?? defaultRegion}
         showsUserLocation={locationGranted}
         showsMyLocationButton={false}
         showsCompass
@@ -725,6 +822,7 @@ export default function MapScreen() {
         {stores.map((store) => {
           const isActive =
             selectedCategory === null || store.category === selectedCategory;
+          const matches = !placeSearchQ || matchesQuery(store, placeSearchQ);
           return (
             <Marker
               key={store.id}
@@ -735,8 +833,8 @@ export default function MapScreen() {
               icon={{
                 emoji: getCategoryStyle(categoryList, store.category).emoji,
                 color: getCategoryStyle(categoryList, store.category).color,
-                opacity: isActive ? 1 : 0.35,
-                scale: isActive ? 1 : 0.8,
+                opacity: isActive && matches ? 1 : placeSearchQ ? 0.18 : 0.35,
+                scale: isActive && matches ? 1 : placeSearchQ ? 0.78 : 0.8,
               }}
             >
               <View
@@ -745,8 +843,8 @@ export default function MapScreen() {
                   {
                     backgroundColor:
                       getCategoryStyle(categoryList, store.category).color,
-                    opacity: isActive ? 1 : 0.35,
-                    transform: [{ scale: isActive ? 1 : 0.8 }],
+                    opacity: isActive && matches ? 1 : placeSearchQ ? 0.25 : 0.35,
+                    transform: [{ scale: isActive && matches ? 1 : placeSearchQ ? 0.78 : 0.8 }],
                   },
                 ]}
               >
@@ -818,8 +916,92 @@ export default function MapScreen() {
         )}
       </View>
 
+      {/* Place Search (maps shown places) */}
+      {!addPlaceCoord && (
+        <View style={styles.placeSearchWrap} pointerEvents="box-none">
+          <View style={styles.placeSearchInputRow}>
+            <TextInput
+              style={styles.placeSearchInput}
+              placeholder="بحث في الأماكن..."
+              placeholderTextColor="#9CA3AF"
+              value={placeSearchQuery}
+              onChangeText={setPlaceSearchQuery}
+              textAlign="right"
+            />
+            {placeSearchQuery.trim() ? (
+              <TouchableOpacity
+                style={styles.placeSearchClearBtn}
+                onPress={() => setPlaceSearchQuery('')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.placeSearchClearBtnText}>✕</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {placeSearchQ ? (
+            <View style={styles.placeSearchResultsCard}>
+              {placeSearchResults.length === 0 ? (
+                <View style={styles.placeSearchEmpty}>
+                  <Text style={styles.placeSearchEmptyEmoji}>🔍</Text>
+                  <Text style={styles.placeSearchEmptyText}>لا توجد نتائج</Text>
+                </View>
+              ) : (
+                <ScrollView
+                  style={styles.placeSearchResults}
+                  contentContainerStyle={styles.placeSearchResultsContent}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  {placeSearchResults.map((s) => (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={styles.placeSearchItem}
+                      onPress={() => {
+                        setPlaceSearchQuery('');
+                        setSelectedCategory(null);
+                        setSelectedStore(s);
+                        mapRef.current?.animateToRegion(
+                          {
+                            latitude: s.latitude,
+                            longitude: s.longitude,
+                            latitudeDelta: 0.008,
+                            longitudeDelta: 0.008,
+                          },
+                          600
+                        );
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.placeSearchItemEmojiPill}>
+                        <Text style={styles.placeSearchItemEmoji}>
+                          {getCategoryStyle(categoryList, s.category).emoji}
+                        </Text>
+                      </View>
+                      <View style={styles.placeSearchItemMain}>
+                        <Text style={styles.placeSearchItemName} numberOfLines={1}>
+                          {s.name}
+                        </Text>
+                        <Text style={styles.placeSearchItemMeta} numberOfLines={1}>
+                          {s.category}
+                        </Text>
+                      </View>
+                      {s.phone ? (
+                        <Text style={styles.placeSearchItemPhone} numberOfLines={1}>
+                          {s.phone}
+                        </Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          ) : null}
+        </View>
+      )}
+
       {/* Center Button */}
-      <TouchableOpacity style={styles.centerBtn} onPress={centerOnTulkarm}>
+      <TouchableOpacity style={styles.centerBtn} onPress={() => zoomToNearbyMe(5)}>
         <Text style={styles.centerBtnText}>🎯</Text>
       </TouchableOpacity>
 
@@ -1177,6 +1359,8 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: 110, right: 14,
     width: 46, height: 46, borderRadius: 23,
     backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
+    zIndex: 1000,
+    pointerEvents: 'auto',
     ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
   },
   centerBtnText: { fontSize: 22 },
@@ -1608,4 +1792,75 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingVertical: 10,
   },
   cartBtnText: { color: '#2E86AB', fontWeight: '700', fontSize: 15 },
+
+  // ── Place Search ─────────────────────────────────────────────────────────
+  placeSearchWrap: {
+    position: 'absolute',
+    top: LAYOUT.headerTop + 62,
+    left: 12,
+    right: 12,
+    zIndex: 120,
+  },
+  placeSearchInputRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.12, radius: 6, elevation: 6 }),
+  },
+  placeSearchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1F2937',
+    paddingVertical: 6,
+    textAlign: 'right',
+  },
+  placeSearchClearBtn: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeSearchClearBtnText: { color: '#6B7280', fontSize: 16, fontWeight: '700' },
+
+  placeSearchResultsCard: {
+    marginTop: 10,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    overflow: 'hidden',
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.12, radius: 8, elevation: 10 }),
+  },
+  placeSearchEmpty: { padding: 22, alignItems: 'center' },
+  placeSearchEmptyEmoji: { fontSize: 34, marginBottom: 8 },
+  placeSearchEmptyText: { color: '#9CA3AF', fontSize: 14, fontWeight: '600' },
+  placeSearchResults: { maxHeight: 260 },
+  placeSearchResultsContent: { paddingHorizontal: 10, paddingVertical: 8 },
+  placeSearchItem: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 10,
+  },
+  placeSearchItemEmojiPill: {
+    backgroundColor: 'rgba(46, 134, 171, 0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginLeft: 10,
+  },
+  placeSearchItemEmoji: { fontSize: 18 },
+  placeSearchItemMain: { flex: 1, minWidth: 0 },
+  placeSearchItemName: { fontSize: 14, fontWeight: '800', color: '#111827', textAlign: 'right' },
+  placeSearchItemMeta: { fontSize: 12, color: '#6B7280', fontWeight: '600', textAlign: 'right', marginTop: 2 },
+  placeSearchItemPhone: { fontSize: 12, color: '#4A7FA5', fontWeight: '700', marginLeft: 12, maxWidth: 110 },
 });

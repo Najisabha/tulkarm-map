@@ -92,7 +92,19 @@ export function getApiUrl(): string {
       : undefined;
   const envUrl = typeof rawEnv === 'string' && rawEnv.trim() ? stripTrailingSlash(rawEnv.trim()) : '';
 
+  // في وضع التطوير، قد تكون `EXPO_PUBLIC_API_URL` تشير لخادم Remote (مثل Vercel).
+  // سابقاً كان التطبيق دائماً يشتق عنوان محلي من Metro إذا كانت الدومين مثل vercel.app،
+  // وهذا يسبب فشل الاتصال من Expo Go. لذلك نُعطي أولوية لاستخدام الـ env صراحةً.
+  const useProvidedApiUrl =
+    (typeof process !== 'undefined' &&
+      (process as { env?: Record<string, string> }).env?.EXPO_PUBLIC_USE_API === 'true') ||
+    false;
+
   const dev = isDev();
+
+  if (useProvidedApiUrl && envUrl) {
+    return envUrl;
+  }
 
   if (dev && envUrl && looksLikeFrontendOnlyHost(envUrl)) {
     const derived = deriveApiUrlFromExpoHost();

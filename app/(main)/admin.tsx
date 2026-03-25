@@ -43,7 +43,7 @@ export default function AdminScreen() {
     return (
       <View style={styles.unauthorized}>
         <Text style={styles.unauthorizedText}>⛔ غير مصرح لك بالوصول</Text>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.replace('/(main)/map')}>
           <Text style={styles.backLink}>العودة</Text>
         </TouchableOpacity>
       </View>
@@ -53,7 +53,7 @@ export default function AdminScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(main)/map')}>
           <Text style={styles.backBtnText}>→</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>لوحة الإدارة</Text>
