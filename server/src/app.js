@@ -13,6 +13,7 @@ import storeServicesRoutes from './modules/storeServices/storeServices.routes.js
 import storeProductsRoutes from './modules/storeProducts/storeProducts.routes.js';
 import ordersRoutes from './modules/orders/orders.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
+import productCategoriesRoutes from './modules/productCategories/productCategories.routes.js';
 
 const app = express();
 
@@ -55,6 +56,9 @@ app.use('/api/orders', ordersRoutes);
 
 // Admin (users, reports, activity, settings, stats, store ownership)
 app.use('/api', adminRoutes);
+
+// Product categories (main/sub)
+app.use('/api', productCategoriesRoutes);
 
 // Error handling
 app.use(notFoundHandler);

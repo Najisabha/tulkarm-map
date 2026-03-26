@@ -22,9 +22,7 @@ import bcrypt from 'bcryptjs';
 const connStr = process.env.DATABASE_URL;
 if (
   !connStr ||
-  connStr.includes('YOUR_PASSWORD') ||
-  // يمنع الاتصال من عنوان محلي قد يكون غير مضبوط/غير Neon
-  connStr.includes('localhost:5432/tulkarm-map')
+  connStr.includes('YOUR_PASSWORD')
 ) {
   console.error('DATABASE_URL غير صالح في server/.env');
   process.exit(1);
@@ -918,6 +916,51 @@ CREATE INDEX IF NOT EXISTS idx_store_products_sub_category
   console.log('V8 migration completed successfully');
 }
 
+async function migrateV9() {
+  const migration = `
+-- ==========================================
+-- V9: Product categories (main/sub)
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS product_main_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(150) UNIQUE NOT NULL,
+  emoji VARCHAR(16),
+  arrow_color VARCHAR(32),
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Backward-compatible: add columns if table existed already
+ALTER TABLE product_main_categories ADD COLUMN IF NOT EXISTS emoji VARCHAR(16);
+ALTER TABLE product_main_categories ADD COLUMN IF NOT EXISTS arrow_color VARCHAR(32);
+
+CREATE INDEX IF NOT EXISTS idx_product_main_categories_sort
+  ON product_main_categories (sort_order, name);
+
+CREATE TABLE IF NOT EXISTS product_sub_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  main_category_id UUID NOT NULL REFERENCES product_main_categories(id) ON DELETE RESTRICT,
+  name VARCHAR(150) NOT NULL,
+  emoji VARCHAR(16),
+  arrow_color VARCHAR(32),
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT product_sub_categories_unique UNIQUE (main_category_id, name)
+);
+
+ALTER TABLE product_sub_categories ADD COLUMN IF NOT EXISTS emoji VARCHAR(16);
+ALTER TABLE product_sub_categories ADD COLUMN IF NOT EXISTS arrow_color VARCHAR(32);
+
+CREATE INDEX IF NOT EXISTS idx_product_sub_categories_main_sort
+  ON product_sub_categories (main_category_id, sort_order, name);
+`;
+  await pool.query(migration);
+  console.log('V9 migration completed successfully');
+}
+
 async function dropUnusedTables() {
   const migration = `
 DROP TABLE IF EXISTS place_requests;
@@ -941,6 +984,7 @@ async function main() {
 
     await migrateV7();
     await migrateV8();
+    await migrateV9();
 
     if (shouldDropUnusedTables) {
       await dropUnusedTables();
