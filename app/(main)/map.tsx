@@ -7,6 +7,7 @@ import {
   FlatList,
   Linking,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -51,6 +52,14 @@ interface UserLocation {
   longitude: number;
 }
 
+type TravelMode = 'walking' | 'bicycling' | 'driving';
+
+// UI requirement wants 4 options: مشي/بسكليت/دراجة/سيارة.
+// Google Directions supports walking/bicycling/driving only, so we map:
+// - بسكليت -> bicycling
+// - دراجة -> bicycling (same API mode; different ETA estimate shown below)
+type TravelChoice = 'walking' | 'bike1' | 'bike2' | 'driving';
+
 function haversineDistance(
   lat1: number, lon1: number,
   lat2: number, lon2: number
@@ -69,6 +78,11 @@ function haversineDistance(
 function formatDistance(meters: number): string {
   if (meters < 1000) return `${Math.round(meters)} م`;
   return `${(meters / 1000).toFixed(1)} كم`;
+}
+
+function formatRemainingMeters(meters: number): string {
+  // requirement: show remaining distance in meters
+  return `${Math.max(0, Math.round(meters))} م`;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -327,8 +341,9 @@ function StoreDetailSheet({
 
   return (
     <View style={styles.overlayContainer} pointerEvents="box-none">
-      <TouchableOpacity style={styles.overlayBackdrop} onPress={onClose} activeOpacity={1} />
-      <View style={styles.storeModal}>
+      {/* Prevent the backdrop from stealing clicks on Web/Windows. */}
+      <TouchableOpacity style={styles.overlayBackdrop} onPress={onClose} activeOpacity={1} pointerEvents="none" />
+      <View style={styles.storeModal} pointerEvents="auto">
         <View style={styles.storeModalHandle} />
         <View style={styles.storeModalHeader}>
           <TouchableOpacity style={styles.closeModalBtn} onPress={onClose}>
@@ -363,10 +378,6 @@ function StoreDetailSheet({
           {/* Typed details (fixed schema keys) */}
           {locationText ? (
             <Text style={styles.storeModalDescription}>{'📍 '}{locationText}</Text>
-          ) : null}
-
-          {isHouse && houseNumber ? (
-            <Text style={styles.storeModalDescription}>{'🏠 رقم المنزل: '}{houseNumber}</Text>
           ) : null}
 
           {isStoreLike && storeNumber ? (
@@ -406,25 +417,37 @@ function StoreDetailSheet({
           ) : null}
 
           <View style={styles.storeModalBtnRow}>
-            <TouchableOpacity
+            {isHouse && houseNumber ? (
+              <TouchableOpacity
+                style={styles.storeModalCallBtn}
+                onPress={() => Linking.openURL(`tel:${houseNumber}`)}
+                activeOpacity={0.86}
+              >
+                <View style={styles.storeModalCallBtnIconWrap}>
+                  <Text style={styles.storeModalCallBtnIcon}>📞</Text>
+                </View>
+                <Text style={styles.storeModalCallBtnLabel}>اتصال</Text>
+                <Text style={styles.storeModalCallBtnText}>{houseNumber}</Text>
+              </TouchableOpacity>
+            ) : null}
+            <Pressable
               style={[styles.storeModalActionBtn, styles.storeModalNavigateBtn]}
               onPress={onNavigate}
-              disabled={!userLocation}
+              disabled={false}
+              pointerEvents="auto"
             >
               <Text style={styles.storeModalNavigateBtnIcon}>🧭</Text>
               <Text style={styles.storeModalNavigateBtnText}>الانتقال إلى المكان</Text>
               {dist !== null && (
                 <Text style={styles.storeModalNavigateBtnSub}>يبعد {formatDistance(dist)}</Text>
               )}
-            </TouchableOpacity>
+            </Pressable>
             {isStoreLike ? (
               <TouchableOpacity style={[styles.storeModalActionBtn, styles.storeModalServicesBtn]} onPress={onServices}>
                 <Text style={styles.storeModalServicesBtnIcon}>🛍️</Text>
                 <Text style={styles.storeModalServicesBtnText}>خدمات المتجر</Text>
               </TouchableOpacity>
-            ) : (
-              <View style={{ flex: 1 }} />
-            )}
+            ) : null}
           </View>
           {user?.id !== 'guest' && (
             <TouchableOpacity style={styles.storeModalReportBtn} onPress={onReport}>
@@ -493,7 +516,13 @@ export default function MapScreen() {
   const [addPlaceCoord, setAddPlaceCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [routePath, setRoutePath] = useState<{ latitude: number; longitude: number }[] | null>(null);
+  const [routeDestination, setRouteDestination] = useState<{ latitude: number; longitude: number } | null>(null);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(null);
+  const [isRouting, setIsRouting] = useState(false);
+  // Travel wizard (3 steps): store page -> choose mode -> preview & confirm/cancel
+  const [travelStep, setTravelStep] = useState<1 | 2 | 3>(1);
+  const [travelChoice, setTravelChoice] = useState<TravelChoice | null>(null);
+  const [travelPreviewLoading, setTravelPreviewLoading] = useState(false);
   const [showServicesModal, setShowServicesModal] = useState(false);
 
   const [placeSearchQuery, setPlaceSearchQuery] = useState('');
@@ -532,6 +561,26 @@ export default function MapScreen() {
   useEffect(() => {
     setupLocation();
   }, []);
+
+  // Reset the travel wizard whenever a new store is opened.
+  useEffect(() => {
+    if (!selectedStore) return;
+    setTravelStep(1);
+    setTravelChoice(null);
+    setTravelPreviewLoading(false);
+  }, [selectedStore?.id]);
+
+  // Update remaining meters while the user's location changes.
+  useEffect(() => {
+    if (!routeDestination || !userLocation || !routeInfo) return;
+    const remainingMeters = haversineDistance(
+      userLocation.latitude,
+      userLocation.longitude,
+      routeDestination.latitude,
+      routeDestination.longitude
+    );
+    setRouteInfo((prev) => (prev ? { ...prev, distance: formatRemainingMeters(remainingMeters) } : prev));
+  }, [routeDestination, userLocation]);
 
   const setupLocation = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -723,24 +772,58 @@ export default function MapScreen() {
     router.replace('/(auth)/login');
   };
 
+  const choiceToApiMode = (choice: TravelChoice): TravelMode => {
+    if (choice === 'walking') return 'walking';
+    if (choice === 'driving') return 'driving';
+    // both bike options map to the same Directions API mode
+    return 'bicycling';
+  };
+
+  const getSpeedMPerMin = (choice: TravelChoice): number => {
+    switch (choice) {
+      case 'walking':
+        return 80;
+      case 'bike1':
+        return 170; // basqueleet (slower bike)
+      case 'bike2':
+        return 220; // daraaja (faster bike)
+      case 'driving':
+        return 450;
+    }
+  };
+
+  const formatDurationMinutes = (minutes: number) => {
+    const m = Math.max(1, Math.round(minutes));
+    return `${m} دقيقة`;
+  };
+
   const fetchRoute = async (
     origin: { latitude: number; longitude: number },
-    destination: { latitude: number; longitude: number }
+    destination: { latitude: number; longitude: number },
+    travelChoice: TravelChoice
   ) => {
     try {
       const apiKey = process?.env?.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
       if (apiKey) {
-        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=walking&key=${apiKey}`;
+        const apiMode = choiceToApiMode(travelChoice);
+        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=${apiMode}&key=${apiKey}`;
         const res = await fetch(url);
         const data = await res.json();
         if (data.routes?.length > 0) {
           const route = data.routes[0];
-          const leg = route.legs[0];
           const points = decodePolyline(route.overview_polyline.points);
           setRoutePath(points);
+          const remainingMeters = haversineDistance(
+            origin.latitude,
+            origin.longitude,
+            destination.latitude,
+            destination.longitude
+          );
+          const speedMPerMin = getSpeedMPerMin(travelChoice);
+          const minutes = remainingMeters / speedMPerMin;
           setRouteInfo({
-            distance: leg.distance.text,
-            duration: leg.duration.text,
+            distance: formatRemainingMeters(remainingMeters),
+            duration: formatDurationMinutes(minutes),
           });
           return;
         }
@@ -750,10 +833,11 @@ export default function MapScreen() {
     }
     setRoutePath([origin, destination]);
     const dist = haversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude);
-    const walkMinutes = Math.round(dist / 80);
+    const speedMPerMin = getSpeedMPerMin(travelChoice);
+    const minutes = dist / speedMPerMin;
     setRouteInfo({
-      distance: formatDistance(dist),
-      duration: `${walkMinutes} دقيقة مشي`,
+      distance: formatRemainingMeters(dist),
+      duration: formatDurationMinutes(minutes),
     });
   };
 
@@ -785,25 +869,365 @@ export default function MapScreen() {
     return points;
   };
 
-  const handleNavigateToStore = () => {
-    if (!selectedStore || !userLocation) return;
-    const destination = { latitude: selectedStore.latitude, longitude: selectedStore.longitude };
-    fetchRoute(userLocation, destination);
+  const ensureUserLocation = async (): Promise<UserLocation | null> => {
+    if (userLocation) return userLocation;
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        const isWeb = Platform.OS === 'web';
+        Alert.alert(
+          'السماح بالوصول للموقع',
+          isWeb ? 'فعّل الموقع في المتصفح للتمكن من حساب المدة.' : 'نحتاج إذن الموقع لحساب المدة.',
+          [{ text: 'حسناً' }]
+        );
+        return null;
+      }
+
+      setLocationGranted(true);
+      await startGeofencing();
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const origin = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+      setUserLocation(origin);
+      setInTulkarm(isInsideTulkarm(origin.latitude, origin.longitude));
+
+      const nextRegion = { latitude: origin.latitude, longitude: origin.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 };
+      setMapRegionOverride(nextRegion);
+      mapRef.current?.animateToRegion(nextRegion, 800);
+
+      return origin;
+    } catch {
+      Alert.alert('الموقع غير متاح', 'تعذّر جلب موقعك الآن. جرّب مرة أخرى.');
+      return null;
+    }
+  };
+
+  // Compute preview route (line + duration) while user is on step 3.
+  useEffect(() => {
+    if (travelStep !== 3 || !selectedStore || !travelChoice) return;
+    let cancelled = false;
+
+    const run = async () => {
+      setTravelPreviewLoading(true);
+
+      const origin = await ensureUserLocation();
+      if (cancelled || !origin) {
+        setTravelPreviewLoading(false);
+        return;
+      }
+
+      const destination = { latitude: selectedStore.latitude, longitude: selectedStore.longitude };
+      setRouteDestination(destination);
+      setRoutePath(null);
+      setRouteInfo(null);
+
+      await fetchRoute(origin, destination, travelChoice);
+
+      if (cancelled) {
+        clearRoute();
+        return;
+      }
+
+      mapRef.current?.animateToRegion(
+        {
+          latitude: (origin.latitude + destination.latitude) / 2,
+          longitude: (origin.longitude + destination.longitude) / 2,
+          latitudeDelta: Math.abs(origin.latitude - destination.latitude) * 2.5 + 0.005,
+          longitudeDelta: Math.abs(origin.longitude - destination.longitude) * 2.5 + 0.005,
+        },
+        800
+      );
+
+      if (!cancelled) setTravelPreviewLoading(false);
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [travelStep, travelChoice, selectedStore?.id]);
+
+  const startRouteToStore = async (store: Store, travelChoice: TravelChoice, originOverride?: UserLocation) => {
+    if (isRouting) return;
+    setIsRouting(true);
+    setShowSidebar(false);
+    setSelectedCategory(null);
+    setShowReportModal(false);
+    setShowServicesModal(false);
+
+    // Hide store UI immediately after choosing the mode.
     setSelectedStore(null);
+
+    let origin = originOverride ?? userLocation;
+    if (!origin) {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          const isWeb = Platform.OS === 'web';
+          Alert.alert(
+            'السماح بالوصول للموقع',
+            isWeb ? 'فعّل الموقع في المتصفح للتمكن من حساب المسافة.' : 'نحتاج إذن الموقع لحساب المسافة.',
+            [{ text: 'حسناً' }]
+          );
+          setIsRouting(false);
+          return;
+        }
+
+        setLocationGranted(true);
+        await startGeofencing();
+
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        origin = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+        setUserLocation(origin);
+        setInTulkarm(isInsideTulkarm(origin.latitude, origin.longitude));
+
+        const nextRegion = {
+          latitude: origin.latitude,
+          longitude: origin.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        };
+        setMapRegionOverride(nextRegion);
+        mapRef.current?.animateToRegion(nextRegion, 800);
+      } catch {
+        Alert.alert('الموقع غير متاح', 'تعذّر جلب موقعك الآن. جرّب مرة أخرى.');
+        setIsRouting(false);
+        return;
+      }
+    }
+
+    if (!origin) {
+      setIsRouting(false);
+      return;
+    }
+
+    const destination = { latitude: store.latitude, longitude: store.longitude };
+    setRoutePath(null);
+    setRouteInfo(null);
+    setRouteDestination(destination);
+
+    fetchRoute(origin, destination, travelChoice);
+
     mapRef.current?.animateToRegion(
       {
-        latitude: (userLocation.latitude + destination.latitude) / 2,
-        longitude: (userLocation.longitude + destination.longitude) / 2,
-        latitudeDelta: Math.abs(userLocation.latitude - destination.latitude) * 2.5 + 0.005,
-        longitudeDelta: Math.abs(userLocation.longitude - destination.longitude) * 2.5 + 0.005,
+        latitude: (origin.latitude + destination.latitude) / 2,
+        longitude: (origin.longitude + destination.longitude) / 2,
+        latitudeDelta: Math.abs(origin.latitude - destination.latitude) * 2.5 + 0.005,
+        longitudeDelta: Math.abs(origin.longitude - destination.longitude) * 2.5 + 0.005,
       },
       800
     );
   };
 
+  const handleOpenTravelModePicker = () => {
+    if (!selectedStore || isRouting) return;
+
+    // Step 1 -> Step 2 (show mode picker)
+    setTravelStep(2);
+    setTravelChoice(null);
+    setTravelPreviewLoading(false);
+
+    // Clear any previous preview line/info.
+    setRoutePath(null);
+    setRouteDestination(null);
+    setRouteInfo(null);
+  };
+
   const clearRoute = () => {
     setRoutePath(null);
+    setRouteDestination(null);
     setRouteInfo(null);
+    setIsRouting(false);
+  };
+
+  const closeTravelFlow = () => {
+    setSelectedStore(null);
+    setTravelStep(1);
+    setTravelChoice(null);
+    setTravelPreviewLoading(false);
+    setShowServicesModal(false);
+    setShowReportModal(false);
+    clearRoute();
+  };
+
+  const confirmTravel = () => {
+    // Keep the computed route on the map, and hide the travel UI.
+    setIsRouting(true);
+    setShowSidebar(false);
+    setSelectedCategory(null);
+    setShowReportModal(false);
+    setShowServicesModal(false);
+
+    setTravelStep(1);
+    setTravelChoice(null);
+    setTravelPreviewLoading(false);
+    setSelectedStore(null);
+  };
+
+  const travelChoiceToLabel = (choice: TravelChoice) => {
+    if (choice === 'walking') return 'مشي على الاقدام';
+    if (choice === 'bike1') return 'بسكليت';
+    if (choice === 'bike2') return 'دراجة';
+    return 'سيارة';
+  };
+
+  const TravelModeSheet = () => (
+    <View style={styles.overlayContainer} pointerEvents="box-none">
+      <TouchableOpacity
+        style={styles.overlayBackdrop}
+        onPress={() => setTravelStep(1)}
+        activeOpacity={1}
+        pointerEvents="none"
+      />
+      <View style={styles.storeModal}>
+        <View style={styles.storeModalHandle} />
+        <View style={styles.storeModalHeader}>
+          <TouchableOpacity style={styles.closeModalBtn} onPress={closeTravelFlow}>
+            <Text style={styles.closeModalBtnText}>✕</Text>
+          </TouchableOpacity>
+          <View style={[styles.storeModalEmojiCircle, { backgroundColor: '#2E86AB20' }]}>
+            <Text style={styles.storeModalEmoji}>🧭</Text>
+          </View>
+        </View>
+
+        <View style={styles.travelModeBody}>
+          <Text style={styles.travelModeTitle}>اختر وسيلة الذهاب</Text>
+          <Text style={styles.travelModeSubtitle}>{selectedStore?.name}</Text>
+
+          <View style={styles.travelModeGrid}>
+            <TouchableOpacity
+              style={[styles.travelModeOptionBtn, { backgroundColor: '#2E86AB' }]}
+              onPress={() => {
+                setTravelChoice('walking');
+                setTravelStep(3);
+              }}
+            >
+              <Text style={styles.travelModeOptionText}>🚶 مشي</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.travelModeOptionBtn, { backgroundColor: '#7C3AED' }]}
+              onPress={() => {
+                setTravelChoice('bike1');
+                setTravelStep(3);
+              }}
+            >
+              <Text style={styles.travelModeOptionText}>🛵 بسكليت</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.travelModeOptionBtn, { backgroundColor: '#16A34A' }]}
+              onPress={() => {
+                setTravelChoice('bike2');
+                setTravelStep(3);
+              }}
+            >
+              <Text style={styles.travelModeOptionText}>🚲 دراجة</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.travelModeOptionBtn, { backgroundColor: '#EF4444' }]}
+              onPress={() => {
+                setTravelChoice('driving');
+                setTravelStep(3);
+              }}
+            >
+              <Text style={styles.travelModeOptionText}>🚗 سيارة</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity style={styles.travelBackBtn} onPress={() => setTravelStep(1)}>
+            <Text style={styles.travelBackBtnText}>إلغاء</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
+  const TravelPreviewSheet = () => {
+    if (!selectedStore || !travelChoice) return null;
+    const origin =
+      userLocation ??
+      (mapRegionOverride
+        ? { latitude: mapRegionOverride.latitude, longitude: mapRegionOverride.longitude }
+        : null);
+
+    const originText = origin
+      ? `أنت هنا: ${origin.latitude.toFixed(5)}, ${origin.longitude.toFixed(5)}`
+      : 'غير معروف';
+
+    return (
+      <View style={styles.overlayContainer} pointerEvents="box-none">
+        <TouchableOpacity
+          style={styles.overlayBackdrop}
+          onPress={() => setTravelStep(2)}
+          activeOpacity={1}
+          pointerEvents="none"
+        />
+        <View style={styles.storeModal}>
+          <View style={styles.storeModalHandle} />
+          <View style={styles.storeModalHeader}>
+            <TouchableOpacity style={styles.closeModalBtn} onPress={closeTravelFlow}>
+              <Text style={styles.closeModalBtnText}>✕</Text>
+            </TouchableOpacity>
+            <View style={[styles.storeModalEmojiCircle, { backgroundColor: '#10B98120' }]}>
+              <Text style={styles.storeModalEmoji}>🧾</Text>
+            </View>
+          </View>
+
+          <View style={styles.travelPreviewBody}>
+            <Text style={styles.travelPreviewTitle}>تأكيد التنقل</Text>
+            <Text style={styles.travelPreviewSubtitle}>{travelChoiceToLabel(travelChoice)}</Text>
+
+            <View style={styles.travelInfoBlock}>
+              <Text style={styles.travelInfoLabel}>مكاني الحالي</Text>
+              <Text style={styles.travelInfoValue}>{originText}</Text>
+            </View>
+
+            <View style={styles.travelInfoBlock}>
+              <Text style={styles.travelInfoLabel}>مكان التوجه</Text>
+              <Text style={styles.travelInfoValue}>{selectedStore.name}</Text>
+            </View>
+
+            {travelPreviewLoading || !routeInfo ? (
+              <Text style={styles.travelLoadingText}>جاري حساب المسار...</Text>
+            ) : (
+              <View style={styles.travelDurationBox}>
+                <Text style={styles.travelDurationLine}>⏳ {routeInfo.distance} متبقية</Text>
+                <Text style={styles.travelDurationLine2}>⏱️ المدة الزمنية المتوقعة: {routeInfo.duration}</Text>
+              </View>
+            )}
+
+            <View style={styles.travelPreviewBtnsRow}>
+              <TouchableOpacity
+                style={[styles.travelPreviewBtn, styles.travelCancelBtn]}
+                onPress={() => {
+                  clearRoute();
+                  setTravelStep(2);
+                }}
+              >
+                <Text style={styles.travelPreviewBtnTextCancel}>إلغاء</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.travelPreviewBtn, styles.travelConfirmBtn]}
+                onPress={confirmTravel}
+                disabled={travelPreviewLoading || !routeInfo}
+              >
+                <Text style={styles.travelPreviewBtnTextConfirm}>تأكيد</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
   };
 
   const renderCategoryStoreItem = ({
@@ -945,14 +1369,20 @@ export default function MapScreen() {
       </Animated.View>
 
       {/* Route Info Banner */}
-      {routeInfo && (
+      {routeInfo && (travelStep === 3 || isRouting) && (
         <View style={styles.routeBanner}>
           <View style={styles.routeBannerContent}>
             <View style={styles.routeBannerInfo}>
-              <Text style={styles.routeBannerDistance}>📍 {routeInfo.distance}</Text>
-              <Text style={styles.routeBannerDuration}>🚶 {routeInfo.duration}</Text>
+              <Text style={styles.routeBannerDistance}>⏳ {routeInfo.distance} متبقية</Text>
+              <Text style={styles.routeBannerDuration}>⏱️ المدة الزمنية المتوقعة: {routeInfo.duration}</Text>
             </View>
-            <TouchableOpacity style={styles.routeBannerClose} onPress={clearRoute}>
+            <TouchableOpacity
+              style={styles.routeBannerClose}
+              onPress={() => {
+                clearRoute();
+                if (travelStep === 3) setTravelStep(2);
+              }}
+            >
               <Text style={styles.routeBannerCloseText}>✕ إنهاء</Text>
             </TouchableOpacity>
           </View>
@@ -960,7 +1390,8 @@ export default function MapScreen() {
       )}
 
       {/* Top Bar */}
-      <View style={styles.topBar}>
+      {!isRouting && travelStep === 1 && (
+        <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.iconBtn}
           onPress={() => setShowSidebar(true)}
@@ -995,9 +1426,10 @@ export default function MapScreen() {
           <View style={styles.iconBtn} />
         )}
       </View>
+      )}
 
       {/* Place Search (maps shown places) */}
-      {!addPlaceCoord && (
+      {!addPlaceCoord && !isRouting && travelStep === 1 && (
         <View style={styles.placeSearchWrap} pointerEvents="box-none">
           <View style={styles.placeSearchInputRow}>
             <TextInput
@@ -1081,9 +1513,11 @@ export default function MapScreen() {
       )}
 
       {/* Center Button */}
-      <TouchableOpacity style={styles.centerBtn} onPress={() => zoomToNearbyMe(5)}>
-        <Text style={styles.centerBtnText}>🎯</Text>
-      </TouchableOpacity>
+      {!selectedStore && (
+        <TouchableOpacity style={styles.centerBtn} onPress={() => zoomToNearbyMe(5)}>
+          <Text style={styles.centerBtnText}>🎯</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Tap options: Add place / Navigate — rendered directly (no Modal) for web+mobile */}
       {tappedCoord && (
@@ -1180,7 +1614,7 @@ export default function MapScreen() {
       )}
 
       {/* ── Category Bar (Bottom) — إخفاؤه عند نافذة إضافة مكان حتى لا يغطي زر الإرسال (elevation + ترتيب الرسم) ── */}
-      {!addPlaceCoord && (
+      {!addPlaceCoord && !isRouting && travelStep === 1 && (
       <View style={styles.categoryBar}>
         <ScrollView
           horizontal
@@ -1287,7 +1721,7 @@ export default function MapScreen() {
       )}
 
       {/* Sidebar Drawer */}
-      {showSidebar && (
+      {showSidebar && !isRouting && travelStep === 1 && (
         <View style={styles.overlayContainer} pointerEvents="box-none">
           <TouchableOpacity
             style={styles.overlayBackdrop}
@@ -1351,18 +1785,22 @@ export default function MapScreen() {
       )}
 
       {/* Store Detail Sheet */}
-      {selectedStore && (
+      {selectedStore && !isRouting && travelStep === 1 && (
         <StoreDetailSheet
           store={selectedStore}
           userLocation={userLocation}
           user={user}
           categoryList={categoryList}
-          onClose={() => setSelectedStore(null)}
-          onNavigate={handleNavigateToStore}
+          onClose={closeTravelFlow}
+          onNavigate={handleOpenTravelModePicker}
           onReport={() => setShowReportModal(true)}
           onServices={() => setShowServicesModal(true)}
           onEdit={() => {
             setSelectedStore(null);
+            setTravelStep(1);
+            setTravelChoice(null);
+            setTravelPreviewLoading(false);
+            clearRoute();
             router.push({
               pathname: '/(main)/admin-stores',
               params: { editStoreId: selectedStore.id },
@@ -1371,19 +1809,23 @@ export default function MapScreen() {
           onDelete={async () => {
             await deleteStore(selectedStore.id);
             setSelectedStore(null);
+            setTravelStep(1);
+            setTravelChoice(null);
+            setTravelPreviewLoading(false);
+            clearRoute();
           }}
         />
       )}
 
       {/* Services Sheet */}
-      {showServicesModal && selectedStore && (
+      {showServicesModal && selectedStore && !isRouting && travelStep === 1 && (
         <View style={styles.overlayContainer} pointerEvents="box-none">
           <TouchableOpacity style={styles.overlayBackdrop} onPress={() => setShowServicesModal(false)} activeOpacity={1} />
           <StoreServicesSheet store={selectedStore} user={user} onClose={() => setShowServicesModal(false)} />
         </View>
       )}
 
-      {selectedStore && (
+      {selectedStore && !isRouting && travelStep === 1 && (
         <ReportModal
           visible={showReportModal}
           storeId={selectedStore.id}
@@ -1391,6 +1833,12 @@ export default function MapScreen() {
           onClose={() => setShowReportModal(false)}
         />
       )}
+
+      {/* Travel Wizard Step 2 (choose mode) */}
+      {selectedStore && !isRouting && travelStep === 2 && <TravelModeSheet />}
+
+      {/* Travel Wizard Step 3 (preview + confirm/cancel) */}
+      {selectedStore && !isRouting && travelStep === 3 && <TravelPreviewSheet />}
     </View>
   );
 }
@@ -1487,6 +1935,7 @@ const styles = StyleSheet.create({
   overlayBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.35)',
+    zIndex: 0,
   },
   // ── Category Bottom Sheet ──
   sheetOverlay: {
@@ -1681,6 +2130,10 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     overflow: 'hidden',
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     zIndex: 201,
     ...shadow({ offset: { width: 0, height: -6 }, opacity: 0.18, radius: 16, elevation: 24 }),
   },
@@ -1749,14 +2202,38 @@ const styles = StyleSheet.create({
   },
   storeModalPhoneIcon: { fontSize: 18 },
   storeModalPhoneText: { fontSize: 15, fontWeight: '700', color: '#2E86AB' },
-
   // Action buttons row
   storeModalBtnRow: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     gap: 10,
     alignSelf: 'stretch',
     marginBottom: 14,
+    alignItems: 'stretch',
   },
+  storeModalCallBtn: {
+    flex: 1,
+    borderRadius: 18,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#16A34A',
+    borderWidth: 1,
+    borderColor: '#15803D',
+    ...shadow({ color: '#166534', offset: { width: 0, height: 4 }, opacity: 0.24, radius: 8, elevation: 4 }),
+  },
+  storeModalCallBtnIconWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 3,
+  },
+  storeModalCallBtnIcon: { fontSize: 13 },
+  storeModalCallBtnLabel: { color: 'rgba(255,255,255,0.9)', fontSize: 11, fontWeight: '700' },
+  storeModalCallBtnText: { color: '#fff', fontSize: 14, fontWeight: '900', marginTop: 1 },
   storeModalActionBtn: {
     flex: 1,
     borderRadius: 16,
@@ -1773,6 +2250,46 @@ const styles = StyleSheet.create({
   storeModalNavigateBtnSub: {
     color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '600', marginTop: 2,
   },
+  // ── Travel Wizard (Step 2/3) ──
+  travelModeBody: { padding: 20, paddingTop: 6, alignItems: 'stretch', gap: 14 },
+  travelModeTitle: { fontSize: 18, fontWeight: '900', color: '#1A3A5C', textAlign: 'right' },
+  travelModeSubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'right', marginTop: -8 },
+  travelModeGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginTop: 4 },
+  travelModeOptionBtn: {
+    flexBasis: '48%',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.18, radius: 6, elevation: 4 }),
+    marginBottom: 12,
+  },
+  travelModeOptionText: { color: '#fff', fontSize: 14, fontWeight: '900' },
+  travelBackBtn: { backgroundColor: '#F3F4F6', borderRadius: 14, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
+  travelBackBtnText: { color: '#374151', fontSize: 14, fontWeight: '800' },
+
+  travelPreviewBody: { padding: 20, paddingTop: 8, alignItems: 'stretch', gap: 14 },
+  travelPreviewTitle: { fontSize: 18, fontWeight: '900', color: '#1A3A5C', textAlign: 'right' },
+  travelPreviewSubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'right' },
+  travelInfoBlock: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#EEF2F7',
+  },
+  travelInfoLabel: { fontSize: 12, color: '#6B7280', fontWeight: '700', marginBottom: 6 },
+  travelInfoValue: { fontSize: 13, color: '#111827', fontWeight: '800' },
+  travelLoadingText: { textAlign: 'right', color: '#6B7280', fontWeight: '700' },
+  travelDurationBox: { backgroundColor: '#fff', borderRadius: 14, padding: 14, ...shadow({ offset: { width: 0, height: 1 }, opacity: 0.08, radius: 6, elevation: 2 }) },
+  travelDurationLine: { fontSize: 14, fontWeight: '900', color: '#1A3A5C' },
+  travelDurationLine2: { fontSize: 13, fontWeight: '700', color: '#6B7280', marginTop: 6 },
+  travelPreviewBtnsRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  travelPreviewBtn: { flex: 1, borderRadius: 14, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
+  travelCancelBtn: { backgroundColor: '#FEF3C7' },
+  travelConfirmBtn: { backgroundColor: '#2E86AB' },
+  travelPreviewBtnTextCancel: { color: '#B45309', fontSize: 14, fontWeight: '900' },
+  travelPreviewBtnTextConfirm: { color: '#fff', fontSize: 14, fontWeight: '900' },
   storeModalServicesBtn: {
     backgroundColor: '#F3F4F6',
     borderWidth: 1.5,

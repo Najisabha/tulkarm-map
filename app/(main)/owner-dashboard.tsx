@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
-import { api } from '../../api/client';
+import { api, ProductMainCategory, ProductSubCategory } from '../../api/client';
 import { LAYOUT } from '../../constants/layout';
 import { shadow } from '../../utils/shadowStyles';
 
@@ -74,6 +74,12 @@ export default function OwnerDashboard() {
   const [prodMainCategory, setProdMainCategory] = useState('');
   const [prodSubCategory, setProdSubCategory] = useState('');
   const [prodCompanyName, setProdCompanyName] = useState('');
+  const [prodMainCategoryId, setProdMainCategoryId] = useState('');
+  const [availableMainCategories, setAvailableMainCategories] = useState<ProductMainCategory[]>([]);
+  const [availableSubCategories, setAvailableSubCategories] = useState<ProductSubCategory[]>([]);
+  const [showMainCategoriesList, setShowMainCategoriesList] = useState(false);
+  const [showSubCategoriesList, setShowSubCategoriesList] = useState(false);
+  const [loadingProductCategories, setLoadingProductCategories] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const isOwnerOrAdmin = user?.role === 'owner' || user?.isAdmin;
@@ -104,6 +110,15 @@ export default function OwnerDashboard() {
     }
   }, [selectedStore?.id]);
 
+  useEffect(() => {
+    if (showAddProduct) {
+      void loadMainCategories();
+    } else {
+      setShowMainCategoriesList(false);
+      setShowSubCategoriesList(false);
+    }
+  }, [showAddProduct]);
+
   const loadStoreData = async (storeId: string) => {
     try {
       const [svcRes, prodRes, ordRes] = await Promise.all([
@@ -118,6 +133,34 @@ export default function OwnerDashboard() {
       setServices([]);
       setProducts([]);
       setOrders([]);
+    }
+  };
+
+  const loadMainCategories = async () => {
+    try {
+      setLoadingProductCategories(true);
+      const res = await api.getProductMainCategories();
+      setAvailableMainCategories(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setAvailableMainCategories([]);
+    } finally {
+      setLoadingProductCategories(false);
+    }
+  };
+
+  const loadSubCategories = async (mainId: string) => {
+    if (!mainId) {
+      setAvailableSubCategories([]);
+      return;
+    }
+    try {
+      setLoadingProductCategories(true);
+      const res = await api.getProductSubCategories(mainId);
+      setAvailableSubCategories(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setAvailableSubCategories([]);
+    } finally {
+      setLoadingProductCategories(false);
     }
   };
 
@@ -144,6 +187,8 @@ export default function OwnerDashboard() {
   const handleAddProduct = async () => {
     if (!prodName.trim()) return Alert.alert('تنبيه', 'اسم المنتج مطلوب');
     if (!prodPrice.trim()) return Alert.alert('تنبيه', 'السعر مطلوب');
+    if (!prodMainCategoryId) return Alert.alert('تنبيه', 'التصنيف الرئيسي مطلوب');
+    if (availableSubCategories.length > 0 && !prodSubCategory.trim()) return Alert.alert('تنبيه', 'التصنيف الفرعي مطلوب');
     if (!selectedStore) return;
     setSubmitting(true);
     try {
@@ -161,8 +206,10 @@ export default function OwnerDashboard() {
       setProdPrice('');
       setProdStock('');
       setProdMainCategory('');
+      setProdMainCategoryId('');
       setProdSubCategory('');
       setProdCompanyName('');
+      setAvailableSubCategories([]);
       setShowAddProduct(false);
       loadStoreData(selectedStore.id);
     } catch (err: any) {
@@ -482,22 +529,88 @@ export default function OwnerDashboard() {
             <TextInput style={[s.input, s.textarea]} placeholder="وصف المنتج" value={prodDesc} onChangeText={setProdDesc} multiline textAlign="right" placeholderTextColor="#9CA3AF" />
             <TextInput style={s.input} placeholder="السعر *" value={prodPrice} onChangeText={setProdPrice} keyboardType="decimal-pad" textAlign="right" placeholderTextColor="#9CA3AF" />
             <TextInput style={s.input} placeholder="المخزون (فارغ = غير محدود)" value={prodStock} onChangeText={setProdStock} keyboardType="number-pad" textAlign="right" placeholderTextColor="#9CA3AF" />
-            <TextInput
-              style={s.input}
-              placeholder="الصنف الرئيسي (اختياري)"
-              value={prodMainCategory}
-              onChangeText={setProdMainCategory}
-              textAlign="right"
-              placeholderTextColor="#9CA3AF"
-            />
-            <TextInput
-              style={s.input}
-              placeholder="الصنف الفرعي (اختياري)"
-              value={prodSubCategory}
-              onChangeText={setProdSubCategory}
-              textAlign="right"
-              placeholderTextColor="#9CA3AF"
-            />
+            <Text style={s.fieldLabel}>التصنيف الرئيسي *</Text>
+            <TouchableOpacity
+              style={s.inputSelect}
+              onPress={() => {
+                setShowMainCategoriesList((v) => !v);
+                setShowSubCategoriesList(false);
+              }}
+            >
+              <Text style={[s.inputSelectText, !prodMainCategory && s.inputSelectPlaceholder]}>
+                {prodMainCategory || 'اختر التصنيف الرئيسي'}
+              </Text>
+            </TouchableOpacity>
+            {showMainCategoriesList && (
+              <View style={s.selectList}>
+                {loadingProductCategories ? (
+                  <ActivityIndicator color="#2E86AB" />
+                ) : (
+                  <FlatList
+                    data={availableMainCategories}
+                    keyExtractor={(item) => item.id}
+                    style={{ maxHeight: 180 }}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={s.selectItem}
+                        onPress={async () => {
+                          setProdMainCategory(item.name);
+                          setProdMainCategoryId(item.id);
+                          setProdSubCategory('');
+                          setShowMainCategoriesList(false);
+                          setShowSubCategoriesList(false);
+                          await loadSubCategories(item.id);
+                        }}
+                      >
+                        <Text style={s.selectItemText}>{item.name}</Text>
+                      </TouchableOpacity>
+                    )}
+                    ListEmptyComponent={<Text style={s.selectEmpty}>لا توجد تصنيفات رئيسية</Text>}
+                  />
+                )}
+              </View>
+            )}
+
+            {prodMainCategoryId ? (
+              <>
+                <Text style={s.fieldLabel}>التصنيف الفرعي {availableSubCategories.length > 0 ? '*' : '(اختياري)'}</Text>
+                <TouchableOpacity
+                  style={s.inputSelect}
+                  onPress={() => {
+                    setShowSubCategoriesList((v) => !v);
+                    setShowMainCategoriesList(false);
+                  }}
+                >
+                  <Text style={[s.inputSelectText, !prodSubCategory && s.inputSelectPlaceholder]}>
+                    {prodSubCategory || (availableSubCategories.length > 0 ? 'اختر التصنيف الفرعي' : 'لا توجد تصنيفات فرعية لهذا الرئيسي')}
+                  </Text>
+                </TouchableOpacity>
+                {showSubCategoriesList && availableSubCategories.length > 0 && (
+                  <View style={s.selectList}>
+                    {loadingProductCategories ? (
+                      <ActivityIndicator color="#2E86AB" />
+                    ) : (
+                      <FlatList
+                        data={availableSubCategories}
+                        keyExtractor={(item) => item.id}
+                        style={{ maxHeight: 180 }}
+                        renderItem={({ item }) => (
+                          <TouchableOpacity
+                            style={s.selectItem}
+                            onPress={() => {
+                              setProdSubCategory(item.name);
+                              setShowSubCategoriesList(false);
+                            }}
+                          >
+                            <Text style={s.selectItemText}>{item.name}</Text>
+                          </TouchableOpacity>
+                        )}
+                      />
+                    )}
+                  </View>
+                )}
+              </>
+            ) : null}
             <TextInput
               style={s.input}
               placeholder="اسم الشركة (اختياري)"
@@ -589,6 +702,33 @@ const s = StyleSheet.create({
   modalTitle: { fontSize: 20, fontWeight: '700', color: '#1A3A5C' },
   modalClose: { fontSize: 24, color: '#6B7280' },
   input: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, fontSize: 15, marginBottom: 12, borderWidth: 1.5, borderColor: '#E5E7EB', color: '#1F2937' },
+  fieldLabel: { fontSize: 14, fontWeight: '700', color: '#374151', textAlign: 'right', marginBottom: 8 },
+  inputSelect: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    marginBottom: 8,
+  },
+  inputSelectText: { color: '#111827', textAlign: 'right', fontSize: 15, fontWeight: '600' },
+  inputSelectPlaceholder: { color: '#9CA3AF', fontWeight: '500' },
+  selectList: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    marginBottom: 12,
+    paddingVertical: 4,
+  },
+  selectItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  selectItemText: { textAlign: 'right', color: '#111827', fontWeight: '600' },
+  selectEmpty: { textAlign: 'center', color: '#6B7280', paddingVertical: 12 },
   textarea: { minHeight: 80 },
   submitBtn: {
     backgroundColor: '#2E86AB', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8,

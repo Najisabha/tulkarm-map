@@ -225,6 +225,28 @@ export interface StoreProduct {
   sort_order: number;
 }
 
+export interface ProductMainCategory {
+  id: string;
+  name: string;
+  emoji?: string | null;
+  arrow_color?: string | null;
+  sort_order: number;
+  subcategories_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductSubCategory {
+  id: string;
+  main_category_id: string;
+  name: string;
+  emoji?: string | null;
+  arrow_color?: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Order {
   id: string;
   store_id: string;
@@ -418,6 +440,44 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  // ────── Product Categories (Main/Sub) ──────
+
+  getProductMainCategories: () =>
+    request<ApiResponse<ProductMainCategory[]>>('/api/product-categories'),
+
+  createProductMainCategory: (data: { name: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
+    request<ApiResponse<ProductMainCategory>>('/api/product-categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateProductMainCategory: (id: string, data: { name?: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
+    request<ApiResponse<ProductMainCategory>>(`/api/product-categories/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  deleteProductMainCategory: (id: string) =>
+    request<ApiResponse<{ message: string }>>(`/api/product-categories/${id}`, { method: 'DELETE' }),
+
+  getProductSubCategories: (mainCategoryId: string) =>
+    request<ApiResponse<ProductSubCategory[]>>(`/api/product-categories/${mainCategoryId}/subcategories`),
+
+  createProductSubCategory: (mainCategoryId: string, data: { name: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
+    request<ApiResponse<ProductSubCategory>>(`/api/product-categories/${mainCategoryId}/subcategories`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateProductSubCategory: (id: string, data: { name?: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
+    request<ApiResponse<ProductSubCategory>>(`/api/product-subcategories/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  deleteProductSubCategory: (id: string) =>
+    request<ApiResponse<{ message: string }>>(`/api/product-subcategories/${id}`, { method: 'DELETE' }),
 
   // ────── Places ──────
 

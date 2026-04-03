@@ -19,15 +19,39 @@ export default function AdminScreen() {
     () => stores.filter((s) => String(s.status || '').toLowerCase() === 'active').length,
     [stores]
   );
-  const storePlaceTypesCount = useMemo(
-    () =>
-      categories.filter((c) => {
-        const kind = normalizePlaceTypeKind(c.name);
-        return kind === 'store' || kind === 'commercialComplex';
-      }).length,
-    [categories]
-  );
+  const activeTypeCounts = useMemo(() => {
+    const out = {
+      house: 0,
+      store: 0,
+      residentialComplex: 0,
+      commercialComplex: 0,
+      other: 0,
+    };
+    for (const s of stores) {
+      if (String(s.status || '').toLowerCase() !== 'active') continue;
+      const kind = normalizePlaceTypeKind(String((s as any).category || ''));
+      if (kind === 'house') out.house += 1;
+      else if (kind === 'store') out.store += 1;
+      else if (kind === 'residentialComplex') out.residentialComplex += 1;
+      else if (kind === 'commercialComplex') out.commercialComplex += 1;
+      else out.other += 1;
+    }
+    return out;
+  }, [stores]);
   const [stats, setStats] = useState<Partial<AdminStats>>({});
+  const [mainCategoriesCount, setMainCategoriesCount] = useState<number>(0);
+  const statCards = [
+    { label: 'المنازل', value: activeTypeCounts.house, onPress: () => router.push('/(main)/admin-stores?kind=house') },
+    { label: 'المتاجر', value: activeTypeCounts.store, onPress: () => router.push('/(main)/admin-stores?kind=store') },
+    { label: 'المجمعات السكنية', value: activeTypeCounts.residentialComplex, onPress: () => router.push('/(main)/admin-stores?kind=residentialComplex') },
+    { label: 'المجمعات التجارية', value: activeTypeCounts.commercialComplex, onPress: () => router.push('/(main)/admin-stores?kind=commercialComplex') },
+    { label: 'أماكن أخرى', value: activeTypeCounts.other, onPress: () => router.push('/(main)/admin-stores?kind=other') },
+    { label: 'إجمالي الأماكن المنشورة', value: stats.places ?? activePlacesCount, onPress: () => router.push('/(main)/admin-stores?kind=all') },
+    { label: 'التصنيفات الرئيسية', value: mainCategoriesCount, onPress: () => router.push('/(main)/admin-main-categories') },
+    { label: 'المستخدمون', value: stats.users ?? '-', onPress: () => router.push('/(main)/admin-users') },
+    { label: 'طلبات إضافة الأماكن', value: stats.pendingPlaceRequests ?? 0, onPress: () => router.push('/(main)/admin-place-requests') },
+    { label: 'الإبلاغات', value: stats.pendingReports ?? 0, onPress: () => router.push('/(main)/admin-reports') },
+  ];
 
   useEffect(() => {
     if (!user?.isAdmin) return;
@@ -46,6 +70,17 @@ export default function AdminScreen() {
         })
         .catch(() => {});
     }
+  }, [user?.isAdmin]);
+
+  useEffect(() => {
+    if (!user?.isAdmin) return;
+    api
+      .getProductMainCategories()
+      .then((res) => {
+        const list = res?.data ?? [];
+        setMainCategoriesCount(Array.isArray(list) ? list.length : 0);
+      })
+      .catch(() => setMainCategoriesCount(0));
   }, [user?.isAdmin]);
 
   if (!user?.isAdmin) {
@@ -72,47 +107,26 @@ export default function AdminScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        <View style={[styles.statsRow, styles.statsRowFirst]}>
-          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-stores')} activeOpacity={0.7}>
-            <Text style={styles.statNumber}>{stats.places ?? activePlacesCount}</Text>
-            <Text style={styles.statLabel}>الأماكن المنشورة</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.statCard}
-            onPress={() => router.push('/(main)/admin-categories?filterKind=store')}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.statNumber}>{storePlaceTypesCount}</Text>
-            <Text style={styles.statLabel}>أنواع المتاجر</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-users')} activeOpacity={0.7}>
-            <Text style={styles.statNumber}>{stats.users ?? '-'}</Text>
-            <Text style={styles.statLabel}>المستخدمون</Text>
-          </TouchableOpacity>
-        </View>
-        <View style={styles.statsRow}>
-          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-reports')} activeOpacity={0.7}>
-            <Text style={styles.statNumber}>{stats.pendingReports ?? 0}</Text>
-            <Text style={styles.statLabel}>الإبلاغات</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-place-requests')} activeOpacity={0.7}>
-            <Text style={styles.statNumber}>{stats.pendingPlaceRequests ?? 0}</Text>
-            <Text style={styles.statLabel}>طلبات إضافة الأماكن</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.statCard} onPress={() => router.push('/(main)/admin-categories')} activeOpacity={0.7}>
-            <Text style={styles.statNumber}>{stats.placeTypes ?? categories.length}</Text>
-            <Text style={styles.statLabel}>أنواع الأماكن</Text>
-          </TouchableOpacity>
+        <View style={styles.statsSection}>
+          <Text style={styles.statsTitle}>ملخص الإحصائيات</Text>
+          <View style={styles.statsGrid}>
+            {statCards.map((card) => (
+              <TouchableOpacity key={card.label} style={styles.statCard} onPress={card.onPress} activeOpacity={0.7}>
+                <Text style={styles.statNumber}>{card.value}</Text>
+                <Text style={styles.statLabel}>{card.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         <View style={styles.menuSection}>
           <Text style={styles.menuTitle}>الإدارة</Text>
           <View style={styles.menuGridRow}>
-            <TouchableOpacity style={styles.menuGridCell} onPress={() => router.push('/(main)/admin-reports')} activeOpacity={0.7}>
-              <Text style={styles.menuGridCellText}>⚠️ الإبلاغات</Text>
-            </TouchableOpacity>
             <TouchableOpacity style={styles.menuGridCell} onPress={() => router.push('/(main)/admin-activity')} activeOpacity={0.7}>
               <Text style={styles.menuGridCellText}>📋 سجل النشاط</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuGridCell} onPress={() => router.push('/(main)/admin-categories')} activeOpacity={0.7}>
+              <Text style={styles.menuGridCellText}>🏷️ أنواع الأماكن</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.menuGridRow}>
@@ -171,34 +185,30 @@ const styles = StyleSheet.create({
     ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
   },
   logoutBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  statsRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    alignItems: 'stretch',
+  statsSection: { paddingHorizontal: 16, paddingTop: 16 },
+  statsTitle: { fontSize: 16, fontWeight: '800', color: '#1F2937', marginBottom: 10, textAlign: 'right' },
+  statsGrid: {
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 10,
   },
-  statsRowFirst: { paddingTop: 20 },
   statCard: {
-    flex: 1,
-    marginHorizontal: 6,
+    width: '48.5%',
     backgroundColor: '#fff',
     borderRadius: 16,
-    padding: 24,
+    paddingVertical: 18,
+    paddingHorizontal: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 110,
+    minHeight: 106,
     ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.1, radius: 8, elevation: 4 }),
   },
-  statColumnSpacer: {
-    flex: 1,
-    marginHorizontal: 6,
-    minHeight: 110,
-  },
-  statNumber: { fontSize: 36, fontWeight: '800', color: '#2E86AB', textAlign: 'center' },
-  statLabel: { fontSize: 14, color: '#6B7280', marginTop: 8, textAlign: 'center' },
+  statNumber: { fontSize: 34, fontWeight: '800', color: '#2E86AB', textAlign: 'center' },
+  statLabel: { fontSize: 14, color: '#6B7280', marginTop: 6, textAlign: 'center' },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 40 },
-  menuSection: { paddingHorizontal: 20, marginTop: 8 },
+  menuSection: { paddingHorizontal: 16, marginTop: 14 },
   menuTitle: { fontSize: 16, fontWeight: '700', color: '#1F2937', marginBottom: 12, textAlign: 'right' },
   menuGridRow: {
     flexDirection: 'row',

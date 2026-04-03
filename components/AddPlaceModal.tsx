@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -23,7 +24,6 @@ import {
 } from '../utils/placeTypeLabels';
 
 const MAX_PHOTOS = 3;
-const MAX_VIDEOS = 1;
 
 interface AttributeDefinition {
   id: string;
@@ -82,8 +82,13 @@ export function AddPlaceModal({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [dynamicValues, setDynamicValues] = useState<Record<string, string>>({});
+  const [productMainCategories, setProductMainCategories] = useState<{ id: string; name: string; emoji?: string | null; arrow_color?: string | null }[]>([]);
+  const [productSubCategories, setProductSubCategories] = useState<{ id: string; name: string; emoji?: string | null; arrow_color?: string | null }[]>([]);
+  const [selectedMainCategoryColor, setSelectedMainCategoryColor] = useState<string>('#2E86AB');
+  const [showMainCategoryList, setShowMainCategoryList] = useState(false);
+  const [showSubCategoryList, setShowSubCategoryList] = useState(false);
+  const [loadingProductCategories, setLoadingProductCategories] = useState(false);
   const [photos, setPhotos] = useState<string[]>([]);
-  const [videos, setVideos] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   const selectedTypeSingularLabel = selectedType ? getPlaceTypeDisplayName(selectedType.name) : 'مكان';
@@ -144,14 +149,12 @@ export function AddPlaceModal({
       case 'house':
         return [
           { id: uid('house_number'), key: 'house_number', label: 'رقم المنزل', value_type: 'string', is_required: true },
-          { id: uid('location_text'), key: 'location_text', label: 'مكان المنزل', value_type: 'string', is_required: true },
         ];
       case 'store':
         return [
-          { id: uid('store_type'), key: 'store_type', label: 'نوع المتجر', value_type: 'string', is_required: true },
-          { id: uid('store_category'), key: 'store_category', label: 'تصنيف المتجر', value_type: 'string', is_required: true },
+          { id: uid('store_type'), key: 'store_type', label: 'التصنيف الرئيسي للمتجر', value_type: 'string', is_required: true },
+          { id: uid('store_category'), key: 'store_category', label: 'التصنيف الفرعي للمتجر', value_type: 'string', is_required: true },
           { id: uid('store_number'), key: 'store_number', label: 'رقم المتجر', value_type: 'string', is_required: true },
-          { id: uid('location_text'), key: 'location_text', label: 'مكان المتجر', value_type: 'string', is_required: true },
         ];
       case 'residentialComplex':
         return [
@@ -195,7 +198,6 @@ export function AddPlaceModal({
     setDescription('');
     setDynamicValues({});
     setPhotos([]);
-    setVideos([]);
   };
 
   useEffect(() => {
@@ -212,8 +214,48 @@ export function AddPlaceModal({
   const handleSelectType = (type: PlaceTypeUI) => {
     setSelectedType(type);
     setDynamicValues({});
+    setProductSubCategories([]);
+    setShowMainCategoryList(false);
+    setShowSubCategoryList(false);
     setAttrDefs(getFixedAttrDefsForType(type.name));
+    if (normalizePlaceTypeKind(type.name) === 'store') {
+      void loadMainProductCategories();
+    }
     setStep('form');
+  };
+
+  const loadMainProductCategories = async () => {
+    try {
+      setLoadingProductCategories(true);
+      const res = await api.getProductMainCategories();
+      const list = Array.isArray(res.data) ? res.data : [];
+      setProductMainCategories(
+        list.map((x) => ({ id: x.id, name: x.name, emoji: x.emoji ?? null, arrow_color: x.arrow_color ?? null }))
+      );
+    } catch {
+      setProductMainCategories([]);
+    } finally {
+      setLoadingProductCategories(false);
+    }
+  };
+
+  const loadSubProductCategories = async (mainId: string) => {
+    if (!mainId) {
+      setProductSubCategories([]);
+      return;
+    }
+    try {
+      setLoadingProductCategories(true);
+      const res = await api.getProductSubCategories(mainId);
+      const list = Array.isArray(res.data) ? res.data : [];
+      setProductSubCategories(
+        list.map((x) => ({ id: x.id, name: x.name, emoji: (x as any).emoji ?? null, arrow_color: (x as any).arrow_color ?? null }))
+      );
+    } catch {
+      setProductSubCategories([]);
+    } finally {
+      setLoadingProductCategories(false);
+    }
   };
 
   const pickImage = async () => {
@@ -239,30 +281,7 @@ export function AddPlaceModal({
     }
   };
 
-  const pickVideo = async () => {
-    if (videos.length >= MAX_VIDEOS) {
-      Alert.alert('\u062A\u0646\u0628\u064A\u0647', `\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${MAX_VIDEOS} \u0641\u064A\u062F\u064A\u0648`);
-      return;
-    }
-    if (Platform.OS !== 'web') {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u0646\u062D\u062A\u0627\u062C \u0625\u0630\u0646 \u0627\u0644\u0648\u0635\u0648\u0644 \u0644\u0644\u0645\u0644\u0641\u0627\u062A');
-        return;
-      }
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-      allowsEditing: false,
-      videoMaxDuration: 30,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setVideos((v) => [...v, result.assets[0].uri].slice(0, MAX_VIDEOS));
-    }
-  };
-
   const removePhoto = (idx: number) => setPhotos((p) => p.filter((_, i) => i !== idx));
-  const removeVideo = (idx: number) => setVideos((v) => v.filter((_, i) => i !== idx));
 
   const setDynamic = (key: string, value: string) => {
     setDynamicValues((prev) => ({ ...prev, [key]: value }));
@@ -303,7 +322,6 @@ export function AddPlaceModal({
         latitude,
         longitude,
         photos: photos.length ? photos : undefined,
-        videos: videos.length ? videos : undefined,
         dynamicAttributes: attrs.length ? attrs : undefined,
       });
       setStep('success');
@@ -429,7 +447,42 @@ export function AddPlaceModal({
                       <Text style={styles.label}>
                         {def.label + (def.is_required ? ' *' : '')}
                       </Text>
-                      {def.value_type === 'boolean' ? (
+                      {def.key === 'store_type' ? (
+                        <>
+                          <TouchableOpacity style={styles.input} onPress={() => setShowMainCategoryList(true)}>
+                            <View style={styles.selectedCategoryRow}>
+                              <View style={[styles.selectedCategoryDot, { backgroundColor: selectedMainCategoryColor || '#2E86AB' }]} />
+                              <Text style={styles.selectedCategoryEmoji}>
+                                {productMainCategories.find((x) => x.name === dynamicValues.store_type)?.emoji || '📦'}
+                              </Text>
+                              <Text style={[styles.selectText, !dynamicValues.store_type && styles.selectPlaceholder]}>
+                                {dynamicValues.store_type || 'اختر التصنيف الرئيسي'}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        </>
+                      ) : def.key === 'store_category' ? (
+                        <>
+                          {!!dynamicValues.store_type && (
+                            <>
+                              <TouchableOpacity
+                                style={styles.input}
+                                onPress={() => setShowSubCategoryList(true)}
+                              >
+                                <View style={styles.selectedCategoryRow}>
+                                  <View style={[styles.selectedCategoryDot, { backgroundColor: selectedMainCategoryColor || '#2E86AB' }]} />
+                                  <Text style={styles.selectedCategoryEmoji}>
+                                    {productSubCategories.find((x) => x.name === dynamicValues.store_category)?.emoji || '🏷️'}
+                                  </Text>
+                                  <Text style={[styles.selectText, !dynamicValues.store_category && styles.selectPlaceholder]}>
+                                    {dynamicValues.store_category || 'اختر التصنيف الفرعي'}
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
+                            </>
+                          )}
+                        </>
+                      ) : def.value_type === 'boolean' ? (
                         <TouchableOpacity
                           style={[
                             styles.booleanToggle,
@@ -482,25 +535,6 @@ export function AddPlaceModal({
                     </>
                   )}
 
-                  <Text style={styles.label}>{'\u0641\u064A\u062F\u064A\u0648'} ({videos.length}/{MAX_VIDEOS})</Text>
-                  <Text style={styles.videoHint}>{'\u0627\u0644\u0641\u064A\u062F\u064A\u0648 \u0644\u0627 \u064A\u064F\u062D\u0641\u0638 \u0639\u0644\u0649 \u0627\u0644\u062E\u0627\u062F\u0645 \u062D\u0627\u0644\u064A\u0627\u064B\u061B \u064A\u064F\u0633\u062A\u062E\u062F\u0645 \u0644\u0644\u0645\u0639\u0627\u064A\u0646\u0629 \u0627\u0644\u0645\u062D\u0644\u064A\u0629 \u0641\u0642\u0637.'}</Text>
-                  <View style={styles.mediaRow}>
-                    {videos.map((uri, i) => (
-                      <View key={i} style={styles.thumbWrap}>
-                        <View style={styles.videoPlaceholder}>
-                          <Text style={{ fontSize: 24 }}>{'\u{1F3AC}'}</Text>
-                        </View>
-                        <TouchableOpacity style={styles.removeThumb} onPress={() => removeVideo(i)}>
-                          <Text style={styles.removeThumbText}>{'\u2715'}</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                    {videos.length < MAX_VIDEOS && (
-                      <TouchableOpacity style={styles.addMediaBtn} onPress={pickVideo}>
-                        <Text style={styles.addMediaText}>{'\u{1F3AC} \u0625\u0636\u0627\u0641\u0629 \u0641\u064A\u062F\u064A\u0648'}</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
                 </>
               ) : null}
               </ScrollView>
@@ -548,6 +582,81 @@ export function AddPlaceModal({
           )}
         </View>
       </View>
+
+      <Modal visible={showMainCategoryList} transparent animationType="slide" onRequestClose={() => setShowMainCategoryList(false)}>
+        <View style={styles.pickerOverlay}>
+          <View style={styles.pickerCard}>
+            <View style={styles.pickerHeader}>
+              <TouchableOpacity onPress={() => setShowMainCategoryList(false)}>
+                <Text style={styles.pickerClose}>إغلاق</Text>
+              </TouchableOpacity>
+              <Text style={styles.pickerTitle}>اختر التصنيف الرئيسي</Text>
+              <View style={{ width: 42 }} />
+            </View>
+            <ScrollView contentContainerStyle={styles.pickerList}>
+              {loadingProductCategories ? (
+                <ActivityIndicator color="#2E86AB" />
+              ) : productMainCategories.length === 0 ? (
+                <Text style={styles.selectEmpty}>لا توجد تصنيفات رئيسية</Text>
+              ) : (
+                productMainCategories.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.mainCategoryCard, { borderColor: item.arrow_color || '#2E86AB' }]}
+                    onPress={async () => {
+                      setDynamic('store_type', item.name);
+                      setDynamic('store_category', '');
+                      setSelectedMainCategoryColor(item.arrow_color || '#2E86AB');
+                      setShowMainCategoryList(false);
+                      await loadSubProductCategories(item.id);
+                    }}
+                  >
+                    <View style={[styles.mainCategoryColorDot, { backgroundColor: item.arrow_color || '#2E86AB' }]} />
+                    <Text style={styles.mainCategoryName}>{item.name}</Text>
+                    <Text style={styles.mainCategoryEmoji}>{item.emoji || '📦'}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showSubCategoryList} transparent animationType="slide" onRequestClose={() => setShowSubCategoryList(false)}>
+        <View style={styles.pickerOverlay}>
+          <View style={styles.pickerCard}>
+            <View style={styles.pickerHeader}>
+              <TouchableOpacity onPress={() => setShowSubCategoryList(false)}>
+                <Text style={styles.pickerClose}>إغلاق</Text>
+              </TouchableOpacity>
+              <Text style={styles.pickerTitle}>اختر التصنيف الفرعي</Text>
+              <View style={{ width: 42 }} />
+            </View>
+            <ScrollView contentContainerStyle={styles.pickerList}>
+              {loadingProductCategories ? (
+                <ActivityIndicator color="#2E86AB" />
+              ) : productSubCategories.length === 0 ? (
+                <Text style={styles.selectEmpty}>لا توجد تصنيفات فرعية لهذا الرئيسي</Text>
+              ) : (
+                productSubCategories.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.mainCategoryCard, { borderColor: item.arrow_color || selectedMainCategoryColor || '#2E86AB' }]}
+                    onPress={() => {
+                      setDynamic('store_category', item.name);
+                      setShowSubCategoryList(false);
+                    }}
+                  >
+                    <View style={[styles.mainCategoryColorDot, { backgroundColor: item.arrow_color || selectedMainCategoryColor || '#2E86AB' }]} />
+                    <Text style={styles.mainCategoryName}>{item.name}</Text>
+                    <Text style={styles.mainCategoryEmoji}>{item.emoji || '🏷️'}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -670,24 +779,12 @@ const styles = StyleSheet.create({
     color: '#1F2937',
   },
   textarea: { minHeight: 80 },
-  videoHint: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    textAlign: 'right',
-    marginBottom: 8,
-    marginTop: -8,
-  },
   mediaRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   thumbWrap: { position: 'relative' },
   thumb: { width: 70, height: 70, borderRadius: 10 },
-  videoPlaceholder: {
-    width: 70,
-    height: 70,
-    borderRadius: 10,
-    backgroundColor: '#E5E7EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  selectedCategoryRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
+  selectedCategoryDot: { width: 10, height: 10, borderRadius: 5 },
+  selectedCategoryEmoji: { fontSize: 16 },
   removeThumb: {
     position: 'absolute',
     top: -6,
@@ -712,6 +809,60 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addMediaText: { fontSize: 11, color: '#6B7280' },
+  selectText: { fontSize: 15, color: '#111827', textAlign: 'right' },
+  selectPlaceholder: { color: '#9CA3AF' },
+  selectList: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    marginTop: -8,
+    marginBottom: 16,
+  },
+  selectItem: {
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  selectItemText: { textAlign: 'right', color: '#111827', fontWeight: '600' },
+  selectEmpty: { textAlign: 'center', color: '#6B7280', paddingVertical: 12 },
+  pickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 14,
+  },
+  pickerCard: {
+    maxHeight: '82%',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  pickerTitle: { fontSize: 16, fontWeight: '800', color: '#1A3A5C' },
+  pickerClose: { fontSize: 14, fontWeight: '700', color: '#2E86AB' },
+  pickerList: { padding: 12, gap: 8 },
+  mainCategoryCard: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1.5,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    padding: 12,
+  },
+  mainCategoryColorDot: { width: 12, height: 12, borderRadius: 6 },
+  mainCategoryName: { flex: 1, textAlign: 'right', fontWeight: '800', color: '#111827' },
+  mainCategoryEmoji: { fontSize: 20 },
   booleanToggle: {
     backgroundColor: '#F3F4F6',
     borderRadius: 12,

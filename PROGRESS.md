@@ -59,3 +59,90 @@
 
 ### NEXT AGENT
 - QA/Review Agent: verify admin dashboard cards (5->6) render correctly on Web/Windows, and that `أنواع المتاجر` does not show المنازل/المجمعات السكنية while `أنواع الأماكن` shows all types.
+
+## Local dev setup fix - 2026-03-25
+### Done
+- Fixed backend port conflict (`EADDRINUSE`) by moving the API server to `PORT=3002` in `server/.env`.
+- Updated Expo app env to point to the correct local API URL: `EXPO_PUBLIC_API_URL=http://localhost:3002`.
+- Removed non-Expo server secrets/vars (`DATABASE_URL`, `JWT_SECRET`, `PORT`, etc.) from the root `.env` to avoid leaking them into the frontend bundler.
+- Restarted Metro bundler on port `8081` to reload `.env`.
+
+### NEXT AGENT
+- QA/Review Agent: verify the app talks to the backend at `http://localhost:3002` (health endpoint + auth + places list).
+
+## Local Postgres connection - 2026-03-25
+### Done
+- Switched backend `DATABASE_URL` in `server/.env` to local Postgres (`postgres@localhost:5432/tulkarm-map`) with password authentication.
+- Updated migration script validation to allow localhost connection strings.
+- Re-ran `npm run migrate:v1` successfully against local DB and started backend on `http://localhost:3002`.
+- Restarted Expo Metro bundler so it reloads `.env` pointing to the local API.
+
+### NEXT AGENT
+- QA/Review Agent: verify CRUD flows (auth, create place, list places) using the local Postgres database.
+
+## Product main/sub categories - 2026-03-25
+### Done
+- Added DB migration `V9` to create `product_main_categories` and `product_sub_categories`.
+- Added backend CRUD endpoints:
+  - `GET/POST/PATCH/DELETE /api/product-categories`
+  - `GET/POST /api/product-categories/:id/subcategories`
+  - `PATCH/DELETE /api/product-subcategories/:id`
+- Added admin screens:
+  - `/(main)/admin-main-categories` (إدارة التصنيفات الرئيسية) مع أزرار: تعديل/حذف/تصنيف فرعي
+  - `/(main)/admin-sub-categories` لإدارة التصنيفات الفرعية
+- Updated admin dashboard card to open “التصنيفات الرئيسية” and show the correct count.
+
+### Update - 2026-03-25
+- Extended product categories to support `emoji` and `arrow_color` (DB + backend + UI):
+  - DB: updated `migrateV9` to add columns on `product_main_categories` and `product_sub_categories` (with `ADD COLUMN IF NOT EXISTS` for compatibility).
+  - Backend: updated `productCategories.routes.js` to read/write `emoji` + `arrow_color`.
+  - UI: updated admin screens to let admin set emoji + arrow color with presets + preview, and changed sort order input to be empty by default (so it doesn't show confusing `0`).
+
+### NEXT AGENT
+- QA/Review Agent: verify add/edit main/sub categories can save `emoji` + `arrow_color` and that they render in list cards.
+- QA/Review Agent: verify `sort_order` works when left empty (defaults to 0) and sorting is correct.
+- Integration Agent: connect owner product add/edit to pick main/sub from these lists instead of free text.
+
+## Owner product category picker - 2026-03-25
+### Done
+- Updated `/(main)/owner-dashboard` product add modal to use dependent selection lists instead of free text.
+- Main category now appears first and loads all store main categories from `/api/product-categories`.
+- After selecting main category, sub-category selector appears and shows only items from `/api/product-categories/:id/subcategories`.
+- Validation: main category is required; sub-category is required only when the selected main has sub-categories.
+
+### NEXT AGENT
+- QA/Review Agent: verify owner add-product flow on Web/Windows/mobile for main->sub dependent selection and correct validation.
+
+## Admin stats breakdown - 2026-03-25
+### Done
+- Updated `/(main)/admin` stats cards to show published-place breakdown by type:
+  - المنازل
+  - المتاجر
+  - المجمعات السكنية
+  - المجمعات التجارية
+  - أماكن أخرى
+- Kept an additional card for `إجمالي الأماكن المنشورة`.
+- Counts are derived from active places using `normalizePlaceTypeKind`.
+
+### NEXT AGENT
+- QA/Review Agent: verify admin dashboard type counts match active places and labels render correctly on Web/Windows.
+
+## Update - 2026-03-30
+### Done
+- في `app/(main)/map.tsx` أصبح زر “الانتقال إلى المكان” يعمل حتى لو لم تكن الإحداثيات جاهزة، عبر طلب صلاحية الموقع عند الحاجة.
+- يتم رسم مسار المشي ورقم “الأمتار المتبقية” (X م متبقية) وتحديثه مع تغير موقع المستخدم.
+
+### NEXT AGENT
+- QA/Review Agent: تأكد من أن زر “الانتقال إلى المكان” يرسم الخط ويعرض “X م متبقية” على Web/Windows، وأنه يظهر تنبيه مناسب عند فشل الحصول على الموقع.
+
+## Update - 2026-03-30 (إضافة اختيار وسيلة الذهاب)
+### Done
+- عند الضغط على “الانتقال إلى المكان” يظهر اختيار لوسيلة الذهاب: `مشي` / `دراجة` / `سيارة`.
+- بعد اختيار الوسيلة: يتم إخفاء واجهة التفاصيل (Sidebar + Category Bar + Store sheet) ويبدأ رسم الخط مع عرض `المدة الزمنية المتوقعة`.
+
+## Update - 2026-03-30 (شاشة سلايدر 3 خطوات)
+### Done
+- تم استبدال `Alert` بخطوات واجهة داخل التطبيق (بدون تنبيهات): 
+  - خطوة 1: صفحة تفاصيل المكان
+  - خطوة 2: اختيار وسيلة الذهاب (4 خيارات: مشي/بسكليت/دراجة/سيارة)
+  - خطوة 3: عرض موقعك + وجهتك + المسافة المتبقية والمدة، مع زرين `تأكيد` و `إلغاء`.
