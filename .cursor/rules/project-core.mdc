@@ -1,0 +1,22 @@
+---
+description: Monorepo layout, env, and change discipline for tulkarm-map
+alwaysApply: true
+---
+
+# Project core
+
+## Layout
+
+- **App**: Expo Router (`app/`), shared UI in `components/`, API in `api/`, state in `context/`, helpers in `utils/` and `hooks/`, constants in `constants/`.
+- **Backend**: `server/` — Express, PostgreSQL (`pg`), validation with Zod, JWT auth. Run from `server/` (`npm run dev` / `npm start`).
+
+## Configuration
+
+- Do not commit secrets. App reads API base URL via `api/config.ts` / env; server uses `server/src/config/env.js` and `.env`.
+- Prefer existing patterns for new endpoints: validate → controller → service → repository.
+
+## How to change code
+
+- Touch only what the task needs; no drive-by refactors or unrelated files.
+- Match surrounding style: imports, naming, error handling, and comment level (Arabic domain comments are fine where already used).
+- Run `npm run lint` at the repo root for the Expo app when you change TS/TSX.

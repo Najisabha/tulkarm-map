@@ -1,0 +1,31 @@
+---
+description: Expo Router, React Native, and TypeScript conventions for the mobile/web app
+globs: **/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Expo app (`**/*.{ts,tsx}`)
+
+## Structure
+
+- **Routes**: `app/` — use `expo-router` (`useRouter`, file-based layouts). Keep `_layout.tsx` concerns minimal.
+- **Maps**: Use `components/MapWrapper` for `MapView` / markers so native vs web stay consistent.
+- **API**: Call the backend through `api/client.ts` and `getApiUrl()` from `api/config.ts` — avoid hardcoding base URLs in screens.
+
+## React / RN
+
+- Prefer functional components and hooks; colocate screen-specific helpers at the bottom of the file or in `utils/` if reused.
+- Use `Platform.OS` when behavior differs (e.g. web vs native); keep shared logic platform-agnostic when possible.
+- Reuse themed primitives (`components/themed-*`, `constants/theme.ts`) for consistent UI.
+
+## TypeScript
+
+- Type props and API payloads explicitly; avoid `any` unless bridging untyped JSON — then narrow immediately.
+
+```tsx
+// Prefer
+interface Props { placeId: string; onClose: () => void; }
+
+// Avoid
+function Card(props: any) { ... }
+```

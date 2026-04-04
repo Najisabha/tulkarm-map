@@ -1,0 +1,34 @@
+---
+description: Express API modules, ESM imports, Zod, and error flow in server/
+globs: server/**/*.js
+alwaysApply: false
+---
+
+# Server (`server/**/*.js`)
+
+## Modules
+
+- **ESM**: Use `.js` extensions in relative imports (`import x from './foo.js'`).
+- **Shape per feature**: `*.routes.js` → `*.controller.js` → `*.service.js` → `*.repository.js`, with `*.schema.js` for Zod. Register routes in `server/src/app.js`.
+- **HTTP**: Controllers use `success` / `paginated` from `utils/response.js`; errors go to `next(err)` and flow through `error.middleware.js`.
+
+## Validation and auth
+
+- Body/query params: validate in middleware so handlers read `req.validated` / `req.validatedQuery` (see existing modules).
+- Protect routes with `auth.middleware.js` and `role.middleware.js` where the API already does.
+
+## Patterns
+
+```js
+// Controller: thin — delegate to service, standard responses
+async getById(req, res, next) {
+  try {
+    const row = await placesService.getById(req.params.id, req.user);
+    return success(res, row);
+  } catch (err) {
+    next(err);
+  }
+}
+```
+
+- Use `ApiError` from `utils/ApiError.js` for expected failures (status + message) inside services when appropriate.
