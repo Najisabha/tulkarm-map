@@ -22,6 +22,7 @@ import {
   normalizePlaceTypeKind,
   type PlaceTypeKind,
 } from '../utils/placeTypeLabels';
+import { isInsideTulkarm } from '../utils/tulkarmGovernorate';
 
 const MAX_PHOTOS = 3;
 
@@ -302,6 +303,14 @@ export function AddPlaceModal({
     );
     if (missingRequired.length > 0) {
       Alert.alert('\u062A\u0646\u0628\u064A\u0647', `\u064A\u0631\u062C\u0649 \u062A\u0639\u0628\u0626\u0629: ${missingRequired.map((d) => d.label).join('\u060C ')}`);
+      return;
+    }
+
+    if (!isInsideTulkarm(latitude, longitude)) {
+      Alert.alert(
+        'تنبيه',
+        'يجب أن يكون المكان داخل الدائرة الزرقاء على الخريطة (منطقة مدينة طولكرم والجوار المباشر فقط).'
+      );
       return;
     }
 

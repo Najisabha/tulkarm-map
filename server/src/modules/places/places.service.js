@@ -2,6 +2,7 @@ import { placesRepo } from './places.repository.js';
 import { placeTypesRepo } from '../placeTypes/placeTypes.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
 import pool from '../../config/db.js';
+import { assertWithinTulkarmGovernorate } from '../../lib/tulkarmGovernorate.js';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -32,6 +33,8 @@ export const placesService = {
     const publishDirectly = options.publishDirectly === true;
     const status = publishDirectly && isAdminRole(user) ? 'active' : 'pending';
     const createdBy = effectiveCreatedBy(user);
+
+    assertWithinTulkarmGovernorate(data.latitude, data.longitude);
 
     const place = await placesRepo.create({
       name: data.name,
@@ -122,6 +125,7 @@ export const placesService = {
     });
 
     if (data.latitude != null && data.longitude != null) {
+      assertWithinTulkarmGovernorate(data.latitude, data.longitude);
       await placesRepo.updateLocation({
         placeId: id,
         latitude: data.latitude,

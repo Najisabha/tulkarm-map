@@ -2,31 +2,31 @@ import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  FlatList,
-  Linking,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Animated,
+    FlatList,
+    Linking,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from 'react-native';
+import { api } from '../../api/client';
 import { AddPlaceModal } from '../../components/AddPlaceModal';
-import { ReportModal } from '../../components/ReportModal';
 import { Circle, MapView, Marker, Polyline, PROVIDER_GOOGLE } from '../../components/MapWrapper';
+import { ReportModal } from '../../components/ReportModal';
 import { LAYOUT } from '../../constants/layout';
 import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
-import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useCategories } from '../../context/CategoryContext';
 import { Store, useStores } from '../../context/StoreContext';
 import { isInsideTulkarm, startGeofencing, TULKARM_REGION } from '../../utils/geofencing';
-import { shadow } from '../../utils/shadowStyles';
 import { getPlaceTypeDisplayName } from '../../utils/placeTypeLabels';
+import { shadow } from '../../utils/shadowStyles';
 
 function getCategoryStyle(categories: { name: string; emoji: string; color: string }[], name: string) {
   const c = categories.find((x) => x.name === name);
@@ -490,11 +490,12 @@ export default function MapScreen() {
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
 
+  /** عرض أولي: ×4 ثم ×2 إضافية (≈ تقريب 800% مقارنةً بـ 0.08 الأصلية) */
   const defaultRegion = useRef({
     latitude: TULKARM_REGION.latitude,
     longitude: TULKARM_REGION.longitude,
-    latitudeDelta: 0.08,
-    longitudeDelta: 0.08,
+    latitudeDelta: 0.01,
+    longitudeDelta: 0.01,
   }).current;
 
   // على الويب أحياناً ref/animateToRegion لا يحرك الخريطة كما نتوقع.
@@ -1410,8 +1411,8 @@ export default function MapScreen() {
             {inTulkarm === null
               ? 'جارٍ التحديد...'
               : inTulkarm
-              ? 'داخل طولكرم'
-              : 'خارج طولكرم'}
+              ? 'داخل المنطقة'
+              : 'خارج المنطقة'}
           </Text>
         </View>
 
