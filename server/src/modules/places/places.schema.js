@@ -3,7 +3,10 @@ import { z } from 'zod';
 const attributeSchema = z.object({
   key: z.string().min(1).max(100),
   value: z.string(),
-  value_type: z.enum(['string', 'number', 'boolean', 'json', 'date']).default('string'),
+  /** يتطابق مع الواجهة (مثلاً placeFormAttrDefs: phone) */
+  value_type: z
+    .enum(['string', 'number', 'boolean', 'json', 'date', 'phone', 'text'])
+    .default('string'),
 });
 
 export const createPlaceSchema = z.object({

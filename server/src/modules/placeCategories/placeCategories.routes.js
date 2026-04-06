@@ -11,9 +11,18 @@ function normalizeName(name) {
   return String(name || '').trim();
 }
 
-// GET /api/place-categories?parent_id=<uuid|null>
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function requirePlaceTypeId(raw) {
+  const id = String(raw || '').trim();
+  if (!id || !UUID_RE.test(id)) throw ApiError.badRequest('place_type_id مطلوب وصالح');
+  return id;
+}
+
+// GET /api/place-categories?place_type_id=<uuid>&parent_id=<uuid|null>
 router.get('/place-categories', async (req, res, next) => {
   try {
+    const placeTypeId = requirePlaceTypeId(req.query.place_type_id);
     const parentIdRaw = req.query.parent_id;
     const parentId =
       parentIdRaw === undefined || parentIdRaw === null || String(parentIdRaw).trim() === ''
@@ -22,12 +31,13 @@ router.get('/place-categories', async (req, res, next) => {
 
     const { rows } = await pool.query(
       `
-        SELECT id, name, emoji, color, sort_order, parent_id, created_at, updated_at
+        SELECT id, name, emoji, color, sort_order, parent_id, place_type_id, created_at, updated_at
         FROM place_categories
-        WHERE ($1::uuid IS NULL AND parent_id IS NULL) OR parent_id = $1
+        WHERE place_type_id = $1
+          AND (($2::uuid IS NULL AND parent_id IS NULL) OR parent_id = $2)
         ORDER BY sort_order, name
       `,
-      [parentId]
+      [placeTypeId, parentId]
     );
     return success(res, rows);
   } catch (err) {
@@ -35,15 +45,19 @@ router.get('/place-categories', async (req, res, next) => {
   }
 });
 
-// GET /api/place-categories/tree
-router.get('/place-categories/tree', async (_req, res, next) => {
+// GET /api/place-categories/tree?place_type_id=<uuid>
+router.get('/place-categories/tree', async (req, res, next) => {
   try {
+    const placeTypeId = requirePlaceTypeId(req.query.place_type_id);
+
     const { rows } = await pool.query(
       `
-        SELECT id, name, emoji, color, sort_order, parent_id
+        SELECT id, name, emoji, color, sort_order, parent_id, place_type_id
         FROM place_categories
+        WHERE place_type_id = $1
         ORDER BY parent_id NULLS FIRST, sort_order, name
-      `
+      `,
+      [placeTypeId]
     );
 
     const byId = new Map(rows.map((r) => [r.id, { ...r, children: [] }]));
@@ -66,6 +80,7 @@ router.get('/place-categories/tree', async (_req, res, next) => {
 // POST /api/place-categories (admin)
 router.post('/place-categories', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
+    const placeTypeId = requirePlaceTypeId(req.body?.place_type_id);
     const name = normalizeName(req.body?.name);
     const emoji = req.body?.emoji === undefined || req.body?.emoji === null ? null : String(req.body.emoji).trim() || null;
     const color = req.body?.color === undefined || req.body?.color === null ? null : String(req.body.color).trim() || null;
@@ -81,18 +96,28 @@ router.post('/place-categories', authenticate, requireRole('admin'), async (req,
     if (!name) throw ApiError.badRequest('اسم التصنيف مطلوب');
     if (!Number.isFinite(sortOrder)) throw ApiError.badRequest('ترتيب غير صالح');
 
+    // التحقق أن نوع المكان موجود
+    const { rows: typeRows } = await pool.query('SELECT id FROM place_types WHERE id = $1', [placeTypeId]);
+    if (!typeRows[0]) throw ApiError.notFound('نوع المكان غير موجود');
+
     if (parentId) {
-      const { rows: parent } = await pool.query('SELECT id FROM place_categories WHERE id = $1', [parentId]);
+      const { rows: parent } = await pool.query(
+        'SELECT id, place_type_id FROM place_categories WHERE id = $1',
+        [parentId]
+      );
       if (!parent[0]) throw ApiError.notFound('التصنيف الأب غير موجود');
+      if (parent[0].place_type_id !== placeTypeId) {
+        throw ApiError.badRequest('التصنيف الأب ينتمي لنوع مكان مختلف');
+      }
     }
 
     const { rows } = await pool.query(
       `
-        INSERT INTO place_categories (name, emoji, color, sort_order, parent_id)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO place_categories (name, emoji, color, sort_order, parent_id, place_type_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
       `,
-      [name, emoji, color, sortOrder, parentId]
+      [name, emoji, color, sortOrder, parentId, placeTypeId]
     );
     return success(res, rows[0], 201);
   } catch (err) {
@@ -182,4 +207,3 @@ router.delete('/place-categories/:id', authenticate, requireRole('admin'), async
 });
 
 export default router;
-

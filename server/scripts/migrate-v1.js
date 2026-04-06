@@ -9,6 +9,189 @@ const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
+async function migrateV2() {
+  // 1) رقم الهاتف مباشرة على places (كان في attributes فقط)
+  await pool.query(`
+    ALTER TABLE places ADD COLUMN IF NOT EXISTS phone_number VARCHAR(30);
+  `);
+
+  // 2) جدول المجمعات (سكني / تجاري)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS complexes (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      place_id     UUID NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+      complex_type VARCHAR(20) NOT NULL DEFAULT 'residential'
+                   CHECK (complex_type IN ('residential','commercial')),
+      floors_count   INTEGER NOT NULL DEFAULT 1,
+      units_per_floor INTEGER NOT NULL DEFAULT 1,
+      created_at   TIMESTAMPTZ DEFAULT now(),
+      updated_at   TIMESTAMPTZ DEFAULT now(),
+      CONSTRAINT complexes_place_unique UNIQUE (place_id)
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_complexes_place ON complexes(place_id);
+  `);
+
+  // 3) جدول وحدات المجمعات
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS complex_units (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      complex_id    UUID NOT NULL REFERENCES complexes(id) ON DELETE CASCADE,
+      floor_number  INTEGER NOT NULL,
+      unit_number   VARCHAR(20) NOT NULL,
+      child_place_id UUID REFERENCES places(id) ON DELETE SET NULL,
+      created_at    TIMESTAMPTZ DEFAULT now(),
+      CONSTRAINT complex_unit_unique UNIQUE (complex_id, floor_number, unit_number)
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_complex_units_complex ON complex_units(complex_id);
+    CREATE INDEX IF NOT EXISTS idx_complex_units_child ON complex_units(child_place_id)
+      WHERE child_place_id IS NOT NULL;
+  `);
+
+  // 4) إضافة store_owner لقائمة الأدوار المسموحة (تبقى owner للتوافق للخلف)
+  await pool.query(`
+    DO $$
+    BEGIN
+      ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+      ALTER TABLE users ADD CONSTRAINT users_role_check
+        CHECK (role IN ('admin','user','owner','store_owner'));
+    EXCEPTION WHEN others THEN NULL;
+    END $$;
+  `);
+
+  // 5) نقل بيانات الهاتف من store_details → places.phone_number (مرة واحدة)
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'store_details'
+          AND column_name = 'phone'
+      ) THEN
+        UPDATE places p
+        SET phone_number = sd.phone
+        FROM store_details sd
+        WHERE sd.place_id = p.id
+          AND p.phone_number IS NULL
+          AND sd.phone IS NOT NULL
+          AND sd.phone <> '';
+      END IF;
+    END $$;
+  `);
+
+  console.log('✅ migrate-v2 completed');
+}
+
+async function migrateV3() {
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`);
+
+  // شجرة تصنيفات الأماكن (main/sub/…)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS place_categories (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name       VARCHAR(150) NOT NULL,
+      emoji      VARCHAR(16),
+      color      VARCHAR(32),
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      parent_id  UUID REFERENCES place_categories(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now(),
+      CONSTRAINT place_categories_unique_name_per_parent UNIQUE (parent_id, name)
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_place_categories_parent ON place_categories(parent_id, sort_order);
+  `);
+
+  // ربط مكان بتصنيف (main/sub) — مع إبقاء attributes كـ fallback
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS place_category_links (
+      place_id    UUID PRIMARY KEY REFERENCES places(id) ON DELETE CASCADE,
+      main_category_id UUID REFERENCES place_categories(id) ON DELETE SET NULL,
+      sub_category_id  UUID REFERENCES place_categories(id) ON DELETE SET NULL,
+      created_at  TIMESTAMPTZ DEFAULT now(),
+      updated_at  TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_place_category_links_main ON place_category_links(main_category_id);
+    CREATE INDEX IF NOT EXISTS idx_place_category_links_sub ON place_category_links(sub_category_id);
+  `);
+
+  console.log('✅ migrate-v3 completed');
+}
+
+async function migrateV4() {
+  // ربط كل تصنيف مكان بنوع محدد من place_types
+  await pool.query(`
+    ALTER TABLE place_categories
+      ADD COLUMN IF NOT EXISTS place_type_id UUID REFERENCES place_types(id) ON DELETE CASCADE;
+  `);
+
+  // إسناد الصفوف الحالية (إن وُجدت) إلى «متجر تجاري» كنوع افتراضي
+  await pool.query(`
+    UPDATE place_categories
+    SET place_type_id = (SELECT id FROM place_types WHERE name = 'متجر تجاري' LIMIT 1)
+    WHERE place_type_id IS NULL;
+  `);
+
+  // الآن نضبط NOT NULL
+  await pool.query(`
+    DO $$
+    BEGIN
+      ALTER TABLE place_categories ALTER COLUMN place_type_id SET NOT NULL;
+    EXCEPTION WHEN others THEN NULL;
+    END $$;
+  `);
+
+  // استبدال القيد القديم بقيد يشمل place_type_id
+  await pool.query(`
+    ALTER TABLE place_categories DROP CONSTRAINT IF EXISTS place_categories_unique_name_per_parent;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      ALTER TABLE place_categories
+        ADD CONSTRAINT place_categories_unique_type_parent_name UNIQUE (place_type_id, parent_id, name);
+    EXCEPTION WHEN duplicate_table THEN NULL;
+    END $$;
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_place_categories_type ON place_categories(place_type_id, sort_order);
+  `);
+
+  console.log('✅ migrate-v4 completed');
+}
+
+async function migrateV5() {
+  // store_details.phone كان VARCHAR(20) بينما places.phone_number VARCHAR(30) —
+  // مزامنة syncStoreDetailsFromPlace تفشل برسالة "value too long" → 500.
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'store_details'
+          AND column_name = 'phone'
+      ) THEN
+        ALTER TABLE store_details ALTER COLUMN phone TYPE VARCHAR(30);
+      END IF;
+    END $$;
+  `);
+  console.log('✅ migrate-v5 completed');
+}
+
 async function initDb() {
   const sql = `
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -365,7 +548,27 @@ async function main() {
       console.error('DATABASE_URL missing in server/.env');
       process.exit(1);
     }
-    await initDb();
+
+    const modeRaw = process.argv[2]?.trim().toLowerCase();
+    const mode = modeRaw && modeRaw.length ? modeRaw : 'all';
+
+    if (mode === 'v2') {
+      await migrateV2();
+    } else if (mode === 'v3') {
+      await migrateV3();
+    } else if (mode === 'v4') {
+      await migrateV4();
+    } else if (mode === 'v5') {
+      await migrateV5();
+    } else if (mode === 'all') {
+      await initDb();
+      await migrateV2();
+      await migrateV3();
+      await migrateV4();
+      await migrateV5();
+    } else {
+      await initDb();
+    }
   } catch (err) {
     console.error(err);
     process.exit(1);

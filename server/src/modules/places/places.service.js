@@ -38,7 +38,9 @@ async function syncStoreDetailsFromPlace(placeId) {
   if (!row) return;
 
   // يعطي الأولوية لـ phone_number المباشر ثم attributes كـ fallback
-  const phone = row.phone_number || readPhoneFromAttributesJson(row.attributes);
+  const raw = row.phone_number || readPhoneFromAttributesJson(row.attributes);
+  // store_details.phone يجب أن يبقى متسقاً مع VARCHAR(30) مثل places.phone_number
+  const phone = raw != null && String(raw).trim() !== '' ? String(raw).trim().slice(0, 30) : null;
   await pool.query(
     `INSERT INTO store_details (place_id, phone) VALUES ($1, $2)
      ON CONFLICT (place_id) DO UPDATE SET phone = EXCLUDED.phone`,
@@ -72,6 +74,10 @@ export const placesService = {
 
     assertWithinTulkarmGovernorate(data.latitude, data.longitude);
 
+    // #region agent log
+    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H1',location:'places.service.js:create',message:'after_assert_region',data:{typeIdPresent:!!data.type_id,attrCount:data.attributes?.length??0,hasPhoneField:!!data.phone_number},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
     const place = await placesRepo.create({
       name: data.name,
       description: data.description,
@@ -87,6 +93,10 @@ export const placesService = {
       longitude: data.longitude,
     });
 
+    // #region agent log
+    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H1',location:'places.service.js:create',message:'after_place_and_location',data:{placeIdPrefix:String(place.id).slice(0,8)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
     if (data.attributes?.length) {
       for (const attr of data.attributes) {
         await placesRepo.upsertAttribute({
@@ -97,6 +107,10 @@ export const placesService = {
         });
       }
     }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H3',location:'places.service.js:create',message:'after_attributes_loop',data:{attrKeys:(data.attributes||[]).map((a)=>a.key)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     if (data.image_urls?.length) {
       for (let i = 0; i < data.image_urls.length; i++) {
@@ -152,6 +166,14 @@ export const placesService = {
     }
 
     await syncStoreDetailsFromPlace(place.id);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H2',location:'places.service.js:create',message:'after_sync_store_details',data:{ok:true},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+
+    // #region agent log
+    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H4',location:'places.service.js:create',message:'before_findById',data:{placeIdPrefix:String(place.id).slice(0,8)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     return placesRepo.findById(place.id);
   },
