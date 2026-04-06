@@ -1,8 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApiUrl } from './config';
 
-// ============ Token Management ============
-
 const TOKEN_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
 
@@ -70,8 +68,6 @@ async function refreshAccessToken(): Promise<string> {
     refreshQueue = [];
   }
 }
-
-// ============ HTTP Client ============
 
 function formatApiError(data: unknown, status: number): string {
   const d = data as Record<string, unknown>;
@@ -144,8 +140,6 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
   return data as T;
 }
 
-// ============ Response Types ============
-
 export interface ApiResponse<T> {
   success: boolean;
   data: T;
@@ -181,6 +175,25 @@ export interface PlaceData {
   images: { id: string; image_url: string; sort_order: number }[];
   created_at: string;
   created_by?: string;
+  // حقول جديدة — اختيارية للتوافق للخلف
+  phone_number?: string | null;
+  complex_kind?: 'residential' | 'commercial' | null;
+  floors_count?: number | null;
+  units_per_floor?: number | null;
+  main_category_id?: string | null;
+  sub_category_id?: string | null;
+}
+
+export interface PlaceCategory {
+  id: string;
+  name: string;
+  emoji?: string | null;
+  color?: string | null;
+  sort_order: number;
+  parent_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  children?: PlaceCategory[];
 }
 
 export interface PlaceType {
@@ -276,7 +289,6 @@ export interface AdminStats {
   places: number;
   placeTypes: number;
   pendingReports: number;
-  /** أماكن بانتظار الموافقة (طلبات المتاجر). */
   pendingPlaceRequests?: number;
 }
 
@@ -304,8 +316,6 @@ export interface AppSettings {
   welcome_message?: string;
 }
 
-// ============ Unified API ============
-
 function qs(params?: Record<string, string | number | undefined>): string {
   if (!params) return '';
   const filtered = Object.entries(params).filter(([, v]) => v !== undefined);
@@ -316,8 +326,6 @@ function qs(params?: Record<string, string | number | undefined>): string {
 }
 
 export const api = {
-
-  // ────── Auth ──────
 
   login: (email: string, password: string) =>
     request<ApiResponse<{ user: UserData; accessToken: string; refreshToken: string }>>(
@@ -343,12 +351,63 @@ export const api = {
   health: () =>
     request<{ ok: boolean; message?: string }>('/api/health'),
 
-  // ────── Place Types ──────
-
   getPlaceTypes: async () => {
+    const fetchOnce = () => request<ApiResponse<PlaceType[]>>('/api/place-types');
+    const sparseWaitsMs = [0, 500, 900, 1400];
+    let lastError: unknown = null;
+    let lastRes: ApiResponse<PlaceType[]> | null = null;
+
+    for (let i = 0; i < sparseWaitsMs.length; i++) {
+      if (sparseWaitsMs[i] > 0) {
+        await new Promise((r) => setTimeout(r, sparseWaitsMs[i]));
+      }
+      try {
+        const res = await fetchOnce();
+        const list = Array.isArray(res?.data) ? res.data : [];
+        lastRes = res;
+        if (list.length >= 15) {
+          return res;
+        }
+        if (list.length === 0 && i < sparseWaitsMs.length - 1) {
+          continue;
+        }
+        if (list.length > 0 && list.length < 15 && i < sparseWaitsMs.length - 1) {
+          continue;
+        }
+        return res;
+      } catch (e) {
+        lastError = e;
+        if (i < sparseWaitsMs.length - 1) {
+          continue;
+        }
+      }
+    }
+
+    const longSparseWaitsMs = [3000, 4500, 6000];
+    for (const waitMs of longSparseWaitsMs) {
+      if (lastRes && Array.isArray(lastRes.data)) {
+        const n = lastRes.data.length;
+        if (n > 0 && n < 15) {
+          await new Promise((r) => setTimeout(r, waitMs));
+          try {
+            const res = await fetchOnce();
+            const list = Array.isArray(res?.data) ? res.data : [];
+            lastRes = res;
+            if (list.length >= 15) {
+              return res;
+            }
+          } catch (e) {
+            lastError = e;
+          }
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
     try {
-      return await request<ApiResponse<PlaceType[]>>('/api/place-types');
-    } catch {
       const legacy = await request<any[]>('/api/categories');
       const normalized: PlaceType[] = (Array.isArray(legacy) ? legacy : []).map((c: any) => ({
         id: String(c.id),
@@ -358,6 +417,13 @@ export const api = {
         color: c.color ?? null,
       }));
       return { success: true, data: normalized };
+    } catch {
+      if (lastRes && Array.isArray(lastRes.data) && lastRes.data.length > 0) {
+        return lastRes;
+      }
+      throw lastError instanceof Error
+        ? lastError
+        : new Error(String(lastError ?? 'تعذّر جلب أنواع الأماكن'));
     }
   },
 
@@ -441,8 +507,6 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // ────── Product Categories (Main/Sub) ──────
-
   getProductMainCategories: () =>
     request<ApiResponse<ProductMainCategory[]>>('/api/product-categories'),
 
@@ -464,6 +528,52 @@ export const api = {
   getProductSubCategories: (mainCategoryId: string) =>
     request<ApiResponse<ProductSubCategory[]>>(`/api/product-categories/${mainCategoryId}/subcategories`),
 
+  // =========================
+  // Place categories (main/sub tree)
+  // =========================
+
+  getPlaceCategories: (parentId?: string | null) =>
+    request<ApiResponse<PlaceCategory[]>>(
+      parentId ? `/api/place-categories?parent_id=${encodeURIComponent(parentId)}` : '/api/place-categories'
+    ),
+
+  getPlaceCategoriesTree: () =>
+    request<ApiResponse<PlaceCategory[]>>('/api/place-categories/tree'),
+
+  createPlaceCategory: (data: { name: string; emoji?: string | null; color?: string | null; sort_order?: number; parent_id?: string | null }) =>
+    request<ApiResponse<PlaceCategory>>('/api/place-categories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updatePlaceCategory: (id: string, updates: Record<string, any>) =>
+    request<ApiResponse<PlaceCategory>>(`/api/place-categories/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    }),
+
+  deletePlaceCategory: (id: string) =>
+    request<ApiResponse<{ message: string }>>(`/api/place-categories/${id}`, { method: 'DELETE' }),
+
+  // =========================
+  // Complexes
+  // =========================
+
+  getComplex: (placeId: string) =>
+    request<ApiResponse<{ complex: any; units: any[] }>>(`/api/complexes/${placeId}`),
+
+  generateComplexUnits: (placeId: string, data: { floors_count: number; units_per_floor: number }) =>
+    request<ApiResponse<{ message: string; units: any[] }>>(`/api/complexes/${placeId}/generate-units`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  linkComplexUnitPlace: (unitId: string, childPlaceId: string | null) =>
+    request<ApiResponse<any>>(`/api/complex-units/${unitId}/link-place`, {
+      method: 'PATCH',
+      body: JSON.stringify({ child_place_id: childPlaceId }),
+    }),
+
   createProductSubCategory: (mainCategoryId: string, data: { name: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
     request<ApiResponse<ProductSubCategory>>(`/api/product-categories/${mainCategoryId}/subcategories`, {
       method: 'POST',
@@ -479,10 +589,26 @@ export const api = {
   deleteProductSubCategory: (id: string) =>
     request<ApiResponse<{ message: string }>>(`/api/product-subcategories/${id}`, { method: 'DELETE' }),
 
-  // ────── Places ──────
-
   getPlaces: (params?: Record<string, string | number | undefined>) =>
     request<PaginatedResponse<PlaceData>>(`/api/places${qs(params)}`),
+
+  /** يجمع كل الصفحات (حد السيرفر 500/صفحة) — للخريطة والنسخ الاحتياطي. */
+  getPlacesAll: async (params?: Record<string, string | number | undefined>): Promise<PlaceData[]> => {
+    const PAGE_LIMIT = 500;
+    const collected: PlaceData[] = [];
+    let page = 1;
+    let totalPages = 1;
+    const base = { ...params, limit: PAGE_LIMIT };
+    do {
+      const res = await request<PaginatedResponse<PlaceData>>(`/api/places${qs({ ...base, page })}`);
+      const batch = Array.isArray(res?.data) ? res.data : [];
+      if (batch.length === 0) break;
+      collected.push(...batch);
+      totalPages = Math.max(1, res.meta?.totalPages ?? 1);
+      page += 1;
+    } while (page <= totalPages);
+    return collected;
+  },
 
   getPlace: (id: string) =>
     request<ApiResponse<PlaceData>>(`/api/places/${id}`),
@@ -493,8 +619,14 @@ export const api = {
     type_id: string;
     latitude: number;
     longitude: number;
+    phone_number?: string;
     attributes?: { key: string; value: string; value_type?: string }[];
     image_urls?: string[];
+    complex_kind?: 'residential' | 'commercial';
+    floors_count?: number;
+    units_per_floor?: number;
+    main_category_id?: string;
+    sub_category_id?: string;
   }) =>
     request<ApiResponse<PlaceData>>('/api/places', {
       method: 'POST',
@@ -508,8 +640,14 @@ export const api = {
     type_id: string;
     latitude: number;
     longitude: number;
+    phone_number?: string;
     attributes?: { key: string; value: string; value_type?: string }[];
     image_urls?: string[];
+    complex_kind?: 'residential' | 'commercial';
+    floors_count?: number;
+    units_per_floor?: number;
+    main_category_id?: string;
+    sub_category_id?: string;
   }) =>
     request<ApiResponse<PlaceData>>('/api/places/from-admin', {
       method: 'POST',
@@ -534,15 +672,11 @@ export const api = {
   removePlaceImage: (placeId: string, imageId: string) =>
     request<ApiResponse<any>>(`/api/places/${placeId}/images/${imageId}`, { method: 'DELETE' }),
 
-  // ────── Upload ──────
-
   uploadBase64: (image: string) =>
     request<ApiResponse<{ url: string; public_id: string }>>('/api/upload/base64', {
       method: 'POST',
       body: JSON.stringify({ image }),
     }),
-
-  // ────── Ratings ──────
 
   createRating: (placeId: string, rating: number, comment?: string) =>
     request<ApiResponse<RatingData>>('/api/ratings', {
@@ -564,8 +698,6 @@ export const api = {
       `/api/places/${placeId}/ratings?page=${page}&limit=${limit}`
     ),
 
-  // ────── Store Services ──────
-
   getStoreServices: (storeId: string) =>
     request<ApiResponse<StoreService[]>>(`/api/stores/${storeId}/services`),
 
@@ -583,8 +715,6 @@ export const api = {
 
   deleteStoreService: (storeId: string, serviceId: string) =>
     request<ApiResponse<{ message: string }>>(`/api/stores/${storeId}/services/${serviceId}`, { method: 'DELETE' }),
-
-  // ────── Store Products ──────
 
   getStoreProducts: (storeId: string) =>
     request<ApiResponse<StoreProduct[]>>(`/api/stores/${storeId}/products`),
@@ -604,8 +734,6 @@ export const api = {
   deleteStoreProduct: (storeId: string, productId: string) =>
     request<ApiResponse<{ message: string }>>(`/api/stores/${storeId}/products/${productId}`, { method: 'DELETE' }),
 
-  // ────── Orders ──────
-
   createOrder: (data: { store_id: string; items: { product_id: string; quantity: number }[]; notes?: string }) =>
     request<ApiResponse<Order>>('/api/orders', {
       method: 'POST',
@@ -624,8 +752,6 @@ export const api = {
       body: JSON.stringify({ status }),
     }),
 
-  // ────── Users (admin) ──────
-
   getUsers: () =>
     request<ApiResponse<UserData[]>>('/api/users'),
 
@@ -637,8 +763,6 @@ export const api = {
 
   deleteUser: (id: string) =>
     request<ApiResponse<{ message: string }>>(`/api/users/${id}`, { method: 'DELETE' }),
-
-  // ────── Reports ──────
 
   getReports: () =>
     request<ApiResponse<Report[]>>('/api/reports'),
@@ -655,12 +779,8 @@ export const api = {
       body: JSON.stringify(updates),
     }),
 
-  // ────── Activity Log ──────
-
   getActivityLog: () =>
     request<ApiResponse<ActivityLogEntry[]>>('/api/activity-log'),
-
-  // ────── Settings ──────
 
   getSettings: () =>
     request<ApiResponse<AppSettings>>('/api/settings'),
@@ -671,12 +791,8 @@ export const api = {
       body: JSON.stringify(updates),
     }),
 
-  // ────── Admin ──────
-
   getAdminStats: () =>
     request<ApiResponse<AdminStats>>('/api/admin/stats'),
-
-  // ────── Store full / owner ──────
 
   getStoreFull: (storeId: string) =>
     request<ApiResponse<any>>(`/api/stores/${storeId}/full`),

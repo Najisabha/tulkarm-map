@@ -121,11 +121,10 @@ router.delete('/users/:id', authenticate, requireRole('admin'), async (req, res,
 router.get('/reports', authenticate, async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT r.id, r.store_id as place_id, r.reason, r.details, r.status, r.created_at,
-              COALESCE(p.name, s.name) as place_name
+      `SELECT r.id, r.place_id, r.reason, r.details, r.status, r.created_at,
+              p.name as place_name
        FROM reports r
-       LEFT JOIN places p ON r.store_id::text = p.id::text
-       LEFT JOIN stores s ON r.store_id::text = s.id::text
+       LEFT JOIN places p ON p.id = r.place_id AND p.deleted_at IS NULL
        ORDER BY r.created_at DESC`
     );
     return success(res, rows.map((r) => ({
@@ -145,12 +144,12 @@ router.post('/reports', authenticate, async (req, res, next) => {
     const { placeId, reason, details } = req.body;
     if (!placeId || !reason) throw ApiError.badRequest('معرف المكان والسبب مطلوبان');
     const { rows } = await pool.query(
-      'INSERT INTO reports (store_id, reason, details) VALUES ($1, $2, $3) RETURNING *',
+      'INSERT INTO reports (place_id, reason, details) VALUES ($1, $2, $3) RETURNING *',
       [placeId, reason, details || null]
     );
     const r = rows[0];
     return success(res, {
-      id: r.id, placeId: r.store_id, reason: r.reason,
+      id: r.id, placeId: r.place_id, reason: r.reason,
       details: r.details, status: r.status, createdAt: r.created_at,
     }, 201);
   } catch (err) { next(err); }
@@ -235,10 +234,12 @@ router.get('/admin/stats', authenticate, requireRole('admin'), async (_req, res,
         .catch(() => 0),
     ]);
 
-    let stores = 0;
-    try {
-      stores = parseInt((await pool.query('SELECT COUNT(*) FROM stores')).rows[0].count);
-    } catch { /* table might not exist yet */ }
+    const stores = parseInt(
+      (await pool.query(
+        `SELECT COUNT(*) FROM places
+         WHERE deleted_at IS NULL AND status = 'active' AND owner_id IS NOT NULL`
+      )).rows[0].count
+    );
 
     return success(res, {
       users,
@@ -265,19 +266,32 @@ router.get('/admin/stats', authenticate, requireRole('admin'), async (_req, res,
 router.get('/my-stores', authenticate, async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT s.id, s.name, s.description, c.name as category, s.latitude, s.longitude,
-              s.phone, s.photos, s.videos, s.created_at
-       FROM stores s JOIN categories c ON s.category_id = c.id
-       WHERE s.owner_id = $1
-       ORDER BY s.created_at DESC`,
+      `SELECT p.id, p.name, p.description, pt.name AS category,
+              pl.latitude, pl.longitude, sd.phone, p.created_at,
+              COALESCE(
+                (SELECT json_agg(m.url ORDER BY m.sort_order, m.created_at)
+                 FROM media m WHERE m.place_id = p.id AND m.type = 'image'),
+                '[]'::json
+              ) AS photos,
+              COALESCE(
+                (SELECT json_agg(m.url ORDER BY m.sort_order, m.created_at)
+                 FROM media m WHERE m.place_id = p.id AND m.type = 'video'),
+                '[]'::json
+              ) AS videos
+       FROM places p
+       LEFT JOIN place_types pt ON pt.id = p.type_id
+       LEFT JOIN place_locations pl ON pl.place_id = p.id
+       LEFT JOIN store_details sd ON sd.place_id = p.id
+       WHERE p.owner_id = $1 AND p.deleted_at IS NULL
+       ORDER BY p.created_at DESC`,
       [req.user.id]
     );
     return success(res, rows.map((r) => ({
       ...r,
-      latitude: parseFloat(r.latitude),
-      longitude: parseFloat(r.longitude),
-      photos: r.photos || [],
-      videos: r.videos || [],
+      latitude: r.latitude != null ? parseFloat(r.latitude) : null,
+      longitude: r.longitude != null ? parseFloat(r.longitude) : null,
+      photos: Array.isArray(r.photos) ? r.photos : [],
+      videos: Array.isArray(r.videos) ? r.videos : [],
     })));
   } catch (err) { next(err); }
 });
@@ -285,27 +299,48 @@ router.get('/my-stores', authenticate, async (req, res, next) => {
 router.get('/stores/:id/full', async (req, res, next) => {
   try {
     const { rows: storeRows } = await pool.query(
-      `SELECT s.*, c.name as category, c.emoji, c.color
-       FROM stores s JOIN categories c ON s.category_id = c.id
-       WHERE s.id = $1`,
+      `SELECT p.*, pt.name AS category, pt.emoji, pt.color,
+              pl.latitude, pl.longitude, sd.phone,
+              COALESCE(
+                (SELECT json_agg(m.url ORDER BY m.sort_order, m.created_at)
+                 FROM media m WHERE m.place_id = p.id AND m.type = 'image'),
+                '[]'::json
+              ) AS photos,
+              COALESCE(
+                (SELECT json_agg(m.url ORDER BY m.sort_order, m.created_at)
+                 FROM media m WHERE m.place_id = p.id AND m.type = 'video'),
+                '[]'::json
+              ) AS videos
+       FROM places p
+       LEFT JOIN place_types pt ON pt.id = p.type_id
+       LEFT JOIN place_locations pl ON pl.place_id = p.id
+       LEFT JOIN store_details sd ON sd.place_id = p.id
+       WHERE p.id = $1 AND p.deleted_at IS NULL`,
       [req.params.id]
     );
     if (!storeRows[0]) throw ApiError.notFound('المتجر غير موجود');
     const store = storeRows[0];
 
-    const { rows: services } = await pool.query(
-      'SELECT * FROM store_services WHERE store_id = $1 AND is_available = true ORDER BY sort_order, name',
+    const { rows: svcRows } = await pool.query(
+      `SELECT * FROM store_services
+       WHERE place_id = $1 AND is_available = true ORDER BY sort_order, name`,
       [req.params.id]
     );
-    const { rows: products } = await pool.query(
-      'SELECT * FROM store_products WHERE store_id = $1 AND is_available = true ORDER BY sort_order, name',
+    const { rows: prodRows } = await pool.query(
+      `SELECT * FROM products
+       WHERE place_id = $1 AND is_available = true ORDER BY sort_order, name`,
       [req.params.id]
     );
 
+    const services = svcRows.map((r) => ({ ...r, store_id: r.place_id }));
+    const products = prodRows.map((r) => ({ ...r, store_id: r.place_id }));
+
     return success(res, {
       ...store,
-      latitude: parseFloat(store.latitude),
-      longitude: parseFloat(store.longitude),
+      latitude: store.latitude != null ? parseFloat(store.latitude) : null,
+      longitude: store.longitude != null ? parseFloat(store.longitude) : null,
+      photos: Array.isArray(store.photos) ? store.photos : [],
+      videos: Array.isArray(store.videos) ? store.videos : [],
       services,
       products,
     });
@@ -315,6 +350,11 @@ router.get('/stores/:id/full', async (req, res, next) => {
 router.patch('/stores/:id/owner', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
     const { owner_id } = req.body;
+    const { rows: placeRows } = await pool.query(
+      'SELECT id FROM places WHERE id = $1 AND deleted_at IS NULL',
+      [req.params.id]
+    );
+    if (!placeRows[0]) throw ApiError.notFound('المتجر غير موجود');
     if (owner_id) {
       const { rows: userRows } = await pool.query(
         'SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL',
@@ -323,8 +363,11 @@ router.patch('/stores/:id/owner', authenticate, requireRole('admin'), async (req
       if (!userRows[0]) throw ApiError.notFound('المستخدم غير موجود');
       await pool.query('UPDATE users SET role = $1 WHERE id = $2', ['owner', owner_id]);
     }
-    await pool.query('UPDATE stores SET owner_id = $1 WHERE id = $2', [owner_id || null, req.params.id]);
-    logActivity('assign_owner', 'store', req.params.id, { owner_id });
+    await pool.query(
+      'UPDATE places SET owner_id = $1, updated_at = now() WHERE id = $2 AND deleted_at IS NULL',
+      [owner_id || null, req.params.id]
+    );
+    logActivity('assign_owner', 'place', req.params.id, { owner_id });
     return success(res, { message: 'تم تعيين صاحب المتجر' });
   } catch (err) { next(err); }
 });

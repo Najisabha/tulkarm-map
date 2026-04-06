@@ -1,6 +1,6 @@
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Alert,
     Animated,
@@ -21,16 +21,63 @@ import { Circle, MapView, Marker, Polyline, PROVIDER_GOOGLE } from '../../compon
 import { ReportModal } from '../../components/ReportModal';
 import { LAYOUT } from '../../constants/layout';
 import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
-import { useAuth } from '../../context/AuthContext';
 import { useCategories } from '../../context/CategoryContext';
-import { Store, useStores } from '../../context/StoreContext';
+import { useAuthStore } from '../../stores/useAuthStore';
+import { usePlacesStore } from '../../stores/usePlacesStore';
+import type { Place } from '../../types/place';
 import { isInsideTulkarm, startGeofencing, TULKARM_REGION } from '../../utils/geofencing';
-import { getPlaceTypeDisplayName } from '../../utils/placeTypeLabels';
+import {
+  CANONICAL_PLACE_TYPE_NAMES,
+  getPlaceTypeDisplayName,
+  resolveCanonicalPlaceTypeKey,
+} from '../../utils/placeTypeLabels';
 import { shadow } from '../../utils/shadowStyles';
 
 function getCategoryStyle(categories: { name: string; emoji: string; color: string }[], name: string) {
   const c = categories.find((x) => x.name === name);
   return { emoji: c?.emoji ?? '📍', color: c?.color ?? '#2E86AB' };
+}
+
+// Keep the legacy \"Store\" shape that this screen expects, but source data from Domain Place.
+export interface Store {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  type_name?: string;
+  type_id?: string;
+  latitude: number;
+  longitude: number;
+  phone?: string;
+  photos?: string[];
+  videos?: string[];
+  status?: string;
+  avg_rating?: string;
+  rating_count?: number;
+  attributes?: { key: string; value: string; value_type: string }[];
+  images?: { id: string; image_url: string; sort_order: number }[];
+  createdAt: string;
+}
+
+function placeToStore(p: Place): Store {
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description || '',
+    category: p.typeName,
+    type_name: p.typeName,
+    type_id: p.typeId,
+    latitude: p.location.latitude,
+    longitude: p.location.longitude,
+    phone: p.phoneNumber || undefined,
+    photos: p.images?.map((img) => img.url) || [],
+    status: p.status,
+    avg_rating: String(p.avgRating ?? '0'),
+    rating_count: p.ratingCount ?? 0,
+    attributes: p.attributes?.map((a) => ({ key: a.key, value: a.value, value_type: a.valueType })),
+    images: p.images?.map((img) => ({ id: img.id, image_url: img.url, sort_order: img.sortOrder })) || [],
+    createdAt: p.createdAt,
+  };
 }
 
 async function uriToBase64(uri: string): Promise<string> {
@@ -54,10 +101,6 @@ interface UserLocation {
 
 type TravelMode = 'walking' | 'bicycling' | 'driving';
 
-// UI requirement wants 4 options: مشي/بسكليت/دراجة/سيارة.
-// Google Directions supports walking/bicycling/driving only, so we map:
-// - بسكليت -> bicycling
-// - دراجة -> bicycling (same API mode; different ETA estimate shown below)
 type TravelChoice = 'walking' | 'bike1' | 'bike2' | 'driving';
 
 function haversineDistance(
@@ -81,7 +124,6 @@ function formatDistance(meters: number): string {
 }
 
 function formatRemainingMeters(meters: number): string {
-  // requirement: show remaining distance in meters
   return `${Math.max(0, Math.round(meters))} م`;
 }
 
@@ -480,17 +522,13 @@ function StoreDetailSheet({
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function MapScreen() {
-  const { user, logout } = useAuth();
+  const { user, logout, init } = useAuthStore();
   const { categories: categoryList } = useCategories();
-  const { stores: allStores, deleteStore, refreshStores } = useStores();
-  /** يظهر على الخريطة فقط ما وافق عليه المدير — لا pending ولا rejected ولا صفوف بلا status صريح */
-  const stores = allStores.filter(
-    (s) => String(s.status || '').toLowerCase() === 'active'
-  );
+  const { places, deletePlace, refresh, loadAll } = usePlacesStore();
+  const stores = useMemo(() => places.map(placeToStore).filter((s) => String(s.status || '').toLowerCase() === 'active'), [places]);
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
 
-  /** عرض أولي: ×4 ثم ×2 إضافية (≈ تقريب 800% مقارنةً بـ 0.08 الأصلية) */
   const defaultRegion = useRef({
     latitude: TULKARM_REGION.latitude,
     longitude: TULKARM_REGION.longitude,
@@ -498,8 +536,6 @@ export default function MapScreen() {
     longitudeDelta: 0.01,
   }).current;
 
-  // على الويب أحياناً ref/animateToRegion لا يحرك الخريطة كما نتوقع.
-  // لذلك نستخدم state لتغيير initialRegion أيضاً لضمان عمل الزر على Leaflet/Google web.
   const [mapRegionOverride, setMapRegionOverride] = useState<{
     latitude: number;
     longitude: number;
@@ -520,7 +556,6 @@ export default function MapScreen() {
   const [routeDestination, setRouteDestination] = useState<{ latitude: number; longitude: number } | null>(null);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(null);
   const [isRouting, setIsRouting] = useState(false);
-  // Travel wizard (3 steps): store page -> choose mode -> preview & confirm/cancel
   const [travelStep, setTravelStep] = useState<1 | 2 | 3>(1);
   const [travelChoice, setTravelChoice] = useState<TravelChoice | null>(null);
   const [travelPreviewLoading, setTravelPreviewLoading] = useState(false);
@@ -531,8 +566,28 @@ export default function MapScreen() {
   const bannerAnim = useRef(new Animated.Value(-100)).current;
   const [bannerMessage, setBannerMessage] = useState('');
 
-  // unique categories that have stores
-  const categories = Array.from(new Set(stores.map((s) => s.category)));
+  const categories = useMemo(() => {
+    const names = new Set<string>();
+    for (const c of categoryList) {
+      if (c?.name?.trim()) names.add(c.name.trim());
+    }
+    for (const s of stores) {
+      if (s?.category?.trim()) names.add(s.category.trim());
+    }
+    const list = [...names];
+    const rank = (name: string) => {
+      const key = resolveCanonicalPlaceTypeKey(name);
+      if (!key) return 1000;
+      const idx = (CANONICAL_PLACE_TYPE_NAMES as readonly string[]).indexOf(key);
+      return idx >= 0 ? idx : 999;
+    };
+    list.sort((a, b) => {
+      const d = rank(a) - rank(b);
+      if (d !== 0) return d;
+      return a.localeCompare(b, 'ar');
+    });
+    return list;
+  }, [categoryList, stores]);
 
   const placeSearchQ = placeSearchQuery.trim().toLowerCase();
   const placeSearchResults = !placeSearchQ
@@ -563,7 +618,16 @@ export default function MapScreen() {
     setupLocation();
   }, []);
 
-  // Reset the travel wizard whenever a new store is opened.
+  // Ensure Zustand auth state is hydrated (login/register may happen via AuthContext screens).
+  useEffect(() => {
+    void init();
+  }, []);
+
+  // Load places into Zustand (and refresh when role changes).
+  useEffect(() => {
+    void loadAll(user?.role === 'admin' || user?.isAdmin === true);
+  }, [user?.role, user?.isAdmin]);
+
   useEffect(() => {
     if (!selectedStore) return;
     setTravelStep(1);
@@ -571,7 +635,6 @@ export default function MapScreen() {
     setTravelPreviewLoading(false);
   }, [selectedStore?.id]);
 
-  // Update remaining meters while the user's location changes.
   useEffect(() => {
     if (!routeDestination || !userLocation || !routeInfo) return;
     const remainingMeters = haversineDistance(
@@ -659,9 +722,7 @@ export default function MapScreen() {
             setUserLocation(next);
             setInTulkarm(isInsideTulkarm(next.latitude, next.longitude));
 
-            // ثم جرّب التقريب باستخدام الإحداثيات الجديدة مباشرة.
-            const diameterMeters = radiusMeters * 2;
-            const PADDING_FACTOR = 6;
+                  const PADDING_FACTOR = 6;
             const viewportHalfSpanMeters = radiusMeters * PADDING_FACTOR;
 
             const metersPerDegLat = 111_320;
@@ -692,13 +753,7 @@ export default function MapScreen() {
       return;
     }
 
-    // MapView region deltas are in degrees.
-    // latitude: ~111,320 meters per degree
-    // longitude: ~111,320 * cos(latitude) meters per degree
-    //
-    // لاحظ أن `region` يحدد "عرض الشاشة" (view span) وليس دائرة نصف قطرها 5م فقط،
-    // لذا نستخدم عامل Padding لضمان ظهور معالم قريبة حولك بشكل مريح.
-    const PADDING_FACTOR = 6; // نصف قطر العرض = radiusMeters * 6
+    const PADDING_FACTOR = 6;
     const viewportHalfSpanMeters = radiusMeters * PADDING_FACTOR;
 
     const metersPerDegLat = 111_320;
@@ -710,7 +765,6 @@ export default function MapScreen() {
     const nextRegion = {
       latitude: userLocation.latitude,
       longitude: userLocation.longitude,
-      // Ensure we don't zoom too aggressively due to tiny/rounded values.
       latitudeDelta: Math.max(latDelta, 0.00005),
       longitudeDelta: Math.max(lonDelta, 0.00005),
     };
@@ -719,7 +773,7 @@ export default function MapScreen() {
     mapRef.current?.animateToRegion(nextRegion, 800);
   };
 
-  const NEAR_STORE_METERS = 2; // الحد الأدنى بين المتاجر:2 أمتار
+  const NEAR_STORE_METERS = 2;
 
   const handleMapPress = useCallback(
     (e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) => {
@@ -745,7 +799,6 @@ export default function MapScreen() {
   const handleCategoryPress = useCallback(
     (cat: string) => {
       setSelectedCategory(cat);
-      // highlight markers on map — zoom to category area
       const catStores = stores.filter((s) => s.category === cat);
       if (catStores.length > 0 && mapRef.current) {
         const lats = catStores.map((s) => s.latitude);
@@ -776,7 +829,6 @@ export default function MapScreen() {
   const choiceToApiMode = (choice: TravelChoice): TravelMode => {
     if (choice === 'walking') return 'walking';
     if (choice === 'driving') return 'driving';
-    // both bike options map to the same Directions API mode
     return 'bicycling';
   };
 
@@ -785,9 +837,9 @@ export default function MapScreen() {
       case 'walking':
         return 80;
       case 'bike1':
-        return 170; // basqueleet (slower bike)
+        return 170;
       case 'bike2':
-        return 220; // daraaja (faster bike)
+        return 220;
       case 'driving':
         return 450;
     }
@@ -830,7 +882,7 @@ export default function MapScreen() {
         }
       }
     } catch {
-      // fallback to straight line
+      // straight line fallback
     }
     setRoutePath([origin, destination]);
     const dist = haversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude);
@@ -1030,12 +1082,9 @@ export default function MapScreen() {
   const handleOpenTravelModePicker = () => {
     if (!selectedStore || isRouting) return;
 
-    // Step 1 -> Step 2 (show mode picker)
     setTravelStep(2);
     setTravelChoice(null);
     setTravelPreviewLoading(false);
-
-    // Clear any previous preview line/info.
     setRoutePath(null);
     setRouteDestination(null);
     setRouteInfo(null);
@@ -1059,7 +1108,6 @@ export default function MapScreen() {
   };
 
   const confirmTravel = () => {
-    // Keep the computed route on the map, and hide the travel UI.
     setIsRouting(true);
     setShowSidebar(false);
     setSelectedCategory(null);
@@ -1603,11 +1651,12 @@ export default function MapScreen() {
               type_id: data.type_id.trim(),
               latitude: Number(data.latitude),
               longitude: Number(data.longitude),
+              phone_number: data.phoneNumber?.trim() || undefined,
               attributes: attributes.length ? attributes : undefined,
               image_urls: imageUrls.length ? imageUrls : undefined,
             });
 
-            await refreshStores();
+            await refresh();
           }}
           latitude={addPlaceCoord.latitude}
           longitude={addPlaceCoord.longitude}
@@ -1768,9 +1817,14 @@ export default function MapScreen() {
                 );
               })}
             </ScrollView>
-            {(user?.role === 'owner' || user?.isAdmin) && (
+            {(user?.role === 'owner' || user?.role === 'store_owner' || user?.isAdmin) && (
+              <TouchableOpacity style={styles.sidebarOwnerBtn} onPress={() => { setShowSidebar(false); router.push('/(main)/my-store'); }}>
+                <Text style={styles.sidebarOwnerBtnText}>🏪 متجري</Text>
+              </TouchableOpacity>
+            )}
+            {(user?.role === 'owner' || user?.role === 'store_owner' || user?.isAdmin) && (
               <TouchableOpacity style={styles.sidebarOwnerBtn} onPress={() => { setShowSidebar(false); router.push('/(main)/owner-dashboard'); }}>
-                <Text style={styles.sidebarOwnerBtnText}>🏪 لوحة تحكم المتجر</Text>
+                <Text style={styles.sidebarOwnerBtnText}>📊 لوحة تحكم المتجر</Text>
               </TouchableOpacity>
             )}
             {user?.isAdmin && (
@@ -1808,7 +1862,7 @@ export default function MapScreen() {
             });
           }}
           onDelete={async () => {
-            await deleteStore(selectedStore.id);
+            await deletePlace(selectedStore.id);
             setSelectedStore(null);
             setTravelStep(1);
             setTravelChoice(null);
@@ -1902,7 +1956,6 @@ const styles = StyleSheet.create({
   },
   markerEmoji: { fontSize: 18 },
 
-  // ── Category Bar ──
   categoryBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#fff',
@@ -1927,7 +1980,6 @@ const styles = StyleSheet.create({
   categoryChipBadgeActive: { backgroundColor: 'rgba(255,255,255,0.3)' },
   categoryChipBadgeText: { fontSize: 12, fontWeight: '700' },
 
-  // ── Overlay scaffold: works on web + mobile without Modal ──
   overlayContainer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 200,
@@ -1937,10 +1989,6 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.35)',
     zIndex: 0,
-  },
-  // ── Category Bottom Sheet ──
-  sheetOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.3)',
   },
   tapOptionsSheet: {
     backgroundColor: '#fff',
@@ -2033,11 +2081,6 @@ const styles = StyleSheet.create({
   catStorePhone: { fontSize: 12, color: '#4A7FA5', marginTop: 3 },
   catStoreEmoji: { fontSize: 26, marginLeft: 14 },
 
-  // Sidebar
-  overlay: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
   sidebar: {
     position: 'absolute',
     right: 0, top: 0, bottom: 0,
@@ -2093,7 +2136,6 @@ const styles = StyleSheet.create({
   },
   logoutBtnText: { color: '#EF4444', fontWeight: '700', fontSize: 15 },
 
-  // Route Banner
   routeBanner: {
     position: 'absolute',
     top: LAYOUT.headerTop + 56,
@@ -2124,8 +2166,6 @@ const styles = StyleSheet.create({
   },
   routeBannerCloseText: { color: '#DC2626', fontSize: 13, fontWeight: '700' },
 
-  // Store Detail
-  storeModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   storeModal: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 28,
@@ -2203,7 +2243,6 @@ const styles = StyleSheet.create({
   },
   storeModalPhoneIcon: { fontSize: 18 },
   storeModalPhoneText: { fontSize: 15, fontWeight: '700', color: '#2E86AB' },
-  // Action buttons row
   storeModalBtnRow: {
     flexDirection: 'row-reverse',
     gap: 10,
@@ -2251,7 +2290,6 @@ const styles = StyleSheet.create({
   storeModalNavigateBtnSub: {
     color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '600', marginTop: 2,
   },
-  // ── Travel Wizard (Step 2/3) ──
   travelModeBody: { padding: 20, paddingTop: 6, alignItems: 'stretch', gap: 14 },
   travelModeTitle: { fontSize: 18, fontWeight: '900', color: '#1A3A5C', textAlign: 'right' },
   travelModeSubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'right', marginTop: -8 },
@@ -2309,7 +2347,6 @@ const styles = StyleSheet.create({
   },
   storeModalReportBtnText: { color: '#B45309', fontSize: 13, fontWeight: '600' },
 
-  // Admin row
   storeModalAdminRow: {
     flexDirection: 'row', gap: 10, alignSelf: 'stretch', marginTop: 8,
   },
@@ -2324,7 +2361,6 @@ const styles = StyleSheet.create({
   },
   storeModalDeleteBtnText: { color: '#DC2626', fontSize: 13, fontWeight: '700' },
 
-  // Services Modal
   servicesModal: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 28,
@@ -2391,7 +2427,6 @@ const styles = StyleSheet.create({
   },
   cartBtnText: { color: '#2E86AB', fontWeight: '700', fontSize: 15 },
 
-  // ── Place Search ─────────────────────────────────────────────────────────
   placeSearchWrap: {
     position: 'absolute',
     top: LAYOUT.headerTop + 62,

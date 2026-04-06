@@ -4,6 +4,7 @@ export const createPlaceTypeSchema = z.object({
   name: z.string().min(1).max(100),
   emoji: z.string().max(32).optional().nullable(),
   color: z.string().max(32).optional().nullable(),
+  sort_order: z.coerce.number().int().optional().nullable(),
 });
 
 export const updatePlaceTypeSchema = z
@@ -11,10 +12,16 @@ export const updatePlaceTypeSchema = z
     name: z.string().min(1).max(100).optional(),
     emoji: z.string().max(32).optional().nullable(),
     color: z.string().max(32).optional().nullable(),
+    sort_order: z.coerce.number().int().optional().nullable(),
   })
-  .refine((d) => d.name !== undefined || d.emoji !== undefined || d.color !== undefined, {
-    message: 'أدخل حقلًا واحدًا على الأقل للتحديث',
-  });
+  .refine(
+    (d) =>
+      d.name !== undefined ||
+      d.emoji !== undefined ||
+      d.color !== undefined ||
+      d.sort_order !== undefined,
+    { message: 'أدخل حقلًا واحدًا على الأقل للتحديث' }
+  );
 
 export const createAttributeDefSchema = z.object({
   key: z.string().min(1).max(100),

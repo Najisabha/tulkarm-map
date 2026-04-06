@@ -1,30 +1,42 @@
-import * as ImagePicker from 'expo-image-picker';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
+  Dimensions,
   Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { api, PlaceType } from '../api/client';
 import { shadow } from '../utils/shadowStyles';
 import {
+  CANONICAL_PLACE_TYPE_NAMES,
   getPlaceTypeDisplayName,
   getPlaceTypePluralLabel,
+  getPlaceTypeProductCategoryFieldLabels,
   normalizePlaceTypeKind,
-  type PlaceTypeKind,
+  resolveCanonicalPlaceTypeKey,
+  usesProductCategoryFieldsForPlaceType,
 } from '../utils/placeTypeLabels';
 import { isInsideTulkarm } from '../utils/tulkarmGovernorate';
+import { validatePlaceForm } from '../utils/placeFormValidation';
+import { PlaceKind } from '../types/place';
+import { ErrorBanner } from './places/ErrorBanner';
+import { CategoryItem } from './places/CategorySelector';
+import { PlaceForm, PlaceFormState } from './places/PlaceForm';
 
 const MAX_PHOTOS = 3;
+
+const TYPE_PICKER_MAX_H = Math.min(Dimensions.get('window').height * 0.62, 520);
+const TYPE_GRID_H_PAD = 16;
+const TYPE_GRID_GAP = 12;
+const TYPE_CARD_WIDTH =
+  (Dimensions.get('window').width - TYPE_GRID_H_PAD * 2 - TYPE_GRID_GAP) / 2;
 
 interface AttributeDefinition {
   id: string;
@@ -55,16 +67,16 @@ interface AddPlaceModalProps {
     photos?: string[];
     videos?: string[];
     dynamicAttributes?: { key: string; value: string; value_type?: string }[];
+    phoneNumber?: string;
   }) => Promise<void>;
   latitude: number;
   longitude: number;
-  /** If set, shown instead of the default “تم إضافة المكان” (e.g. pending approval copy). */
   submitSuccessTitle?: string;
   submitSuccessMessage?: string;
 }
 
-const DEFAULT_SUCCESS_TITLE = '\u2705 \u062A\u0645';
-const DEFAULT_SUCCESS_MESSAGE = '\u062A\u0645 \u0625\u0636\u0627\u0641\u0629 \u0627\u0644\u0645\u0643\u0627\u0646 \u0628\u0646\u062C\u0627\u062D';
+const DEFAULT_SUCCESS_TITLE = '✅ تم';
+const DEFAULT_SUCCESS_MESSAGE = 'تم إضافة المكان بنجاح';
 
 export function AddPlaceModal({
   visible,
@@ -80,61 +92,78 @@ export function AddPlaceModal({
   const [loadingTypes, setLoadingTypes] = useState(true);
   const [selectedType, setSelectedType] = useState<PlaceTypeUI | null>(null);
   const [attrDefs, setAttrDefs] = useState<AttributeDefinition[]>([]);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [dynamicValues, setDynamicValues] = useState<Record<string, string>>({});
-  const [productMainCategories, setProductMainCategories] = useState<{ id: string; name: string; emoji?: string | null; arrow_color?: string | null }[]>([]);
-  const [productSubCategories, setProductSubCategories] = useState<{ id: string; name: string; emoji?: string | null; arrow_color?: string | null }[]>([]);
-  const [selectedMainCategoryColor, setSelectedMainCategoryColor] = useState<string>('#2E86AB');
+  const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // حالة النموذج موحّدة
+  const [formState, setFormState] = useState<PlaceFormState>({
+    name: '',
+    description: '',
+    phoneNumber: '',
+    dynamicValues: {},
+    photos: [],
+  });
+
+  // حالة التصنيفات
+  const [mainCategories, setMainCategories] = useState<CategoryItem[]>([]);
+  const [subCategories, setSubCategories] = useState<CategoryItem[]>([]);
+  const [selectedMainCategoryColor, setSelectedMainCategoryColor] = useState('#2E86AB');
   const [showMainCategoryList, setShowMainCategoryList] = useState(false);
   const [showSubCategoryList, setShowSubCategoryList] = useState(false);
   const [loadingProductCategories, setLoadingProductCategories] = useState(false);
-  const [photos, setPhotos] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  const selectedTypeSingularLabel = selectedType ? getPlaceTypeDisplayName(selectedType.name) : 'مكان';
+  const selectedTypeSingularLabel = selectedType
+    ? getPlaceTypeDisplayName(selectedType.name)
+    : 'مكان';
+  const productCategoryFormLabels = selectedType
+    ? getPlaceTypeProductCategoryFieldLabels(selectedType.name)
+    : null;
+  const placeKind: PlaceKind = selectedType
+    ? (() => {
+        const k = normalizePlaceTypeKind(selectedType.name);
+        if (k === 'house') return 'house';
+        if (k === 'store' || usesProductCategoryFieldsForPlaceType(selectedType.name)) return 'categorized';
+        if (k === 'residentialComplex' || k === 'commercialComplex') return 'complex';
+        return 'simple';
+      })()
+    : 'simple';
+
+  const showPhotos =
+    selectedTypeSingularLabel === 'منزل' ||
+    selectedTypeSingularLabel === 'متجر تجاري' ||
+    !!productCategoryFormLabels;
+
+  const photoLabel = selectedTypeSingularLabel === 'منزل'
+    ? 'صور المنزل'
+    : selectedTypeSingularLabel === 'متجر تجاري'
+      ? 'صور المتجر'
+      : productCategoryFormLabels?.photos ?? 'صور المكان';
+
+  // ─── تحميل الأنواع ───────────────────────────────────────────────────────────
 
   const loadPlaceTypes = async () => {
     setLoadingTypes(true);
     try {
       const res = await api.getPlaceTypes();
       const apiTypes: PlaceType[] = res.data || [];
-
-      // توحيد عرض الخيارات وإزالة التكرار:
-      // أحياناً يحصل fallback لـ `/api/categories` وتطلع أنواع إضافية/مكررة
-      // بنفس “اللايبل” (مثل عدة عناصر تنطبع كلها كـ "أخرى").
-      // المطلوب دائماً: منزل، متجر تجاري، مجمع تجاري، مجمع سكني، أخرى (كل نوع مرة واحدة فقط).
-      const canonicalNameByKind: Record<PlaceTypeKind, string> = {
-        house: 'منزل',
-        store: 'متجر تجاري',
-        commercialComplex: 'مجمّع تجاري',
-        residentialComplex: 'مجمّع سكني',
-        other: 'أخرى',
-      };
-
-      const kindOrder: PlaceTypeKind[] = ['house', 'store', 'commercialComplex', 'residentialComplex', 'other'];
-
-      const byKind: Partial<Record<PlaceTypeKind, PlaceTypeUI>> = {};
-
+      const seen = new Set<string>();
+      const list: PlaceTypeUI[] = [];
       for (const t of apiTypes) {
-        const kind = normalizePlaceTypeKind(t.name);
-        const ui: PlaceTypeUI = {
-          id: t.id,
-          name: t.name,
-          emoji: t.emoji || '\u{1F4CD}',
-          color: t.color || '#2E86AB',
-        };
-
-        const existing = byKind[kind];
-        const canonicalName = canonicalNameByKind[kind];
-
-        // إذا فيه أكثر من نوع ينمط لنفس الـkind، نُفضّل الـentry المطابقة للاسم الكنسي (إن وجد).
-        if (!existing || ui.name === canonicalName) {
-          byKind[kind] = ui;
-        }
+        if (seen.has(t.name)) continue;
+        seen.add(t.name);
+        list.push({ id: t.id, name: t.name, emoji: t.emoji || '📍', color: t.color || '#2E86AB' });
       }
-
-      setPlaceTypes(kindOrder.map((k) => byKind[k]).filter(Boolean) as PlaceTypeUI[]);
+      const sortRank = (name: string) => {
+        const key = resolveCanonicalPlaceTypeKey(name);
+        if (!key) return 1000;
+        const idx = (CANONICAL_PLACE_TYPE_NAMES as readonly string[]).indexOf(key);
+        return idx >= 0 ? idx : 999;
+      };
+      list.sort((a, b) => {
+        const d = sortRank(a.name) - sortRank(b.name);
+        return d !== 0 ? d : a.name.localeCompare(b.name, 'ar');
+      });
+      setPlaceTypes(list);
     } catch {
       setPlaceTypes([]);
     } finally {
@@ -143,51 +172,40 @@ export function AddPlaceModal({
   };
 
   const getFixedAttrDefsForType = (typeName: string): AttributeDefinition[] => {
-    const kind = normalizePlaceTypeKind(typeName);
-    const uid = (s: string) => `fixed-${kind}-${s}`;
+    const trimmedName = typeName?.trim() ?? '';
+    const kind = normalizePlaceTypeKind(trimmedName);
+    const uid = (s: string) => `fixed-${trimmedName.replace(/\s+/g, '_')}-${s}`;
+
+    const productFieldLabels = getPlaceTypeProductCategoryFieldLabels(trimmedName);
+    if (productFieldLabels) {
+      return [
+        { id: uid('store_type'), key: 'store_type', label: productFieldLabels.main, value_type: 'string', is_required: true },
+        { id: uid('store_category'), key: 'store_category', label: productFieldLabels.sub, value_type: 'string', is_required: true },
+        { id: uid('store_number'), key: 'store_number', label: productFieldLabels.number, value_type: 'string', is_required: true },
+      ];
+    }
 
     switch (kind) {
       case 'house':
-        return [
-          { id: uid('house_number'), key: 'house_number', label: 'رقم المنزل', value_type: 'string', is_required: true },
-        ];
+        return [{ id: uid('house_number'), key: 'house_number', label: 'رقم المنزل', value_type: 'string', is_required: true }];
       case 'store':
         return [
-          { id: uid('store_type'), key: 'store_type', label: 'التصنيف الرئيسي للمتجر', value_type: 'string', is_required: true },
-          { id: uid('store_category'), key: 'store_category', label: 'التصنيف الفرعي للمتجر', value_type: 'string', is_required: true },
+          { id: uid('store_type'), key: 'store_type', label: 'التصنيف الرئيسي\u200c للمتجر', value_type: 'string', is_required: true },
+          { id: uid('store_category'), key: 'store_category', label: 'التصنيف الفرعي\u200c للمتجر', value_type: 'string', is_required: true },
           { id: uid('store_number'), key: 'store_number', label: 'رقم المتجر', value_type: 'string', is_required: true },
         ];
       case 'residentialComplex':
         return [
           { id: uid('complex_number'), key: 'complex_number', label: 'رقم المجمع', value_type: 'string', is_required: true },
           { id: uid('location_text'), key: 'location_text', label: 'مكان المجمع', value_type: 'string', is_required: true },
-          { id: uid('floors_count'), key: 'floors_count', label: 'عدد طوابق المجمع', value_type: 'number', is_required: true },
-          {
-            id: uid('houses_per_floor'),
-            key: 'houses_per_floor',
-            label: 'عدد المنازل داخل كل طابق (JSON)',
-            value_type: 'json',
-            is_required: true,
-          },
         ];
       case 'commercialComplex':
         return [
           { id: uid('complex_number'), key: 'complex_number', label: 'رقم المجمع التجاري', value_type: 'string', is_required: true },
           { id: uid('location_text'), key: 'location_text', label: 'مكان المجمع التجاري', value_type: 'string', is_required: true },
-          { id: uid('floors_count'), key: 'floors_count', label: 'عدد طوابق المجمع التجاري', value_type: 'number', is_required: true },
-          {
-            id: uid('stores_per_floor'),
-            key: 'stores_per_floor',
-            label: 'عدد المتاجر داخل كل طابق (JSON)',
-            value_type: 'json',
-            is_required: true,
-          },
         ];
-      case 'other':
       default:
-        return [
-          { id: uid('location_text'), key: 'location_text', label: 'مكان المكان', value_type: 'string', is_required: false },
-        ];
+        return [{ id: uid('location_text'), key: 'location_text', label: 'وصف الموقع', value_type: 'string', is_required: false }];
     }
   };
 
@@ -195,10 +213,11 @@ export function AddPlaceModal({
     setStep('type');
     setSelectedType(null);
     setAttrDefs([]);
-    setName('');
-    setDescription('');
-    setDynamicValues({});
-    setPhotos([]);
+    setFormState({ name: '', description: '', phoneNumber: '', dynamicValues: {}, photos: [] });
+    setSubCategories([]);
+    setShowMainCategoryList(false);
+    setShowSubCategoryList(false);
+    setFormError(null);
   };
 
   useEffect(() => {
@@ -207,19 +226,16 @@ export function AddPlaceModal({
     void loadPlaceTypes();
   }, [visible]);
 
-  const handleClose = () => {
-    reset();
-    onClose();
-  };
+  const handleClose = () => { reset(); onClose(); };
 
   const handleSelectType = (type: PlaceTypeUI) => {
     setSelectedType(type);
-    setDynamicValues({});
-    setProductSubCategories([]);
+    setFormState((prev) => ({ ...prev, dynamicValues: {}, photos: [] }));
+    setSubCategories([]);
     setShowMainCategoryList(false);
     setShowSubCategoryList(false);
     setAttrDefs(getFixedAttrDefsForType(type.name));
-    if (normalizePlaceTypeKind(type.name) === 'store') {
+    if (normalizePlaceTypeKind(type.name) === 'store' || usesProductCategoryFieldsForPlaceType(type.name)) {
       void loadMainProductCategories();
     }
     setStep('form');
@@ -230,93 +246,78 @@ export function AddPlaceModal({
       setLoadingProductCategories(true);
       const res = await api.getProductMainCategories();
       const list = Array.isArray(res.data) ? res.data : [];
-      setProductMainCategories(
-        list.map((x) => ({ id: x.id, name: x.name, emoji: x.emoji ?? null, arrow_color: x.arrow_color ?? null }))
+      setMainCategories(
+        list.map((x) => ({ id: x.id, name: x.name, emoji: x.emoji ?? null, color: x.arrow_color ?? null }))
       );
     } catch {
-      setProductMainCategories([]);
+      setMainCategories([]);
     } finally {
       setLoadingProductCategories(false);
     }
   };
 
   const loadSubProductCategories = async (mainId: string) => {
-    if (!mainId) {
-      setProductSubCategories([]);
-      return;
-    }
+    if (!mainId) { setSubCategories([]); return; }
     try {
       setLoadingProductCategories(true);
       const res = await api.getProductSubCategories(mainId);
       const list = Array.isArray(res.data) ? res.data : [];
-      setProductSubCategories(
-        list.map((x) => ({ id: x.id, name: x.name, emoji: (x as any).emoji ?? null, arrow_color: (x as any).arrow_color ?? null }))
+      setSubCategories(
+        list.map((x: any) => ({ id: x.id, name: x.name, emoji: x.emoji ?? null, color: x.arrow_color ?? null }))
       );
     } catch {
-      setProductSubCategories([]);
+      setSubCategories([]);
     } finally {
       setLoadingProductCategories(false);
     }
   };
 
-  const pickImage = async () => {
-    if (photos.length >= MAX_PHOTOS) {
-      Alert.alert('\u062A\u0646\u0628\u064A\u0647', `\u0627\u0644\u062D\u062F \u0627\u0644\u0623\u0642\u0635\u0649 ${MAX_PHOTOS} \u0635\u0648\u0631`);
-      return;
-    }
-    if (Platform.OS !== 'web') {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u0646\u062D\u062A\u0627\u062C \u0625\u0630\u0646 \u0627\u0644\u0648\u0635\u0648\u0644 \u0644\u0644\u0635\u0648\u0631');
-        return;
-      }
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.6,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setPhotos((p) => [...p, result.assets[0].uri].slice(0, MAX_PHOTOS));
-    }
+  const handleMainSelect = async (name: string, id: string, color: string) => {
+    setFormState((prev) => ({
+      ...prev,
+      dynamicValues: { ...prev.dynamicValues, store_type: name, store_category: '' },
+    }));
+    setSelectedMainCategoryColor(color);
+    setShowMainCategoryList(false);
+    await loadSubProductCategories(id);
   };
 
-  const removePhoto = (idx: number) => setPhotos((p) => p.filter((_, i) => i !== idx));
-
-  const setDynamic = (key: string, value: string) => {
-    setDynamicValues((prev) => ({ ...prev, [key]: value }));
+  const handleSubSelect = (name: string) => {
+    setFormState((prev) => ({
+      ...prev,
+      dynamicValues: { ...prev.dynamicValues, store_category: name },
+    }));
+    setShowSubCategoryList(false);
   };
+
+  // ─── إرسال النموذج ───────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
-    if (!name.trim()) {
-      Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u064A\u0631\u062C\u0649 \u062A\u0639\u0628\u0626\u0629 \u0627\u0644\u0627\u0633\u0645');
-      return;
-    }
-    if (!selectedType) {
-      Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u064A\u0631\u062C\u0649 \u0627\u062E\u062A\u064A\u0627\u0631 \u0646\u0648\u0639 \u0627\u0644\u0645\u0643\u0627\u0646');
-      return;
-    }
+    setFormError(null);
 
-    const missingRequired = attrDefs.filter(
-      (d) => d.is_required && !dynamicValues[d.key]?.trim()
-    );
-    if (missingRequired.length > 0) {
-      Alert.alert('\u062A\u0646\u0628\u064A\u0647', `\u064A\u0631\u062C\u0649 \u062A\u0639\u0628\u0626\u0629: ${missingRequired.map((d) => d.label).join('\u060C ')}`);
-      return;
-    }
+    if (!selectedType) { setFormError('يرجى اختيار نوع المكان'); return; }
+
+    const validation = validatePlaceForm({
+      name: formState.name,
+      typeId: selectedType.id,
+      phoneNumber: formState.phoneNumber,
+      dynamicValues: formState.dynamicValues,
+      requiredAttrKeys: attrDefs
+        .filter((d) => d.is_required)
+        .map((d) => ({ key: d.key, label: d.label })),
+      floorsCount: formState.dynamicValues.floors_count,
+      unitsPerFloor: formState.dynamicValues.units_per_floor,
+    });
+    if (!validation.valid) { setFormError(validation.error); return; }
 
     if (!isInsideTulkarm(latitude, longitude)) {
-      Alert.alert(
-        'تنبيه',
-        'يجب أن يكون المكان داخل الدائرة الزرقاء على الخريطة (منطقة مدينة طولكرم والجوار المباشر فقط).'
-      );
+      setFormError('يجب أن يكون المكان داخل الدائرة الزرقاء على الخريطة (منطقة مدينة طولكرم والجوار المباشر فقط).');
       return;
     }
 
     setLoading(true);
     try {
-      const attrs = Object.entries(dynamicValues)
+      const attrs = Object.entries(formState.dynamicValues)
         .filter(([, v]) => v.trim())
         .map(([key, value]) => {
           const def = attrDefs.find((d) => d.key === key);
@@ -324,18 +325,19 @@ export function AddPlaceModal({
         });
 
       await onSubmit({
-        name: name.trim(),
-        description: description.trim(),
+        name: formState.name.trim(),
+        description: formState.description.trim(),
         type_id: selectedType.id,
         type_name: selectedType.name,
         latitude,
         longitude,
-        photos: photos.length ? photos : undefined,
+        photos: formState.photos.length ? formState.photos : undefined,
         dynamicAttributes: attrs.length ? attrs : undefined,
+        phoneNumber: formState.phoneNumber.trim() || undefined,
       });
       setStep('success');
     } catch (e: any) {
-      Alert.alert('\u062E\u0637\u0623', e?.message || '\u062D\u062F\u062B \u062E\u0637\u0623\u060C \u064A\u0631\u062C\u0649 \u0627\u0644\u0645\u062D\u0627\u0648\u0644\u0629 \u0645\u062C\u062F\u062F\u0627\u064B');
+      setFormError(e?.message || 'حدث خطأ، يرجى المحاولة مجدداً');
     } finally {
       setLoading(false);
     }
@@ -351,42 +353,69 @@ export function AddPlaceModal({
           <View style={styles.header}>
             <Text style={styles.title}>
               {step === 'success'
-                ? '\u0637\u0644\u0628\u0643 \u0642\u064A\u062F \u0627\u0644\u0645\u0631\u0627\u062C\u0639\u0629'
+                ? 'طلبك قيد المراجعة'
                 : step === 'type'
-                  ? '\u0627\u062E\u062A\u0631 \u0646\u0648\u0639 \u0627\u0644\u0645\u0643\u0627\u0646'
-                  : `\u0625\u0636\u0627\u0641\u0629 ${selectedTypeSingularLabel}`}
+                  ? 'اختر نوع المكان'
+                  : `إضافة ${selectedTypeSingularLabel}`}
             </Text>
             <TouchableOpacity onPress={handleClose}>
-              <Text style={styles.closeBtn}>{'\u2715'}</Text>
+              <Text style={styles.closeBtn}>✕</Text>
             </TouchableOpacity>
           </View>
 
+          {/* ─── خطوة اختيار النوع ─────────────────────────────────── */}
           {step === 'type' ? (
-            <ScrollView style={styles.typeGrid} contentContainerStyle={{ paddingBottom: 30 }}>
-              <Text style={styles.coords}>{'\u{1F4CC}'} {latitude.toFixed(5)}, {longitude.toFixed(5)}</Text>
-              <Text style={styles.typeHint}>{'\u0645\u0627 \u0646\u0648\u0639 \u0647\u0630\u0627 \u0627\u0644\u0645\u0643\u0627\u0646\u061F'}</Text>
+            <View style={[styles.typeStepWrap, { height: TYPE_PICKER_MAX_H }]}>
+              <ScrollView
+                style={styles.typeGridScroll}
+                contentContainerStyle={styles.typeGridContent}
+                showsVerticalScrollIndicator
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled
+              >
+                <Text style={styles.coords}>
+                  📌 {latitude.toFixed(5)}, {longitude.toFixed(5)}
+                </Text>
+                <Text style={styles.typeHint}>ما نوع هذا المكان؟</Text>
 
-              {loadingTypes ? (
-                <ActivityIndicator size="large" color="#2E86AB" style={{ marginTop: 20 }} />
-              ) : placeTypes.length === 0 ? (
-                <Text style={styles.noTypesText}>{'\u0644\u0627 \u062A\u0648\u062C\u062F \u0623\u0646\u0648\u0627\u0639 \u0623\u0645\u0627\u0643\u0646. \u062A\u0623\u0643\u062F \u0645\u0646 \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u0627\u0644\u0633\u064A\u0631\u0641\u0631 \u0623\u0648 \u0623\u0636\u0641 \u0623\u0646\u0648\u0627\u0639 \u0645\u0646 \u0644\u0648\u062D\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u0629.'}</Text>
-              ) : (
-                placeTypes.map((type) => (
-                  <TouchableOpacity
-                    key={type.id}
-                    style={styles.typeCard}
-                    onPress={() => handleSelectType(type)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.typeIconCircle, { backgroundColor: type.color + '18' }]}>
-                      <Text style={styles.typeEmoji}>{type.emoji}</Text>
+                {loadingTypes ? (
+                  <ActivityIndicator size="large" color="#2E86AB" style={{ marginTop: 20 }} />
+                ) : placeTypes.length === 0 ? (
+                  <Text style={styles.noTypesText}>
+                    لا توجد أنواع أماكن. تأكد من الاتصال بالسيرفر أو أضف أنواع من لوحة الإدارة.
+                  </Text>
+                ) : (
+                  placeTypes.reduce<PlaceTypeUI[][]>((rows, type, i) => {
+                    if (i % 2 === 0) rows.push([type]);
+                    else rows[rows.length - 1].push(type);
+                    return rows;
+                  }, []).map((row) => (
+                    <View key={row.map((t) => t.id).join('-')} style={styles.typeRow}>
+                      {row.map((type) => (
+                        <TouchableOpacity
+                          key={type.id}
+                          style={[
+                            styles.typeCard,
+                            { width: TYPE_CARD_WIDTH, borderTopColor: type.color, borderTopWidth: 3 },
+                          ]}
+                          onPress={() => handleSelectType(type)}
+                          activeOpacity={0.75}
+                        >
+                          <View style={[styles.typeIconCircle, { backgroundColor: type.color + '1A' }]}>
+                            <Text style={styles.typeEmoji}>{type.emoji}</Text>
+                          </View>
+                          <Text style={styles.typeLabel} numberOfLines={2}>
+                            {getPlaceTypePluralLabel(type.name)}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
                     </View>
-                    <Text style={styles.typeLabel}>{getPlaceTypePluralLabel(type.name)}</Text>
-                    <Text style={styles.typeArrow}>{'\u2190'}</Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
+                  ))
+                )}
+              </ScrollView>
+            </View>
+
+          /* ─── خطوة النموذج ──────────────────────────────────────── */
           ) : step === 'form' ? (
             <View style={styles.formStep}>
               <ScrollView
@@ -396,159 +425,52 @@ export function AddPlaceModal({
                 nestedScrollEnabled
                 showsVerticalScrollIndicator
               >
-              {selectedType ? (
-                <>
-                  <TouchableOpacity style={styles.selectedTypeBadge} onPress={() => setStep('type')}>
-                    <Text style={styles.selectedTypeBadgeArrow}>{'\u2192'}</Text>
-                    <View style={[styles.selectedTypeDot, { backgroundColor: selectedType.color }]} />
-                    <Text style={styles.selectedTypeBadgeText}>
-                      {selectedType.emoji} {selectedTypeSingularLabel}
-                    </Text>
-                    <Text style={styles.selectedTypeChange}>{'\u062A\u063A\u064A\u064A\u0631'}</Text>
-                  </TouchableOpacity>
-
-                  <Text style={styles.coords}>{'\u{1F4CC}'} {latitude.toFixed(5)}, {longitude.toFixed(5)}</Text>
-
-                  <Text style={styles.label}>
-                    {selectedTypeSingularLabel === 'منزل'
-                      ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u0632\u0644 *'
-                      : selectedTypeSingularLabel === 'متجر تجاري'
-                        ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062a\u062c\u0631 *'
-                        : selectedTypeSingularLabel === 'مجمّع سكني'
-                          ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062c\u0645\u0651\u0639 *'
-                          : selectedTypeSingularLabel === 'مجمّع تجاري'
-                            ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062c\u0645\u0651\u0639 \u0627\u0644\u062a\u062c\u0627\u0631\u064a *'
-                            : '\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646 *'}
-                  </Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder={
-                      selectedTypeSingularLabel === 'منزل'
-                        ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u0646\u0632\u0644'
-                        : selectedTypeSingularLabel === 'متجر تجاري'
-                          ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062a\u062c\u0631'
-                          : selectedTypeSingularLabel === 'مجمّع سكني'
-                            ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062c\u0645\u0651\u0639'
-                            : selectedTypeSingularLabel === 'مجمّع تجاري'
-                              ? '\u0627\u0633\u0645 \u0627\u0644\u0645\u062c\u0645\u0651\u0639 \u0627\u0644\u062a\u062c\u0627\u0631\u064a'
-                              : '\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646'
-                    }
-                    placeholderTextColor="#9CA3AF"
-                    value={name}
-                    onChangeText={setName}
-                    textAlign="right"
-                  />
-
-                  <Text style={styles.label}>{'\u0627\u0644\u0648\u0635\u0641'}</Text>
-                  <TextInput
-                    style={[styles.input, styles.textarea]}
-                    placeholder={'\u0648\u0635\u0641 \u0645\u062E\u062A\u0635\u0631 (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)'}
-                    placeholderTextColor="#9CA3AF"
-                    value={description}
-                    onChangeText={setDescription}
-                    multiline
-                    textAlign="right"
-                  />
-
-                  {/* Fixed schema fields per place type (client-side) */}
-                  {attrDefs.map((def) => (
-                    <View key={def.id}>
-                      <Text style={styles.label}>
-                        {def.label + (def.is_required ? ' *' : '')}
+                {selectedType && (
+                  <>
+                    {/* شارة النوع المختار مع زر تغيير */}
+                    <TouchableOpacity style={styles.selectedTypeBadge} onPress={() => setStep('type')}>
+                      <Text style={styles.selectedTypeBadgeArrow}>→</Text>
+                      <View style={[styles.selectedTypeDot, { backgroundColor: selectedType.color }]} />
+                      <Text style={styles.selectedTypeBadgeText}>
+                        {selectedType.emoji} {selectedTypeSingularLabel}
                       </Text>
-                      {def.key === 'store_type' ? (
-                        <>
-                          <TouchableOpacity style={styles.input} onPress={() => setShowMainCategoryList(true)}>
-                            <View style={styles.selectedCategoryRow}>
-                              <View style={[styles.selectedCategoryDot, { backgroundColor: selectedMainCategoryColor || '#2E86AB' }]} />
-                              <Text style={styles.selectedCategoryEmoji}>
-                                {productMainCategories.find((x) => x.name === dynamicValues.store_type)?.emoji || '📦'}
-                              </Text>
-                              <Text style={[styles.selectText, !dynamicValues.store_type && styles.selectPlaceholder]}>
-                                {dynamicValues.store_type || 'اختر التصنيف الرئيسي'}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        </>
-                      ) : def.key === 'store_category' ? (
-                        <>
-                          {!!dynamicValues.store_type && (
-                            <>
-                              <TouchableOpacity
-                                style={styles.input}
-                                onPress={() => setShowSubCategoryList(true)}
-                              >
-                                <View style={styles.selectedCategoryRow}>
-                                  <View style={[styles.selectedCategoryDot, { backgroundColor: selectedMainCategoryColor || '#2E86AB' }]} />
-                                  <Text style={styles.selectedCategoryEmoji}>
-                                    {productSubCategories.find((x) => x.name === dynamicValues.store_category)?.emoji || '🏷️'}
-                                  </Text>
-                                  <Text style={[styles.selectText, !dynamicValues.store_category && styles.selectPlaceholder]}>
-                                    {dynamicValues.store_category || 'اختر التصنيف الفرعي'}
-                                  </Text>
-                                </View>
-                              </TouchableOpacity>
-                            </>
-                          )}
-                        </>
-                      ) : def.value_type === 'boolean' ? (
-                        <TouchableOpacity
-                          style={[
-                            styles.booleanToggle,
-                            dynamicValues[def.key] === 'true' && styles.booleanToggleActive,
-                          ]}
-                          onPress={() =>
-                            setDynamic(def.key, dynamicValues[def.key] === 'true' ? 'false' : 'true')
-                          }
-                        >
-                          <Text style={styles.booleanToggleText}>
-                            {dynamicValues[def.key] === 'true' ? '\u2705 \u0646\u0639\u0645' : '\u274C \u0644\u0627'}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : (
-                        <TextInput
-                          style={styles.input}
-                          placeholder={def.label}
-                          placeholderTextColor="#9CA3AF"
-                          value={dynamicValues[def.key] || ''}
-                          onChangeText={(v) => setDynamic(def.key, v)}
-                          keyboardType={def.value_type === 'number' ? 'numeric' : 'default'}
-                          textAlign="right"
-                        />
-                      )}
-                    </View>
-                  ))}
+                      <Text style={styles.selectedTypeChange}>تغيير</Text>
+                    </TouchableOpacity>
 
-                  {(selectedTypeSingularLabel === 'منزل' || selectedTypeSingularLabel === 'متجر تجاري') && (
-                    <>
-                      <Text style={styles.label}>
-                        {selectedTypeSingularLabel === 'منزل' ? '\u0635\u0648\u0631 \u0627\u0644\u0645\u0646\u0632\u0644' : '\u0635\u0648\u0631 \u0627\u0644\u0645\u062a\u062c\u0631'} ({photos.length}/{MAX_PHOTOS})
-                      </Text>
-                      <View style={styles.mediaRow}>
-                        {photos.map((uri, i) => (
-                          <View key={i} style={styles.thumbWrap}>
-                            <Image source={{ uri }} style={styles.thumb} />
-                            <TouchableOpacity style={styles.removeThumb} onPress={() => removePhoto(i)}>
-                              <Text style={styles.removeThumbText}>{'\u2715'}</Text>
-                            </TouchableOpacity>
-                          </View>
-                        ))}
-                        {photos.length < MAX_PHOTOS && (
-                          <TouchableOpacity style={styles.addMediaBtn} onPress={pickImage}>
-                            <Text style={styles.addMediaText}>
-                              {'\u{1F4F7} '}{selectedTypeSingularLabel === 'منزل' ? '\u0625\u0636\u0627\u0641\u0629 \u0635\u0648\u0631 \u0627\u0644\u0645\u0646\u0632\u0644' : '\u0625\u0636\u0627\u0641\u0629 \u0635\u0648\u0631 \u0627\u0644\u0645\u062a\u062c\u0631'}
-                            </Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    </>
-                  )}
-
-                </>
-              ) : null}
+                    {/* النموذج الديناميكي */}
+                    <PlaceForm
+                      kind={placeKind}
+                      typeLabel={selectedTypeSingularLabel}
+                      attrDefs={attrDefs}
+                      formState={formState}
+                      latitude={latitude}
+                      longitude={longitude}
+                      mainCategories={mainCategories}
+                      subCategories={subCategories}
+                      loadingCategories={loadingProductCategories}
+                      mainCategoryLabel={productCategoryFormLabels?.main ?? 'التصنيف الرئيسي'}
+                      subCategoryLabel={productCategoryFormLabels?.sub ?? 'التصنيف الفرعي'}
+                      photoLabel={photoLabel}
+                      showMainList={showMainCategoryList}
+                      showSubList={showSubCategoryList}
+                      selectedMainColor={selectedMainCategoryColor}
+                      onChange={(updates) => setFormState((prev) => ({ ...prev, ...updates }))}
+                      onOpenMainList={() => setShowMainCategoryList(true)}
+                      onCloseMainList={() => setShowMainCategoryList(false)}
+                      onMainSelect={handleMainSelect}
+                      onOpenSubList={() => setShowSubCategoryList(true)}
+                      onCloseSubList={() => setShowSubCategoryList(false)}
+                      onSubSelect={handleSubSelect}
+                      onLoadSubCategories={loadSubProductCategories}
+                      showPhotos={showPhotos}
+                      maxPhotos={MAX_PHOTOS}
+                    />
+                  </>
+                )}
               </ScrollView>
 
               <View style={styles.submitFooter} pointerEvents="box-none">
+                <ErrorBanner message={formError} onDismiss={() => setFormError(null)} />
                 <Pressable
                   style={({ pressed }) => [
                     styles.submitBtn,
@@ -558,17 +480,19 @@ export function AddPlaceModal({
                   onPress={handleSubmit}
                   disabled={loading}
                   accessibilityRole="button"
-                  accessibilityLabel={'\u0625\u0636\u0627\u0641\u0629 \u0627\u0644\u0645\u0643\u0627\u0646'}
+                  accessibilityLabel="إضافة المكان"
                   hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }}
                 >
                   {loading ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
-                    <Text style={styles.submitBtnText}>{'\u0625\u0636\u0627\u0641\u0629 \u0627\u0644\u0645\u0643\u0627\u0646'}</Text>
+                    <Text style={styles.submitBtnText}>إضافة المكان</Text>
                   )}
                 </Pressable>
               </View>
             </View>
+
+          /* ─── خطوة النجاح ──────────────────────────────────────── */
           ) : (
             <ScrollView
               style={styles.successScroll}
@@ -576,7 +500,7 @@ export function AddPlaceModal({
               keyboardShouldPersistTaps="handled"
             >
               <View style={styles.successCircle}>
-                <Text style={styles.successCheck}>{'\u2713'}</Text>
+                <Text style={styles.successCheck}>✓</Text>
               </View>
               <Text style={styles.successHeadline}>
                 {submitSuccessTitle ?? DEFAULT_SUCCESS_TITLE}
@@ -585,87 +509,12 @@ export function AddPlaceModal({
                 {submitSuccessMessage ?? DEFAULT_SUCCESS_MESSAGE}
               </Text>
               <TouchableOpacity style={styles.successBtn} onPress={handleClose} activeOpacity={0.85}>
-                <Text style={styles.successBtnText}>{'\u062D\u0633\u0646\u0627\u064B\u060C \u0641\u0647\u0645\u062A'}</Text>
+                <Text style={styles.successBtnText}>حسناً، فهمت</Text>
               </TouchableOpacity>
             </ScrollView>
           )}
         </View>
       </View>
-
-      <Modal visible={showMainCategoryList} transparent animationType="slide" onRequestClose={() => setShowMainCategoryList(false)}>
-        <View style={styles.pickerOverlay}>
-          <View style={styles.pickerCard}>
-            <View style={styles.pickerHeader}>
-              <TouchableOpacity onPress={() => setShowMainCategoryList(false)}>
-                <Text style={styles.pickerClose}>إغلاق</Text>
-              </TouchableOpacity>
-              <Text style={styles.pickerTitle}>اختر التصنيف الرئيسي</Text>
-              <View style={{ width: 42 }} />
-            </View>
-            <ScrollView contentContainerStyle={styles.pickerList}>
-              {loadingProductCategories ? (
-                <ActivityIndicator color="#2E86AB" />
-              ) : productMainCategories.length === 0 ? (
-                <Text style={styles.selectEmpty}>لا توجد تصنيفات رئيسية</Text>
-              ) : (
-                productMainCategories.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.mainCategoryCard, { borderColor: item.arrow_color || '#2E86AB' }]}
-                    onPress={async () => {
-                      setDynamic('store_type', item.name);
-                      setDynamic('store_category', '');
-                      setSelectedMainCategoryColor(item.arrow_color || '#2E86AB');
-                      setShowMainCategoryList(false);
-                      await loadSubProductCategories(item.id);
-                    }}
-                  >
-                    <View style={[styles.mainCategoryColorDot, { backgroundColor: item.arrow_color || '#2E86AB' }]} />
-                    <Text style={styles.mainCategoryName}>{item.name}</Text>
-                    <Text style={styles.mainCategoryEmoji}>{item.emoji || '📦'}</Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={showSubCategoryList} transparent animationType="slide" onRequestClose={() => setShowSubCategoryList(false)}>
-        <View style={styles.pickerOverlay}>
-          <View style={styles.pickerCard}>
-            <View style={styles.pickerHeader}>
-              <TouchableOpacity onPress={() => setShowSubCategoryList(false)}>
-                <Text style={styles.pickerClose}>إغلاق</Text>
-              </TouchableOpacity>
-              <Text style={styles.pickerTitle}>اختر التصنيف الفرعي</Text>
-              <View style={{ width: 42 }} />
-            </View>
-            <ScrollView contentContainerStyle={styles.pickerList}>
-              {loadingProductCategories ? (
-                <ActivityIndicator color="#2E86AB" />
-              ) : productSubCategories.length === 0 ? (
-                <Text style={styles.selectEmpty}>لا توجد تصنيفات فرعية لهذا الرئيسي</Text>
-              ) : (
-                productSubCategories.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.mainCategoryCard, { borderColor: item.arrow_color || selectedMainCategoryColor || '#2E86AB' }]}
-                    onPress={() => {
-                      setDynamic('store_category', item.name);
-                      setShowSubCategoryList(false);
-                    }}
-                  >
-                    <View style={[styles.mainCategoryColorDot, { backgroundColor: item.arrow_color || selectedMainCategoryColor || '#2E86AB' }]} />
-                    <Text style={styles.mainCategoryName}>{item.name}</Text>
-                    <Text style={styles.mainCategoryEmoji}>{item.emoji || '🏷️'}</Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -688,6 +537,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: '90%',
+    flexDirection: 'column',
     zIndex: 1,
     overflow: 'hidden',
     elevation: 24,
@@ -702,71 +552,52 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 20, fontWeight: '700', color: '#1A3A5C' },
   closeBtn: { fontSize: 24, color: '#6B7280' },
-
-  typeGrid: { padding: 20, flexGrow: 0 },
+  typeStepWrap: { minHeight: 240, flexGrow: 1, flexShrink: 1 },
+  typeGridScroll: { flexGrow: 1, flexShrink: 1 },
+  typeGridContent: {
+    flexDirection: 'column',
+    paddingHorizontal: TYPE_GRID_H_PAD,
+    paddingTop: 0,
+    paddingBottom: 30,
+  },
+  typeRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    gap: TYPE_GRID_GAP,
+    marginBottom: TYPE_GRID_GAP,
+    alignItems: 'stretch',
+  },
   typeHint: {
     fontSize: 16, fontWeight: '600', color: '#374151',
-    textAlign: 'center', marginBottom: 20,
+    textAlign: 'center', marginBottom: 16, width: '100%',
   },
-  noTypesText: { fontSize: 14, color: '#EF4444', textAlign: 'center', marginTop: 20 },
+  noTypesText: { fontSize: 14, color: '#EF4444', textAlign: 'center', marginTop: 20, width: '100%' },
+  coords: {
+    fontSize: 12, color: '#6B7280',
+    marginBottom: 10, marginTop: 4,
+    textAlign: 'right', width: '100%', lineHeight: 18,
+  },
   typeCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 10,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
+    flexDirection: 'column', alignItems: 'center',
+    backgroundColor: '#F8FAFC', borderRadius: 16,
+    padding: 12, borderWidth: 1.5, borderColor: '#E5E7EB', gap: 8,
   },
-  typeIconCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  typeIconCircle: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
   typeEmoji: { fontSize: 26 },
-  typeLabel: {
-    flex: 1,
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#1A3A5C',
-    textAlign: 'right',
-    marginRight: 12,
-  },
-  typeArrow: { fontSize: 18, color: '#9CA3AF' },
-
+  typeLabel: { fontSize: 13, fontWeight: '700', color: '#1A3A5C', textAlign: 'center' },
   selectedTypeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F9FF',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#F0F9FF', borderRadius: 12,
+    padding: 12, marginBottom: 16,
+    borderWidth: 1, borderColor: '#BAE6FD', gap: 8,
   },
   selectedTypeBadgeArrow: { fontSize: 14, color: '#2E86AB' },
   selectedTypeDot: { width: 8, height: 8, borderRadius: 4 },
   selectedTypeBadgeText: { flex: 1, fontSize: 15, fontWeight: '700', color: '#1A3A5C', textAlign: 'right' },
   selectedTypeChange: { fontSize: 13, color: '#2E86AB', fontWeight: '600' },
-
-  formStep: {
-    flexShrink: 1,
-    flexGrow: 1,
-    minHeight: 280,
-    maxHeight: 520,
-  },
-  bodyScroll: {
-    flexGrow: 1,
-    flexShrink: 1,
-  },
-  bodyScrollContent: {
-    padding: 20,
-    paddingBottom: 12,
-  },
+  formStep: { flexShrink: 1, flexGrow: 1, minHeight: 280, maxHeight: 520 },
+  bodyScroll: { flexGrow: 1, flexShrink: 1 },
+  bodyScrollContent: { padding: 20, paddingBottom: 12 },
   submitFooter: {
     paddingHorizontal: 20,
     paddingTop: 8,
@@ -775,117 +606,6 @@ const styles = StyleSheet.create({
     borderTopColor: '#E5E7EB',
     backgroundColor: '#fff',
   },
-  coords: { fontSize: 12, color: '#6B7280', marginBottom: 16, textAlign: 'right' },
-  label: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 8, textAlign: 'right' },
-  input: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 15,
-    marginBottom: 16,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    color: '#1F2937',
-  },
-  textarea: { minHeight: 80 },
-  mediaRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  thumbWrap: { position: 'relative' },
-  thumb: { width: 70, height: 70, borderRadius: 10 },
-  selectedCategoryRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
-  selectedCategoryDot: { width: 10, height: 10, borderRadius: 5 },
-  selectedCategoryEmoji: { fontSize: 16 },
-  removeThumb: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#EF4444',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  removeThumbText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  addMediaBtn: {
-    width: 70,
-    height: 70,
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
-    borderWidth: 2,
-    borderColor: '#E5E7EB',
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addMediaText: { fontSize: 11, color: '#6B7280' },
-  selectText: { fontSize: 15, color: '#111827', textAlign: 'right' },
-  selectPlaceholder: { color: '#9CA3AF' },
-  selectList: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    marginTop: -8,
-    marginBottom: 16,
-  },
-  selectItem: {
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  selectItemText: { textAlign: 'right', color: '#111827', fontWeight: '600' },
-  selectEmpty: { textAlign: 'center', color: '#6B7280', paddingVertical: 12 },
-  pickerOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'center',
-    padding: 14,
-  },
-  pickerCard: {
-    maxHeight: '82%',
-    backgroundColor: '#fff',
-    borderRadius: 18,
-    overflow: 'hidden',
-  },
-  pickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  pickerTitle: { fontSize: 16, fontWeight: '800', color: '#1A3A5C' },
-  pickerClose: { fontSize: 14, fontWeight: '700', color: '#2E86AB' },
-  pickerList: { padding: 12, gap: 8 },
-  mainCategoryCard: {
-    flexDirection: 'row-reverse',
-    alignItems: 'center',
-    gap: 10,
-    borderWidth: 1.5,
-    borderRadius: 12,
-    backgroundColor: '#F8FAFC',
-    padding: 12,
-  },
-  mainCategoryColorDot: { width: 12, height: 12, borderRadius: 6 },
-  mainCategoryName: { flex: 1, textAlign: 'right', fontWeight: '800', color: '#111827' },
-  mainCategoryEmoji: { fontSize: 20 },
-  booleanToggle: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    alignItems: 'center',
-  },
-  booleanToggleActive: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#86EFAC',
-  },
-  booleanToggleText: { fontSize: 15, fontWeight: '600', color: '#374151' },
   submitBtn: {
     backgroundColor: '#2E86AB',
     borderRadius: 14,
@@ -898,7 +618,6 @@ const styles = StyleSheet.create({
   submitBtnDisabled: { opacity: 0.7 },
   submitBtnPressed: { opacity: 0.9 },
   submitBtnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
-
   successScroll: { maxHeight: 520 },
   successScrollContent: {
     paddingHorizontal: 24,
@@ -907,44 +626,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   successCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+    width: 96, height: 96, borderRadius: 48,
     backgroundColor: '#16A34A',
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center',
     marginBottom: 22,
     ...shadow({ color: '#15803D', offset: { width: 0, height: 6 }, opacity: 0.35, radius: 12, elevation: 10 }),
   },
-  successCheck: {
-    color: '#fff',
-    fontSize: 52,
-    fontWeight: '300',
-    lineHeight: 56,
-    marginTop: -4,
-  },
+  successCheck: { color: '#fff', fontSize: 52, fontWeight: '300', lineHeight: 56, marginTop: -4 },
   successHeadline: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#14532D',
-    textAlign: 'center',
-    marginBottom: 14,
-    paddingHorizontal: 8,
+    fontSize: 22, fontWeight: '800', color: '#14532D',
+    textAlign: 'center', marginBottom: 14, paddingHorizontal: 8,
   },
-  successText: {
-    fontSize: 16,
-    lineHeight: 26,
-    color: '#4B5563',
-    textAlign: 'center',
-    paddingHorizontal: 4,
-  },
+  successText: { fontSize: 16, lineHeight: 26, color: '#4B5563', textAlign: 'center', paddingHorizontal: 4 },
   successBtn: {
-    marginTop: 26,
-    alignSelf: 'stretch',
-    backgroundColor: '#2E86AB',
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
+    marginTop: 26, alignSelf: 'stretch',
+    backgroundColor: '#2E86AB', borderRadius: 14,
+    paddingVertical: 16, paddingHorizontal: 24,
     ...shadow({ color: '#2E86AB', offset: { width: 0, height: 4 }, opacity: 0.28, radius: 8, elevation: 6 }),
   },
   successBtnText: { color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center' },

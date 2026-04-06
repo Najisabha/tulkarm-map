@@ -1,4 +1,4 @@
-import { placeTypesRepo } from './placeTypes.repository.js';
+﻿import { placeTypesRepo } from './placeTypes.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 export const placeTypesService = {
@@ -14,9 +14,10 @@ export const placeTypesService = {
     const { name } = data;
     const emoji = data.emoji ?? null;
     const color = data.color ?? null;
+    const sortOrder = data.sort_order ?? null;
     const existing = await placeTypesRepo.findByName(name);
     if (existing) throw ApiError.conflict('نوع المكان موجود مسبقاً');
-    return placeTypesRepo.create(name, emoji, color);
+    return placeTypesRepo.create(name, emoji, color, sortOrder);
   },
 
   async update(id, payload) {
@@ -31,6 +32,7 @@ export const placeTypesService = {
       name: payload.name,
       emoji: payload.emoji,
       color: payload.color,
+      sort_order: payload.sort_order,
     });
   },
 
@@ -38,7 +40,11 @@ export const placeTypesService = {
     const type = await placeTypesRepo.findById(id);
     if (!type) throw ApiError.notFound('نوع المكان غير موجود');
     const hasPlaces = await placeTypesRepo.hasPlaces(id);
-    if (hasPlaces) throw ApiError.conflict('لا يمكن حذف نوع مرتبط بأماكن موجودة. احذف الأماكن أولاً أو انقلها لنوع آخر.');
+    if (hasPlaces) {
+      throw ApiError.conflict(
+        'لا يمكن حذف نوع مرتبط بأماكن موجودة. احذف الأماكن أولاً أو انقلها لنوع آخر.'
+      );
+    }
     return placeTypesRepo.remove(id);
   },
 

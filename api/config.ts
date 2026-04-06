@@ -1,12 +1,3 @@
-/**
- * عنوان خادم الـ API (مجلد server/ — نفس PORT في server/.env).
- *
- * في وضع التطوير: إذا كان EXPO_PUBLIC_API_URL يشير لنطاق Vercel/واجهة ثابتة فقط
- * (بدون مسارات /api/*)، يُشتق تلقائياً عنوان الـ API من مضيف Metro (نفس IP جهازك)
- * حتى يعمل التطبيق من هاتف حقيقي أو محاكي دون تعديل يدوي لكل شبكة.
- *
- * يمكنك تجاوز المنفذ: EXPO_PUBLIC_API_PORT=3000
- */
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
@@ -53,7 +44,6 @@ function getExpoDevHost(): string | null {
   return null;
 }
 
-/** نطاقات غالباً لا تخدم Express API تحت /api من نفس الأصل */
 function looksLikeFrontendOnlyHost(url: string): boolean {
   const u = url.toLowerCase();
   return u.includes('vercel.app') || u.includes('netlify.app') || u.includes('github.io');
@@ -67,7 +57,7 @@ function isLikelyTunnelHostname(hostname: string): boolean {
 function deriveApiUrlFromExpoHost(): string | null {
   const host = getExpoDevHost();
   if (!host) return null;
-  // قد يكون "192.168.1.5:8081" أو "localhost:8081"
+
   const hostname = host.split(':')[0];
   if (!hostname) return null;
   if (isLikelyTunnelHostname(hostname)) return null;
@@ -82,19 +72,58 @@ function isDev(): boolean {
   }
 }
 
-/**
- * يُفضَّل استدعاؤها عند كل طلب حتى يبقى العنوان صحيحاً بعد إعادة تحميل Metro.
- */
+function isLocalhostHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0';
+}
+
+function isLocalhostApiUrl(url: string): boolean {
+  try {
+    const u = new URL(url.includes('://') ? url : `http://${url}`);
+    return isLocalhostHostname(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function resolveDevLocalhostApiUrl(url: string): string {
+  if (!isDev() || Platform.OS === 'web' || !isLocalhostApiUrl(url)) {
+    return stripTrailingSlash(url);
+  }
+
+  let port = envPort();
+  try {
+    const u = new URL(url.includes('://') ? url : `http://${url}`);
+    if (u.port) port = u.port;
+  } catch {
+    /* keep envPort */
+  }
+
+  const derived = deriveApiUrlFromExpoHost();
+  if (derived) {
+    try {
+      const dh = new URL(derived).hostname;
+      if (!isLikelyTunnelHostname(dh) && !isLocalhostHostname(dh)) {
+        return stripTrailingSlash(derived);
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (Platform.OS === 'android') {
+    return `http://10.0.2.2:${port}`;
+  }
+
+  return stripTrailingSlash(url);
+}
+
 export function getApiUrl(): string {
   const rawEnv =
     typeof process !== 'undefined'
       ? (process as { env?: Record<string, string> }).env?.EXPO_PUBLIC_API_URL
       : undefined;
   const envUrl = typeof rawEnv === 'string' && rawEnv.trim() ? stripTrailingSlash(rawEnv.trim()) : '';
-
-  // في وضع التطوير، قد تكون `EXPO_PUBLIC_API_URL` تشير لخادم Remote (مثل Vercel).
-  // سابقاً كان التطبيق دائماً يشتق عنوان محلي من Metro إذا كانت الدومين مثل vercel.app،
-  // وهذا يسبب فشل الاتصال من Expo Go. لذلك نُعطي أولوية لاستخدام الـ env صراحةً.
   const useProvidedApiUrl =
     (typeof process !== 'undefined' &&
       (process as { env?: Record<string, string> }).env?.EXPO_PUBLIC_USE_API === 'true') ||
@@ -103,7 +132,7 @@ export function getApiUrl(): string {
   const dev = isDev();
 
   if (useProvidedApiUrl && envUrl) {
-    return envUrl;
+    return resolveDevLocalhostApiUrl(envUrl);
   }
 
   if (dev && envUrl && looksLikeFrontendOnlyHost(envUrl)) {
@@ -117,14 +146,7 @@ export function getApiUrl(): string {
     return `http://127.0.0.1:${envPort()}`;
   }
 
-  return envUrl || `http://127.0.0.1:${envPort()}`;
+  const fallback = envUrl || `http://127.0.0.1:${envPort()}`;
+  return resolveDevLocalhostApiUrl(fallback);
 }
 
-/** @deprecated استخدم getApiUrl() لضمان العنوان الصحيح بعد اشتقاق المضيف */
-export const API_URL = getApiUrl();
-
-/** استخدام API بدلاً من التخزين المحلي فقط */
-export const USE_API =
-  (typeof process !== 'undefined' &&
-    (process as { env?: Record<string, string> }).env?.EXPO_PUBLIC_USE_API === 'true') ||
-  false;

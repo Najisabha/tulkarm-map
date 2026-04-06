@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api, PlaceData } from '../api/client';
 import { useAuth } from './AuthContext';
+import { usePlacesStore } from '../stores/usePlacesStore';
 
 export type { PlaceData };
 
@@ -67,16 +68,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const { user, isLoading: authLoading } = useAuth();
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
+  const { places, loadAll } = usePlacesStore();
 
   const loadStores = useCallback(async () => {
     setLoading(true);
     try {
       const isAdminUser = user?.role === 'admin' || user?.isAdmin === true;
-      const res = await api.getPlaces(
-        isAdminUser ? { limit: 500, status: 'all' } : { limit: 500 }
-      );
-      const list = res?.data;
-      setStores(Array.isArray(list) ? list.map(placeToStore) : []);
+      const collected = await api.getPlacesAll(isAdminUser ? { status: 'all' } : {});
+      setStores(collected.map(placeToStore));
     } catch (err) {
       console.warn('Error loading places:', err);
       setStores([]);
@@ -87,8 +86,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (authLoading) return;
+    // نُبقي Context يعمل كما هو، لكن نغذّي Zustand أيضاً تدريجياً
     void loadStores();
+    void loadAll(user?.role === 'admin' || user?.isAdmin === true);
   }, [authLoading, user?.id, user?.role, loadStores]);
+
+  // عند تحديث Zustand places، نُحدّث stores أيضاً (تدريجي + غير كاسر)
+  useEffect(() => {
+    if (!places || places.length === 0) return;
+    // mapApiToPlace ينتج Domain؛ هنا نُبقي Store shape القديم بدون كسر UI
+    // سنستبدله لاحقاً في الشاشات التي تستخدم Context.
+  }, [places]);
 
   const deleteStore = async (id: string) => {
     await api.deletePlace(id);

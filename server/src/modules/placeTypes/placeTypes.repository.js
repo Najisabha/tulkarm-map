@@ -2,7 +2,7 @@ import pool from '../../config/db.js';
 
 export const placeTypesRepo = {
   async findAll() {
-    const { rows } = await pool.query('SELECT * FROM place_types ORDER BY name');
+    const { rows } = await pool.query('SELECT * FROM place_types ORDER BY sort_order ASC, name ASC');
     return rows;
   },
 
@@ -16,10 +16,11 @@ export const placeTypesRepo = {
     return rows[0] || null;
   },
 
-  async create(name, emoji = null, color = null) {
+  async create(name, emoji = null, color = null, sortOrder = null) {
     const { rows } = await pool.query(
-      'INSERT INTO place_types (name, emoji, color) VALUES ($1, $2, $3) RETURNING *',
-      [name, emoji, color]
+      `INSERT INTO place_types (name, emoji, color, sort_order)
+       VALUES ($1, $2, $3, COALESCE($4, 100)) RETURNING *`,
+      [name, emoji, color, sortOrder]
     );
     return rows[0];
   },
@@ -30,10 +31,11 @@ export const placeTypesRepo = {
     const name = patch.name !== undefined ? patch.name : current.name;
     const emoji = patch.emoji !== undefined ? patch.emoji : current.emoji;
     const color = patch.color !== undefined ? patch.color : current.color;
+    const sortOrder = patch.sort_order !== undefined ? patch.sort_order : current.sort_order;
     const { rows } = await pool.query(
-      `UPDATE place_types SET name = $1, emoji = $2, color = $3, updated_at = now()
-       WHERE id = $4 RETURNING *`,
-      [name, emoji, color, id]
+      `UPDATE place_types SET name = $1, emoji = $2, color = $3, sort_order = $4, updated_at = now()
+       WHERE id = $5 RETURNING *`,
+      [name, emoji, color, sortOrder, id]
     );
     return rows[0] || null;
   },

@@ -1,14 +1,37 @@
 import pool from '../../config/db.js';
 
+function rowAttributesToArray(attributes) {
+  if (!attributes || typeof attributes !== 'object') return [];
+  const out = [];
+  for (const [key, raw] of Object.entries(attributes)) {
+    if (raw != null && typeof raw === 'object' && !Array.isArray(raw) && 'v' in raw) {
+      out.push({
+        key,
+        value: String(raw.v ?? ''),
+        value_type: typeof raw.t === 'string' ? raw.t : 'string',
+      });
+    } else {
+      out.push({ key, value: String(raw ?? ''), value_type: 'string' });
+    }
+  }
+  return out;
+}
+
+function mediaRowsToImages(rows) {
+  return (rows || []).map((r) => ({
+    id: r.id,
+    image_url: r.url,
+    sort_order: r.sort_order,
+  }));
+}
+
 export const placesRepo = {
-  async create({ name, description, typeId, createdBy, status }) {
+  async create({ name, description, typeId, createdBy, status, phoneNumber }) {
     const { rows } = await pool.query(
-      `INSERT INTO places (name, description, type_id, created_by, status)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO places (name, description, type_id, created_by, status, attributes, phone_number)
+       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, $6)
        RETURNING *`,
-      // Fail safe: any place created without an explicit status stays pending
-      // until an admin approves it.
-      [name, description || null, typeId, createdBy, status || 'pending']
+      [name, description || null, typeId, createdBy, status || 'pending', phoneNumber || null]
     );
     return rows[0];
   },
@@ -30,22 +53,76 @@ export const placesRepo = {
   },
 
   async upsertAttribute({ placeId, key, value, valueType }) {
+    const t = valueType || 'string';
+    const payload = JSON.stringify({ v: String(value), t });
     await pool.query(
-      `INSERT INTO place_attributes (place_id, key, value, value_type)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (place_id, key)
-       DO UPDATE SET value = $3, value_type = $4, updated_at = now()`,
-      [placeId, key, value, valueType || 'string']
+      `UPDATE places SET attributes = jsonb_set(
+         COALESCE(attributes, '{}'::jsonb),
+         ARRAY[$2::text],
+         $3::jsonb,
+         true
+       ), updated_at = now() WHERE id = $1`,
+      [placeId, key, payload]
     );
   },
 
   async addImage({ placeId, imageUrl, sortOrder }) {
     const { rows } = await pool.query(
-      `INSERT INTO place_images (place_id, image_url, sort_order)
-       VALUES ($1, $2, $3) RETURNING *`,
+      `INSERT INTO media (place_id, type, url, sort_order)
+       VALUES ($1, 'image', $2, $3) RETURNING *`,
       [placeId, imageUrl, sortOrder || 0]
     );
+    const m = rows[0];
+    return { id: m.id, place_id: m.place_id, image_url: m.url, sort_order: m.sort_order };
+  },
+
+  /** إنشاء أو تحديث سجل المجمع */
+  async upsertComplex({ placeId, complexType, floorsCount, unitsPerFloor }) {
+    const { rows } = await pool.query(
+      `INSERT INTO complexes (place_id, complex_type, floors_count, units_per_floor)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (place_id) DO UPDATE SET
+         complex_type    = EXCLUDED.complex_type,
+         floors_count    = EXCLUDED.floors_count,
+         units_per_floor = EXCLUDED.units_per_floor,
+         updated_at      = now()
+       RETURNING *`,
+      [placeId, complexType || 'residential', floorsCount || 1, unitsPerFloor || 1]
+    );
     return rows[0];
+  },
+
+  /** ربط المكان بتصنيف رئيسي/فرعي */
+  async upsertCategoryLink({ placeId, mainCategoryId, subCategoryId }) {
+    const { rows } = await pool.query(
+      `
+        INSERT INTO place_category_links (place_id, main_category_id, sub_category_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (place_id) DO UPDATE SET
+          main_category_id = EXCLUDED.main_category_id,
+          sub_category_id  = EXCLUDED.sub_category_id,
+          updated_at       = now()
+        RETURNING *
+      `,
+      [placeId, mainCategoryId || null, subCategoryId || null]
+    );
+    return rows[0];
+  },
+
+  async findCategoryLink(placeId) {
+    const { rows } = await pool.query(
+      `SELECT * FROM place_category_links WHERE place_id = $1`,
+      [placeId]
+    );
+    return rows[0] || null;
+  },
+
+  async findComplexByPlaceId(placeId) {
+    const { rows } = await pool.query(
+      `SELECT * FROM complexes WHERE place_id = $1`,
+      [placeId]
+    );
+    return rows[0] || null;
   },
 
   async findById(id) {
@@ -62,18 +139,13 @@ export const placesRepo = {
     if (!rows[0]) return null;
 
     const place = rows[0];
+    place.attributes = rowAttributesToArray(place.attributes);
 
-    const { rows: attrs } = await pool.query(
-      'SELECT key, value, value_type FROM place_attributes WHERE place_id = $1',
+    const { rows: mediaRows } = await pool.query(
+      `SELECT id, url, sort_order FROM media WHERE place_id = $1 AND type = 'image' ORDER BY sort_order, created_at`,
       [id]
     );
-    place.attributes = attrs;
-
-    const { rows: images } = await pool.query(
-      'SELECT id, image_url, sort_order FROM place_images WHERE place_id = $1 ORDER BY sort_order',
-      [id]
-    );
-    place.images = images;
+    place.images = mediaRowsToImages(mediaRows);
 
     const { rows: ratingAgg } = await pool.query(
       `SELECT COALESCE(AVG(rating), 0) as avg_rating, COUNT(*) as rating_count
@@ -83,6 +155,21 @@ export const placesRepo = {
     place.avg_rating = parseFloat(ratingAgg[0].avg_rating).toFixed(1);
     place.rating_count = parseInt(ratingAgg[0].rating_count);
 
+    // بيانات المجمع إن وُجدت
+    const complex = await placesRepo.findComplexByPlaceId(id);
+    if (complex) {
+      place.complex_kind = complex.complex_type;
+      place.floors_count = complex.floors_count;
+      place.units_per_floor = complex.units_per_floor;
+    }
+
+    // روابط التصنيفات إن وُجدت (إضافية غير كاسرة)
+    const link = await placesRepo.findCategoryLink(id);
+    if (link) {
+      place.main_category_id = link.main_category_id;
+      place.sub_category_id = link.sub_category_id;
+    }
+
     return place;
   },
 
@@ -91,7 +178,7 @@ export const placesRepo = {
     const params = [];
     let paramIdx = 1;
 
-    if (status) {
+    if (status && status !== 'all') {
       conditions.push(`p.status = $${paramIdx++}`);
       params.push(status);
     }
@@ -151,7 +238,8 @@ export const placesRepo = {
     const dataParams = [...params, limit, offset];
 
     const dataQuery = `
-      SELECT p.id, p.name, p.description, p.status, p.created_at,
+      SELECT p.id, p.name, p.description, p.status, p.created_at, p.attributes,
+             p.phone_number,
              pt.name as type_name, pt.id as type_id,
              pl.latitude, pl.longitude,
              COALESCE(r.avg_rating, 0) as avg_rating,
@@ -172,24 +260,49 @@ export const placesRepo = {
 
     if (data.length > 0) {
       const ids = data.map((p) => p.id);
-      const { rows: allAttrs } = await pool.query(
-        'SELECT place_id, key, value, value_type FROM place_attributes WHERE place_id = ANY($1)',
+
+      const { rows: allMedia } = await pool.query(
+        `SELECT place_id, id, url, sort_order FROM media
+         WHERE place_id = ANY($1) AND type = 'image' ORDER BY sort_order, created_at`,
         [ids]
       );
-      const { rows: allImages } = await pool.query(
-        'SELECT place_id, id, image_url, sort_order FROM place_images WHERE place_id = ANY($1) ORDER BY sort_order',
+
+      const { rows: allComplexes } = await pool.query(
+        `SELECT place_id, complex_type, floors_count, units_per_floor
+         FROM complexes WHERE place_id = ANY($1)`,
         [ids]
       );
+
+      const complexMap = Object.fromEntries(allComplexes.map((c) => [c.place_id, c]));
+
+      const { rows: allLinks } = await pool.query(
+        `SELECT place_id, main_category_id, sub_category_id
+         FROM place_category_links WHERE place_id = ANY($1)`,
+        [ids]
+      );
+      const linkMap = Object.fromEntries(allLinks.map((l) => [l.place_id, l]));
+
       for (const p of data) {
-        p.attributes = allAttrs.filter((a) => a.place_id === p.id);
-        p.images = allImages.filter((img) => img.place_id === p.id);
+        p.attributes = rowAttributesToArray(p.attributes);
+        p.images = mediaRowsToImages(allMedia.filter((m) => m.place_id === p.id));
+        const cx = complexMap[p.id];
+        if (cx) {
+          p.complex_kind = cx.complex_type;
+          p.floors_count = cx.floors_count;
+          p.units_per_floor = cx.units_per_floor;
+        }
+        const lk = linkMap[p.id];
+        if (lk) {
+          p.main_category_id = lk.main_category_id;
+          p.sub_category_id = lk.sub_category_id;
+        }
       }
     }
 
     return { data, total, page, limit };
   },
 
-  async update(id, { name, description, typeId, status }) {
+  async update(id, { name, description, typeId, status, phoneNumber }) {
     const updates = [];
     const values = [];
     let i = 1;
@@ -198,6 +311,7 @@ export const placesRepo = {
     if (description !== undefined) { updates.push(`description = $${i++}`); values.push(description); }
     if (typeId !== undefined) { updates.push(`type_id = $${i++}`); values.push(typeId); }
     if (status !== undefined) { updates.push(`status = $${i++}`); values.push(status); }
+    if (phoneNumber !== undefined) { updates.push(`phone_number = $${i++}`); values.push(phoneNumber || null); }
 
     if (updates.length === 0) return null;
 
@@ -219,7 +333,6 @@ export const placesRepo = {
     return rows[0] || null;
   },
 
-  /** إزالة الصف نهائياً (CASCADE يزيل المواقع والخصائص والصور المرتبطة) */
   async hardDelete(id) {
     const { rows } = await pool.query('DELETE FROM places WHERE id = $1 RETURNING id', [id]);
     return rows[0] || null;
@@ -227,8 +340,8 @@ export const placesRepo = {
 
   async deleteImage(imageId) {
     const { rows } = await pool.query(
-      'DELETE FROM place_images WHERE id = $1 RETURNING *',
-      [imageId]
+      'DELETE FROM media WHERE id = $1 AND type = $2 RETURNING id, url as image_url, sort_order',
+      [imageId, 'image']
     );
     return rows[0] || null;
   },

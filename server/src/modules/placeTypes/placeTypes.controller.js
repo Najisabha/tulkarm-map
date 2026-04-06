@@ -2,36 +2,41 @@ import { placeTypesService } from './placeTypes.service.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { success } from '../../utils/response.js';
 
-const CANONICAL_PLACE_TYPES = [
-  { name: 'منزل' },
-  { name: 'متجر تجاري' },
-  { name: 'مجمّع سكني' },
-  { name: 'مجمّع تجاري' },
-  { name: 'أخرى' },
-];
-
-function isCanonicalTypeName(name) {
-  if (!name) return false;
-  return CANONICAL_PLACE_TYPES.some((t) => t.name === name);
-}
+const PROTECTED_FROM_DELETE = new Set([
+  'منزل',
+  'متجر تجاري',
+  'مجمّع سكني',
+  'مجمّع تجاري',
+  'مطعم',
+  'مسجد',
+  'كنيسة',
+  'موقف سيارات',
+  'مكتب',
+  'مستشفى',
+  'عيادة',
+  'صالون',
+  'مؤسسة تعليمية',
+  'مؤسسة حكومية',
+  'أخرى',
+]);
 
 export const placeTypesController = {
   async getAll(_req, res, next) {
     try {
       const types = await placeTypesService.getAll();
-      const canonicalNames = CANONICAL_PLACE_TYPES.map((t) => t.name);
-      return success(res, types.filter((t) => canonicalNames.includes(t.name)));
-    } catch (err) { next(err); }
+      return success(res, types);
+    } catch (err) {
+      next(err);
+    }
   },
 
   async create(req, res, next) {
     try {
-      if (!req.validated?.name || !isCanonicalTypeName(req.validated.name)) {
-        throw ApiError.forbidden('لا يمكن إنشاء نوع مكان إلا للأنواع الثابتة');
-      }
       const type = await placeTypesService.create(req.validated);
       return success(res, type, 201);
-    } catch (err) { next(err); }
+    } catch (err) {
+      next(err);
+    }
   },
 
   async update(req, res, next) {
@@ -40,43 +45,46 @@ export const placeTypesController = {
       const existing = await placeTypesService.getById(typeId);
       if (!existing) throw ApiError.notFound('نوع المكان غير موجود');
 
-      // منع تغيير الاسم إلى غير ثابت (حتى لو كان المدير).
-      if (req.validated?.name !== undefined && !isCanonicalTypeName(req.validated.name)) {
-        throw ApiError.forbidden('لا يمكن تعديل نوع المكان إلا للأنواع الثابتة');
-      }
-
       const type = await placeTypesService.update(req.params.id, req.validated);
       return success(res, type);
-    } catch (err) { next(err); }
+    } catch (err) {
+      next(err);
+    }
   },
 
   async remove(req, res, next) {
     try {
-      throw ApiError.forbidden('لا يمكن حذف الأنواع الثابتة');
+      const existing = await placeTypesService.getById(req.params.id);
+      if (!existing) throw ApiError.notFound('نوع المكان غير موجود');
+      if (PROTECTED_FROM_DELETE.has(existing.name)) {
+        throw ApiError.forbidden('لا يمكن حذف هذا النوع لأنه من الأنواع الأساسية للتطبيق');
+      }
       await placeTypesService.remove(req.params.id);
       return success(res, { message: 'تم حذف نوع المكان' });
-    } catch (err) { next(err); }
+    } catch (err) {
+      next(err);
+    }
   },
 
   async getAttributeDefinitions(req, res, next) {
     try {
       const existingType = await placeTypesService.getById(req.params.id);
-      if (!existingType || !isCanonicalTypeName(existingType.name)) {
-        throw ApiError.forbidden('لا يمكن الوصول لتعريفات هذا النوع');
-      }
+      if (!existingType) throw ApiError.notFound('نوع المكان غير موجود');
       const defs = await placeTypesService.getAttributeDefinitions(req.params.id);
       return success(res, defs);
-    } catch (err) { next(err); }
+    } catch (err) {
+      next(err);
+    }
   },
 
   async addAttributeDefinition(req, res, next) {
     try {
       const existingType = await placeTypesService.getById(req.params.id);
-      if (!existingType || !isCanonicalTypeName(existingType.name)) {
-        throw ApiError.forbidden('لا يمكن إضافة تعريفات إلا للأنواع الثابتة');
-      }
+      if (!existingType) throw ApiError.notFound('نوع المكان غير موجود');
       const def = await placeTypesService.addAttributeDefinition(req.params.id, req.validated);
       return success(res, def, 201);
-    } catch (err) { next(err); }
+    } catch (err) {
+      next(err);
+    }
   },
 };

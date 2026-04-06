@@ -14,6 +14,7 @@ export default function MainLayout() {
       <Stack.Screen name="admin-activity" />
       <Stack.Screen name="admin-backup" />
       <Stack.Screen name="owner-dashboard" />
+      <Stack.Screen name="my-store" />
     </Stack>
   );
 }

@@ -28,8 +28,7 @@ export default function AdminBackupScreen() {
   const handleExportJson = async () => {
     setExporting(true);
     try {
-      const res = await api.getPlaces({ limit: 500 });
-      const data = res.data || [];
+      const data = await api.getPlacesAll({ status: 'all' });
       const str = JSON.stringify(data, null, 2);
       if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(str);

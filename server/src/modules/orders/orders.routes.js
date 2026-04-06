@@ -6,11 +6,18 @@ import { success } from '../../utils/response.js';
 
 const router = Router();
 
-// POST /api/orders - create order (authenticated user, NOT guest)
+function mapOrderRow(o) {
+  if (!o) return o;
+  const { place_id: placeId, ...rest } = o;
+  return { ...rest, place_id: placeId, store_id: placeId };
+}
+
+// POST /api/orders — body.store_id = places.id (اسم قديم للتوافق)
 router.post('/', authenticate, async (req, res, next) => {
   try {
     const { store_id, items, notes } = req.body;
-    if (!store_id) throw ApiError.badRequest('معرف المتجر مطلوب');
+    const placeId = store_id;
+    if (!placeId) throw ApiError.badRequest('معرف المتجر مطلوب');
     if (!items?.length) throw ApiError.badRequest('يجب إضافة منتج واحد على الأقل');
 
     const client = await pool.connect();
@@ -22,12 +29,14 @@ router.post('/', authenticate, async (req, res, next) => {
 
       for (const item of items) {
         const { rows: prodRows } = await client.query(
-          'SELECT id, name, price, stock, is_available FROM store_products WHERE id = $1 AND store_id = $2',
-          [item.product_id, store_id]
+          'SELECT id, name, price, stock, is_available FROM products WHERE id = $1 AND place_id = $2',
+          [item.product_id, placeId]
         );
         const product = prodRows[0];
         if (!product) throw ApiError.badRequest(`المنتج ${item.product_id} غير موجود`);
-        if (!product.is_available) throw ApiError.badRequest(`المنتج "${product.name}" غير متاح حالياً`);
+        if (!product.is_available) {
+          throw ApiError.badRequest(`المنتج "${product.name}" غير متاح حالياً`);
+        }
         if (product.stock !== -1 && product.stock < (item.quantity || 1)) {
           throw ApiError.badRequest(`الكمية المطلوبة من "${product.name}" غير متوفرة`);
         }
@@ -45,16 +54,16 @@ router.post('/', authenticate, async (req, res, next) => {
 
         if (product.stock !== -1) {
           await client.query(
-            'UPDATE store_products SET stock = stock - $1, updated_at = now() WHERE id = $2',
+            'UPDATE products SET stock = stock - $1, updated_at = now() WHERE id = $2',
             [qty, product.id]
           );
         }
       }
 
       const { rows: orderRows } = await client.query(
-        `INSERT INTO orders (store_id, user_id, total, notes)
+        `INSERT INTO orders (place_id, user_id, total, notes)
          VALUES ($1, $2, $3, $4) RETURNING *`,
-        [store_id, req.user.id, total, notes || null]
+        [placeId, req.user.id, total, notes || null]
       );
       const order = orderRows[0];
 
@@ -67,22 +76,29 @@ router.post('/', authenticate, async (req, res, next) => {
       }
 
       await client.query('COMMIT');
-      return success(res, { ...order, items: resolvedItems }, 201);
+      return success(
+        res,
+        { ...mapOrderRow(order), items: resolvedItems },
+        201
+      );
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
     } finally {
       client.release();
     }
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
-// GET /api/orders/my - get my orders
+// GET /api/orders/my
 router.get('/my', authenticate, async (req, res, next) => {
   try {
     const { rows: orders } = await pool.query(
-      `SELECT o.*, s.name as store_name
-       FROM orders o JOIN stores s ON s.id = o.store_id
+      `SELECT o.*, p.name as store_name
+       FROM orders o
+       JOIN places p ON p.id = o.place_id AND p.deleted_at IS NULL
        WHERE o.user_id = $1
        ORDER BY o.created_at DESC LIMIT 50`,
       [req.user.id]
@@ -96,15 +112,20 @@ router.get('/my', authenticate, async (req, res, next) => {
       order.items = items;
     }
 
-    return success(res, orders);
-  } catch (err) { next(err); }
+    return success(res, orders.map(mapOrderRow));
+  } catch (err) {
+    next(err);
+  }
 });
 
-// GET /api/orders/store/:storeId - get store orders (owner/admin)
+// GET /api/orders/store/:storeId — storeId = places.id
 router.get('/store/:storeId', authenticate, async (req, res, next) => {
   try {
     if (req.user.role !== 'admin') {
-      const { rows } = await pool.query('SELECT owner_id FROM stores WHERE id = $1', [req.params.storeId]);
+      const { rows } = await pool.query(
+        'SELECT owner_id FROM places WHERE id = $1 AND deleted_at IS NULL',
+        [req.params.storeId]
+      );
       if (!rows[0] || rows[0].owner_id !== req.user.id) {
         throw ApiError.forbidden('ليس لديك صلاحية');
       }
@@ -112,8 +133,9 @@ router.get('/store/:storeId', authenticate, async (req, res, next) => {
 
     const { rows: orders } = await pool.query(
       `SELECT o.*, u.name as customer_name, u.email as customer_email
-       FROM orders o JOIN users u ON u.id = o.user_id
-       WHERE o.store_id = $1
+       FROM orders o
+       JOIN users u ON u.id = o.user_id
+       WHERE o.place_id = $1
        ORDER BY o.created_at DESC LIMIT 100`,
       [req.params.storeId]
     );
@@ -126,11 +148,13 @@ router.get('/store/:storeId', authenticate, async (req, res, next) => {
       order.items = items;
     }
 
-    return success(res, orders);
-  } catch (err) { next(err); }
+    return success(res, orders.map(mapOrderRow));
+  } catch (err) {
+    next(err);
+  }
 });
 
-// PATCH /api/orders/:id/status - update order status (owner/admin)
+// PATCH /api/orders/:id/status
 router.patch('/:id/status', authenticate, async (req, res, next) => {
   try {
     const { status } = req.body;
@@ -138,24 +162,31 @@ router.patch('/:id/status', authenticate, async (req, res, next) => {
       throw ApiError.badRequest('حالة غير صالحة');
     }
 
-    const { rows: orderRows } = await pool.query('SELECT * FROM orders WHERE id = $1', [req.params.id]);
+    const { rows: orderRows } = await pool.query('SELECT * FROM orders WHERE id = $1', [
+      req.params.id,
+    ]);
     if (!orderRows[0]) throw ApiError.notFound('الطلب غير موجود');
     const order = orderRows[0];
 
     if (req.user.role !== 'admin') {
-      const { rows } = await pool.query('SELECT owner_id FROM stores WHERE id = $1', [order.store_id]);
+      const { rows } = await pool.query(
+        'SELECT owner_id FROM places WHERE id = $1 AND deleted_at IS NULL',
+        [order.place_id]
+      );
       if (!rows[0] || rows[0].owner_id !== req.user.id) {
         throw ApiError.forbidden('ليس لديك صلاحية');
       }
     }
 
-    await pool.query(
-      'UPDATE orders SET status = $1, updated_at = now() WHERE id = $2',
-      [status, req.params.id]
-    );
+    await pool.query('UPDATE orders SET status = $1, updated_at = now() WHERE id = $2', [
+      status,
+      req.params.id,
+    ]);
 
     return success(res, { message: 'تم تحديث حالة الطلب' });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 export default router;

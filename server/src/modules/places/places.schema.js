@@ -12,8 +12,16 @@ export const createPlaceSchema = z.object({
   type_id: z.string().uuid('معرّف نوع المكان يجب أن يكون UUID صالحاً من السيرفر'),
   latitude: z.coerce.number().min(-90).max(90),
   longitude: z.coerce.number().min(-180).max(180),
+  phone_number: z.string().max(30).optional(),
   attributes: z.array(attributeSchema).optional(),
   image_urls: z.array(z.string().url('رابط صورة غير صالح')).max(10).optional(),
+  // حقول المجمعات (اختيارية — تُنشئ سجلاً في جدول complexes)
+  complex_kind: z.enum(['residential', 'commercial']).optional(),
+  floors_count: z.coerce.number().int().min(1).max(200).optional(),
+  units_per_floor: z.coerce.number().int().min(1).max(500).optional(),
+  // تصنيفات الأماكن (اختيارية — تبقى attributes fallback)
+  main_category_id: z.string().uuid().optional(),
+  sub_category_id: z.string().uuid().optional(),
 });
 
 export const updatePlaceSchema = z.object({
@@ -23,7 +31,14 @@ export const updatePlaceSchema = z.object({
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
   status: z.enum(['active', 'pending', 'rejected']).optional(),
+  phone_number: z.string().max(30).optional(),
   attributes: z.array(attributeSchema).optional(),
+  // تحديث بيانات المجمع
+  floors_count: z.coerce.number().int().min(1).max(200).optional(),
+  units_per_floor: z.coerce.number().int().min(1).max(500).optional(),
+  // تحديث روابط التصنيفات
+  main_category_id: z.string().uuid().optional(),
+  sub_category_id: z.string().uuid().optional(),
 });
 
 export const placesQuerySchema = z.object({
