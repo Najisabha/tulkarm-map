@@ -3,18 +3,49 @@
  */
 
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Place } from '../../types/place';
+import { shadow } from '../../utils/shadowStyles';
 
 interface PlaceDetailsProps {
   place: Place;
 }
 
 export function PlaceDetails({ place }: PlaceDetailsProps) {
+  const phoneFromAttr =
+    place.attributes.find((a) => a.key === 'phone')?.value ||
+    place.attributes.find((a) => a.key === 'phone_number')?.value ||
+    place.attributes.find((a) => a.key === 'store_number')?.value ||
+    place.attributes.find((a) => a.key === 'raqm')?.value ||
+    null;
+  const phoneToShow = place.phoneNumber || phoneFromAttr;
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>{place.name}</Text>
-      <Text style={styles.subtitle}>{place.typeName}</Text>
+      <View style={styles.hero}>
+        <View style={styles.heroRow}>
+          <View style={styles.typePill}>
+            <Text style={styles.typePillText}>{place.typeName}</Text>
+          </View>
+          <Text style={styles.title} numberOfLines={2}>
+            {place.name}
+          </Text>
+        </View>
+
+        {!!phoneToShow && (
+          <View style={styles.heroMetaRow}>
+            <TouchableOpacity
+              style={styles.phonePill}
+              activeOpacity={0.7}
+              onPress={() => Linking.openURL(`tel:${phoneToShow}`)}
+            >
+              <Text style={styles.phonePillIcon}>📞</Text>
+              <Text style={styles.phonePillLabel}>رقم الهاتف</Text>
+              <Text style={styles.phonePillValue}>{phoneToShow}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
 
       {!!place.description && (
         <Block label="الوصف">
@@ -22,18 +53,12 @@ export function PlaceDetails({ place }: PlaceDetailsProps) {
         </Block>
       )}
 
-      {(place.phoneNumber || place.attributes.some((a) => a.key === 'phone')) && (
-        <Block label="رقم الهاتف">
-          <Text style={styles.text}>
-            {place.phoneNumber || place.attributes.find((a) => a.key === 'phone')?.value}
-          </Text>
-        </Block>
-      )}
-
       <Block label="الموقع">
-        <Text style={styles.text}>
-          {place.location.latitude.toFixed(5)}, {place.location.longitude.toFixed(5)}
-        </Text>
+        <View style={styles.coordsPill}>
+          <Text style={styles.coordsText}>
+            {place.location.latitude.toFixed(5)}, {place.location.longitude.toFixed(5)}
+          </Text>
+        </View>
       </Block>
 
       {place.kind === 'categorized' && (
@@ -66,8 +91,52 @@ function Block({ label, children }: { label: string; children: React.ReactNode }
 
 const styles = StyleSheet.create({
   container: { padding: 16, paddingBottom: 28, gap: 12 },
-  title: { fontSize: 22, fontWeight: '900', color: '#111827', textAlign: 'right' },
-  subtitle: { fontSize: 14, fontWeight: '700', color: '#2E86AB', textAlign: 'right' },
+  hero: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 16,
+    padding: 14,
+    gap: 10,
+    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.06, radius: 8, elevation: 3 }),
+  },
+  heroRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  heroMetaRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  title: { flex: 1, fontSize: 20, fontWeight: '900', color: '#111827', textAlign: 'right', lineHeight: 28 },
+  typePill: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#EBF5FB',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  typePillText: { fontSize: 13, fontWeight: '800', color: '#2E86AB', textAlign: 'right' },
+  phonePill: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'flex-end',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  phonePillIcon: { fontSize: 16 },
+  phonePillLabel: { fontSize: 12, fontWeight: '900', color: '#065F46' },
+  phonePillValue: { fontSize: 13, fontWeight: '900', color: '#047857' },
   block: {
     backgroundColor: '#fff',
     borderWidth: 1,
@@ -75,8 +144,19 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     gap: 6,
+    ...shadow({ offset: { width: 0, height: 1 }, opacity: 0.04, radius: 6, elevation: 2 }),
   },
   blockLabel: { fontSize: 12, fontWeight: '800', color: '#374151', textAlign: 'right' },
   text: { fontSize: 14, color: '#111827', textAlign: 'right', lineHeight: 22 },
+  coordsPill: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  coordsText: { fontSize: 13, fontWeight: '800', color: '#111827', textAlign: 'right' },
 });
 

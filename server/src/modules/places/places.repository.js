@@ -25,15 +25,72 @@ function mediaRowsToImages(rows) {
   }));
 }
 
+/** قواعد قديمة بلا عمود ratings.deleted_at — الاستعلام مع deleted_at يعطي 42703 */
+let ratingsDeletedAtColumnCache = null;
+async function ratingsHasDeletedAtColumn() {
+  if (ratingsDeletedAtColumnCache !== null) return ratingsDeletedAtColumnCache;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'ratings' AND column_name = 'deleted_at'
+       LIMIT 1`
+    );
+    ratingsDeletedAtColumnCache = rows.length > 0;
+  } catch {
+    ratingsDeletedAtColumnCache = false;
+  }
+  return ratingsDeletedAtColumnCache;
+}
+
+/** قواعد قديمة بلا عمود places.deleted_at — WHERE p.deleted_at يعطي 42703 */
+let placesDeletedAtColumnCache = null;
+async function placesHasDeletedAtColumn() {
+  if (placesDeletedAtColumnCache !== null) return placesDeletedAtColumnCache;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'places' AND column_name = 'deleted_at'
+       LIMIT 1`
+    );
+    placesDeletedAtColumnCache = rows.length > 0;
+  } catch {
+    placesDeletedAtColumnCache = false;
+  }
+  return placesDeletedAtColumnCache;
+}
+
 export const placesRepo = {
   async create({ name, description, typeId, createdBy, status, phoneNumber }) {
-    const { rows } = await pool.query(
-      `INSERT INTO places (name, description, type_id, created_by, status, attributes, phone_number)
-       VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, $6)
-       RETURNING *`,
-      [name, description || null, typeId, createdBy, status || 'pending', phoneNumber || null]
-    );
-    return rows[0];
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO places (name, description, type_id, created_by, status, attributes, phone_number)
+         VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, $6)
+         RETURNING *`,
+        [name, description || null, typeId, createdBy, status || 'pending', phoneNumber || null]
+      );
+      return rows[0];
+    } catch (e) {
+      const msg = String(e?.message || '');
+      if (e?.code === '42703' && /phone_number/i.test(msg)) {
+        const { rows } = await pool.query(
+          `INSERT INTO places (name, description, type_id, created_by, status, attributes)
+           VALUES ($1, $2, $3, $4, $5, '{}'::jsonb)
+           RETURNING *`,
+          [name, description || null, typeId, createdBy, status || 'pending']
+        );
+        const row = rows[0];
+        if (phoneNumber && row?.id) {
+          await this.upsertAttribute({
+            placeId: row.id,
+            key: 'phone',
+            value: String(phoneNumber),
+            valueType: 'phone',
+          });
+        }
+        return row;
+      }
+      throw e;
+    }
   },
 
   async createLocation({ placeId, latitude, longitude }) {
@@ -126,6 +183,7 @@ export const placesRepo = {
   },
 
   async findById(id) {
+    const placeDelClause = (await placesHasDeletedAtColumn()) ? 'AND p.deleted_at IS NULL' : '';
     const { rows } = await pool.query(
       `SELECT p.*, pt.name as type_name, pl.latitude, pl.longitude,
               u.name as creator_name
@@ -133,7 +191,7 @@ export const placesRepo = {
        LEFT JOIN place_types pt ON pt.id = p.type_id
        LEFT JOIN place_locations pl ON pl.place_id = p.id
        LEFT JOIN users u ON u.id = p.created_by
-       WHERE p.id = $1 AND p.deleted_at IS NULL`,
+       WHERE p.id = $1 ${placeDelClause}`,
       [id]
     );
     if (!rows[0]) return null;
@@ -141,30 +199,59 @@ export const placesRepo = {
     const place = rows[0];
     place.attributes = rowAttributesToArray(place.attributes);
 
-    const { rows: mediaRows } = await pool.query(
-      `SELECT id, url, sort_order FROM media WHERE place_id = $1 AND type = 'image' ORDER BY sort_order, created_at`,
-      [id]
-    );
+    let mediaRows = [];
+    try {
+      const r = await pool.query(
+        `SELECT id, url, sort_order FROM media WHERE place_id = $1 AND type = 'image' ORDER BY sort_order, created_at`,
+        [id]
+      );
+      mediaRows = r.rows;
+    } catch (e) {
+      if (e?.code === '42703' || e?.code === '42P01') {
+        try {
+          const r = await pool.query(
+            `SELECT id, url, sort_order FROM media WHERE place_id = $1 ORDER BY sort_order, created_at`,
+            [id]
+          );
+          mediaRows = r.rows;
+        } catch {
+          mediaRows = [];
+        }
+      } else {
+        throw e;
+      }
+    }
     place.images = mediaRowsToImages(mediaRows);
 
+    const ratingDelFilter = (await ratingsHasDeletedAtColumn()) ? 'AND deleted_at IS NULL' : '';
     const { rows: ratingAgg } = await pool.query(
       `SELECT COALESCE(AVG(rating), 0) as avg_rating, COUNT(*) as rating_count
-       FROM ratings WHERE place_id = $1 AND deleted_at IS NULL`,
+       FROM ratings WHERE place_id = $1 ${ratingDelFilter}`,
       [id]
     );
     place.avg_rating = parseFloat(ratingAgg[0].avg_rating).toFixed(1);
     place.rating_count = parseInt(ratingAgg[0].rating_count);
 
-    // بيانات المجمع إن وُجدت
-    const complex = await placesRepo.findComplexByPlaceId(id);
+    // بيانات المجمع إن وُجدت (جدول complexes قد يكون غائباً في قواعد قديمة)
+    let complex = null;
+    try {
+      complex = await placesRepo.findComplexByPlaceId(id);
+    } catch (e) {
+      if (e?.code !== '42P01') throw e;
+    }
     if (complex) {
       place.complex_kind = complex.complex_type;
       place.floors_count = complex.floors_count;
       place.units_per_floor = complex.units_per_floor;
     }
 
-    // روابط التصنيفات إن وُجدت (إضافية غير كاسرة)
-    const link = await placesRepo.findCategoryLink(id);
+    // روابط التصنيفات إن وُجدت
+    let link = null;
+    try {
+      link = await placesRepo.findCategoryLink(id);
+    } catch (e) {
+      if (e?.code !== '42P01') throw e;
+    }
     if (link) {
       place.main_category_id = link.main_category_id;
       place.sub_category_id = link.sub_category_id;
@@ -174,7 +261,8 @@ export const placesRepo = {
   },
 
   async findMany({ page, limit, type, q, status, lat, lng, radius, sort }) {
-    const conditions = ['p.deleted_at IS NULL'];
+    const placeDelCond = (await placesHasDeletedAtColumn()) ? 'p.deleted_at IS NULL' : 'TRUE';
+    const conditions = [placeDelCond];
     const params = [];
     let paramIdx = 1;
 
@@ -237,6 +325,7 @@ export const placesRepo = {
     const offset = (page - 1) * limit;
     const dataParams = [...params, limit, offset];
 
+    const ratingDelFilter = (await ratingsHasDeletedAtColumn()) ? 'AND deleted_at IS NULL' : '';
     const dataQuery = `
       SELECT p.id, p.name, p.description, p.status, p.created_at, p.attributes,
              p.phone_number,
@@ -250,7 +339,7 @@ export const placesRepo = {
       LEFT JOIN place_locations pl ON pl.place_id = p.id
       LEFT JOIN LATERAL (
         SELECT AVG(rating) as avg_rating, COUNT(*) as rating_count
-        FROM ratings WHERE place_id = p.id AND deleted_at IS NULL
+        FROM ratings WHERE place_id = p.id ${ratingDelFilter}
       ) r ON true
       WHERE ${whereClause}
       ORDER BY ${orderBy}
@@ -261,25 +350,56 @@ export const placesRepo = {
     if (data.length > 0) {
       const ids = data.map((p) => p.id);
 
-      const { rows: allMedia } = await pool.query(
-        `SELECT place_id, id, url, sort_order FROM media
-         WHERE place_id = ANY($1) AND type = 'image' ORDER BY sort_order, created_at`,
-        [ids]
-      );
+      let allMedia = [];
+      try {
+        const r = await pool.query(
+          `SELECT place_id, id, url, sort_order FROM media
+           WHERE place_id = ANY($1) AND type = 'image' ORDER BY sort_order, created_at`,
+          [ids]
+        );
+        allMedia = r.rows;
+      } catch (e) {
+        if (e?.code === '42703' || e?.code === '42P01') {
+          try {
+            const r = await pool.query(
+              `SELECT place_id, id, url, sort_order FROM media
+               WHERE place_id = ANY($1) ORDER BY sort_order, created_at`,
+              [ids]
+            );
+            allMedia = r.rows;
+          } catch {
+            allMedia = [];
+          }
+        } else {
+          throw e;
+        }
+      }
 
-      const { rows: allComplexes } = await pool.query(
-        `SELECT place_id, complex_type, floors_count, units_per_floor
-         FROM complexes WHERE place_id = ANY($1)`,
-        [ids]
-      );
+      let allComplexes = [];
+      try {
+        const r = await pool.query(
+          `SELECT place_id, complex_type, floors_count, units_per_floor
+           FROM complexes WHERE place_id = ANY($1)`,
+          [ids]
+        );
+        allComplexes = r.rows;
+      } catch (e) {
+        if (e?.code !== '42P01') throw e;
+      }
 
       const complexMap = Object.fromEntries(allComplexes.map((c) => [c.place_id, c]));
 
-      const { rows: allLinks } = await pool.query(
-        `SELECT place_id, main_category_id, sub_category_id
-         FROM place_category_links WHERE place_id = ANY($1)`,
-        [ids]
-      );
+      let allLinks = [];
+      try {
+        const r = await pool.query(
+          `SELECT place_id, main_category_id, sub_category_id
+           FROM place_category_links WHERE place_id = ANY($1)`,
+          [ids]
+        );
+        allLinks = r.rows;
+      } catch (e) {
+        if (e?.code !== '42P01') throw e;
+      }
       const linkMap = Object.fromEntries(allLinks.map((l) => [l.place_id, l]));
 
       for (const p of data) {
@@ -323,6 +443,17 @@ export const placesRepo = {
       values
     );
     return rows[0] || null;
+  },
+
+  async unlinkComplexUnitsByChildPlaceId(childPlaceId) {
+    try {
+      await pool.query(
+        'UPDATE complex_units SET child_place_id = NULL WHERE child_place_id = $1',
+        [childPlaceId]
+      );
+    } catch (e) {
+      if (e?.code !== '42P01') throw e;
+    }
   },
 
   async softDelete(id) {

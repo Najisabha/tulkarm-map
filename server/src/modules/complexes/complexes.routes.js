@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import pool from '../../config/db.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
-import { requireRole } from '../../middleware/role.middleware.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { success } from '../../utils/response.js';
 
@@ -26,15 +25,37 @@ async function ensureCanEdit(placeId, user) {
   if (!user?.id || p.created_by !== user.id) throw ApiError.forbidden('لا يمكنك تعديل هذا المكان');
 }
 
+// GET /api/complexes/residential/child-place-ids
+// Returns all child_place_ids linked to residential complexes (for filtering in admin UI)
+router.get('/complexes/residential/child-place-ids', authenticate, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT cu.child_place_id
+       FROM complex_units cu
+       JOIN complexes c ON c.id = cu.complex_id
+       JOIN places p ON p.id = cu.child_place_id AND p.deleted_at IS NULL
+       WHERE c.complex_type = 'residential'
+         AND cu.child_place_id IS NOT NULL`
+    );
+    return success(res, { child_place_ids: rows.map((r) => r.child_place_id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/complexes/:placeId
 router.get('/complexes/:placeId', authenticate, async (req, res, next) => {
   try {
     const complex = await ensureComplex(req.params.placeId);
     if (!complex) throw ApiError.notFound('هذا المكان ليس مجمعاً');
     const { rows: units } = await pool.query(
-      `SELECT id, complex_id, floor_number, unit_number, child_place_id, created_at
-       FROM complex_units WHERE complex_id = $1
-       ORDER BY floor_number, unit_number`,
+      `SELECT cu.id, cu.complex_id, cu.floor_number, cu.unit_number,
+              cu.child_place_id, cu.created_at,
+              p.name AS child_place_name
+       FROM complex_units cu
+       LEFT JOIN places p ON p.id = cu.child_place_id AND p.deleted_at IS NULL
+       WHERE cu.complex_id = $1
+       ORDER BY cu.floor_number, cu.unit_number`,
       [complex.id]
     );
     return success(res, { complex, units });
@@ -84,9 +105,13 @@ router.post('/complexes/:placeId/generate-units', authenticate, async (req, res,
     }
 
     const { rows: units } = await pool.query(
-      `SELECT id, complex_id, floor_number, unit_number, child_place_id, created_at
-       FROM complex_units WHERE complex_id = $1
-       ORDER BY floor_number, unit_number`,
+      `SELECT cu.id, cu.complex_id, cu.floor_number, cu.unit_number,
+              cu.child_place_id, cu.created_at,
+              p.name AS child_place_name
+       FROM complex_units cu
+       LEFT JOIN places p ON p.id = cu.child_place_id AND p.deleted_at IS NULL
+       WHERE cu.complex_id = $1
+       ORDER BY cu.floor_number, cu.unit_number`,
       [complex.id]
     );
     return success(res, { message: 'تم إنشاء الوحدات', units });
@@ -95,15 +120,44 @@ router.post('/complexes/:placeId/generate-units', authenticate, async (req, res,
   }
 });
 
-// PATCH /api/complex-units/:id/link-place (admin)
-// يربط وحدة بمكان تابع (child_place_id)
-router.patch('/complex-units/:id/link-place', authenticate, requireRole('admin'), async (req, res, next) => {
+// PATCH /api/complex-units/:id/link-place
+// يربط وحدة بمكان تابع (child_place_id) — admin أو منشئ المجمع/البيت
+router.patch('/complex-units/:id/link-place', authenticate, async (req, res, next) => {
   try {
     const unitId = req.params.id;
     const childPlaceId = req.body?.child_place_id ? String(req.body.child_place_id) : null;
 
-    const { rows: uRows } = await pool.query('SELECT id FROM complex_units WHERE id = $1', [unitId]);
+    const { rows: uRows } = await pool.query(
+      `SELECT cu.id, cu.complex_id, c.place_id as parent_place_id
+       FROM complex_units cu
+       JOIN complexes c ON c.id = cu.complex_id
+       WHERE cu.id = $1`,
+      [unitId]
+    );
     if (!uRows[0]) throw ApiError.notFound('الوحدة غير موجودة');
+
+    // Permission: admin or creator of the parent complex
+    const parentPlaceId = uRows[0].parent_place_id;
+    if (req.user.role !== 'admin') {
+      const { rows: parentRows } = await pool.query(
+        'SELECT created_by FROM places WHERE id = $1 AND deleted_at IS NULL',
+        [parentPlaceId]
+      );
+      const isParentCreator = parentRows[0]?.created_by === req.user.id;
+
+      let isChildCreator = false;
+      if (childPlaceId) {
+        const { rows: childRows } = await pool.query(
+          'SELECT created_by FROM places WHERE id = $1 AND deleted_at IS NULL',
+          [childPlaceId]
+        );
+        isChildCreator = childRows[0]?.created_by === req.user.id;
+      }
+
+      if (!isParentCreator && !isChildCreator) {
+        throw ApiError.forbidden('لا يمكنك ربط/فك ربط هذه الوحدة');
+      }
+    }
 
     if (childPlaceId) {
       const { rows: pRows } = await pool.query('SELECT id FROM places WHERE id = $1 AND deleted_at IS NULL', [childPlaceId]);

@@ -32,7 +32,7 @@
 - QA/Review Agent: verify when viewing a place on the map, the details panel displays the correct fixed fields from `place_attributes` (e.g. house_number/location_text/floors_count/per-floor JSON) and shows “خدمات المتجر” only for `متجر تجاري` + `مجمّع تجاري`.
 - QA/Review Agent: verify DB sync: after creating/updating a place, the corresponding `*_details` row and (for active store-type) the legacy `stores` row with `stores.id = places.id` exist.
 - QA/Review Agent: verify purchasing flow still works for `متجر تجاري` and `مجمّع تجاري` (orders use `store_products`/`store_id`).
-- QA/Review Agent: verify DB extension tables exist after running `migrate:v6` and that no runtime/SQL errors appear due to schema changes.
+- QA/Review Agent: verify DB extension tables exist after running `migrate:all` (from repo root) or `npm run migrate:all` in `server/` and that no runtime/SQL errors appear due to schema changes.
 - QA/Review Agent: verify stage 2 workflow end-to-end:
   - admin creates a store and assigns an owner via `admin-stores`
   - owner can add products with `main_category/sub_category/company_name`

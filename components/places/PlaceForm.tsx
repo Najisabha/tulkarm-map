@@ -11,14 +11,13 @@
 
 import React from 'react';
 import {
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
-import { PlaceKind } from '../../types/place';
+import { listComplexUnitNames, PlaceKind } from '../../types/place';
 import { CategoryItem, CategorySelector } from './CategorySelector';
 import { LocationPicker } from './LocationPicker';
 import { ReusableImagePicker } from './ReusableImagePicker';
@@ -72,6 +71,8 @@ interface PlaceFormProps {
   /** هل يُظهر صندوق إضافة الصور؟ */
   showPhotos?: boolean;
   maxPhotos?: number;
+  /** عند true لا يُعرض حقل «رقم الهاتف» المنفصل (يُستخدم حقل رقم المكان كهاتف) */
+  hidePhoneField?: boolean;
 }
 
 export function PlaceForm({
@@ -99,17 +100,84 @@ export function PlaceForm({
   onSubSelect,
   showPhotos = false,
   maxPhotos = 3,
+  hidePhoneField = false,
 }: PlaceFormProps) {
   const setDynamic = (key: string, value: string) => {
     onChange({ dynamicValues: { ...formState.dynamicValues, [key]: value } });
   };
 
+  const clampInt = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+  const parseIntOr = (s: string | undefined, fallback: number) => {
+    const n = parseInt((s ?? '').trim(), 10);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const NumberStepper = ({
+    label,
+    value,
+    min,
+    max,
+    onChangeValue,
+  }: {
+    label: string;
+    value: number;
+    min: number;
+    max: number;
+    onChangeValue: (next: number) => void;
+  }) => {
+    const decDisabled = value <= min;
+    const incDisabled = value >= max;
+    return (
+      <View style={styles.stepperWrap}>
+        <View style={styles.labelRow}>
+          <Text style={styles.label}>{label}</Text>
+          <Text style={styles.asterisk}> *</Text>
+        </View>
+        <View style={styles.stepperRow}>
+          <TouchableOpacity
+            style={[styles.stepperBtn, decDisabled && styles.stepperBtnDisabled]}
+            onPress={() => onChangeValue(clampInt(value - 1, min, max))}
+            disabled={decDisabled}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.stepperBtnText}>-</Text>
+          </TouchableOpacity>
+          <View style={styles.stepperValueBox}>
+            <Text style={styles.stepperValueText}>{value}</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.stepperBtn, incDisabled && styles.stepperBtnDisabled]}
+            onPress={() => onChangeValue(clampInt(value + 1, min, max))}
+            disabled={incDisabled}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.stepperBtnText}>+</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   const nameLabel =
-    typeLabel === 'منزل' ? 'اسم المنزل'
+    typeLabel === 'منزل' ? 'اسم صاحب المنزل'
     : typeLabel === 'متجر تجاري' ? 'اسم المتجر'
     : typeLabel === 'مجمّع سكني' ? 'اسم المجمّع'
     : typeLabel === 'مجمّع تجاري' ? 'اسم المجمّع التجاري'
     : 'اسم المكان';
+
+  const complexPreview = React.useMemo(() => {
+    if (kind !== 'complex') return null;
+    const floors = parseInt(formState.dynamicValues.floors_count || '');
+    const units = parseInt(formState.dynamicValues.units_per_floor || '');
+    if (!Number.isFinite(floors) || !Number.isFinite(units) || floors < 1 || units < 1) return null;
+    const complexType = typeLabel === 'مجمّع سكني' ? 'residential' : 'commercial';
+    const all = listComplexUnitNames(complexType, floors, units);
+    return {
+      complexType,
+      total: all.length,
+      sample: all.slice(0, 8).map((x) => x.name),
+    };
+  }, [kind, typeLabel, formState.dynamicValues.floors_count, formState.dynamicValues.units_per_floor]);
 
   return (
     <>
@@ -144,49 +212,58 @@ export function PlaceForm({
         textAlign="right"
       />
 
-      {/* رقم الهاتف (مشترك لجميع الأنواع) */}
-      <View style={styles.labelRow}>
-        <Text style={styles.label}>رقم الهاتف</Text>
-      </View>
-      <TextInput
-        style={styles.input}
-        placeholder="رقم الهاتف (اختياري)"
-        placeholderTextColor="#9CA3AF"
-        value={formState.phoneNumber}
-        onChangeText={(v) => onChange({ phoneNumber: v })}
-        keyboardType="phone-pad"
-        textAlign="right"
-      />
+      {/* رقم الهاتف المنفصل — يُخفى عندما يكون رقم المكان هو رقم الهاتف */}
+      {!hidePhoneField && (
+        <>
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>رقم الهاتف</Text>
+          </View>
+          <TextInput
+            style={styles.input}
+            placeholder="رقم الهاتف (اختياري)"
+            placeholderTextColor="#9CA3AF"
+            value={formState.phoneNumber}
+            onChangeText={(v) => onChange({ phoneNumber: v })}
+            keyboardType="phone-pad"
+            textAlign="right"
+          />
+        </>
+      )}
 
       {/* حقول خاصة بالمجمعات */}
       {kind === 'complex' && (
         <>
-          <View style={styles.labelRow}>
-            <Text style={styles.label}>عدد الطوابق</Text>
-            <Text style={styles.asterisk}> *</Text>
+          <View style={styles.complexRow}>
+            <NumberStepper
+              label="عدد الطوابق"
+              value={parseIntOr(formState.dynamicValues.floors_count, 1)}
+              min={1}
+              max={200}
+              onChangeValue={(n) => setDynamic('floors_count', String(n))}
+            />
+            <NumberStepper
+              label="وحدات في كل طابق"
+              value={parseIntOr(formState.dynamicValues.units_per_floor, 1)}
+              min={1}
+              max={500}
+              onChangeValue={(n) => setDynamic('units_per_floor', String(n))}
+            />
           </View>
-          <TextInput
-            style={styles.input}
-            placeholder="مثال: 5"
-            placeholderTextColor="#9CA3AF"
-            value={formState.dynamicValues.floors_count || ''}
-            onChangeText={(v) => setDynamic('floors_count', v)}
-            keyboardType="numeric"
-            textAlign="right"
-          />
-          <View style={styles.labelRow}>
-            <Text style={styles.label}>وحدات في كل طابق</Text>
-            <Text style={styles.asterisk}> *</Text>
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="مثال: 4"
-            placeholderTextColor="#9CA3AF"
-            value={formState.dynamicValues.units_per_floor || ''}
-            onChangeText={(v) => setDynamic('units_per_floor', v)}
-            keyboardType="numeric"
-            textAlign="right"
-          />
+
+          {complexPreview && (
+            <View style={styles.previewBox}>
+              <Text style={styles.previewTitle}>
+                سيُنشأ {complexPreview.total} {complexPreview.complexType === 'residential' ? 'بيت' : 'وحدة'}
+              </Text>
+              <Text style={styles.previewText} numberOfLines={3}>
+                {complexPreview.sample.join('، ')}
+                {complexPreview.total > complexPreview.sample.length ? '…' : ''}
+              </Text>
+              {complexPreview.complexType === 'commercial' && (
+                <Text style={styles.previewHint}>ملاحظة: لكل وحدة حقل unit_type (فارغ بالبداية) ويمكن تعديله لاحقاً.</Text>
+              )}
+            </View>
+          )}
         </>
       )}
 
@@ -237,11 +314,19 @@ export function PlaceForm({
           ) : (
             <TextInput
               style={styles.input}
-              placeholder={def.key === 'store_number' ? 'أدخل الرقم' : def.label}
+              placeholder={
+                def.value_type === 'phone'
+                  ? 'مثال: 059xxxxxxx'
+                  : def.key === 'store_number'
+                    ? 'أدخل الرقم'
+                    : def.label
+              }
               placeholderTextColor="#9CA3AF"
               value={formState.dynamicValues[def.key] || ''}
               onChangeText={(v) => setDynamic(def.key, v)}
-              keyboardType={def.value_type === 'number' ? 'numeric' : 'default'}
+              keyboardType={
+                def.value_type === 'phone' ? 'phone-pad' : def.value_type === 'number' ? 'numeric' : 'default'
+              }
               textAlign="right"
             />
           )}
@@ -270,6 +355,13 @@ export function PlaceForm({
 
 const styles = StyleSheet.create({
   fieldBlock: { width: '100%', marginBottom: 0 },
+  complexRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    width: '100%',
+  },
   labelRow: {
     flexDirection: 'row-reverse',
     alignItems: 'flex-start',
@@ -314,4 +406,51 @@ const styles = StyleSheet.create({
     borderColor: '#86EFAC',
   },
   boolToggleText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+
+  stepperWrap: { flex: 1, minWidth: 0 },
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    padding: 10,
+    marginBottom: 16,
+    gap: 10,
+  },
+  stepperBtn: {
+    width: 42,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  stepperBtnDisabled: { opacity: 0.45 },
+  stepperBtnText: { fontSize: 20, fontWeight: '800', color: '#374151', lineHeight: 22 },
+  stepperValueBox: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperValueText: { fontSize: 16, fontWeight: '800', color: '#111827' },
+
+  previewBox: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1.5,
+    borderColor: '#FED7AA',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: -6,
+    marginBottom: 16,
+    gap: 6,
+  },
+  previewTitle: { fontSize: 13, fontWeight: '800', color: '#9A3412', textAlign: 'right' },
+  previewText: { fontSize: 13, color: '#7C2D12', textAlign: 'right', lineHeight: 20 },
+  previewHint: { fontSize: 12, color: '#9A3412', textAlign: 'right', lineHeight: 18 },
 });

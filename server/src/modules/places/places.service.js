@@ -1,3 +1,4 @@
+import { debugSessionLog } from '../../debugSessionLog.js';
 import { placesRepo } from './places.repository.js';
 import { placeTypesRepo } from '../placeTypes/placeTypes.repository.js';
 import { ApiError } from '../../utils/ApiError.js';
@@ -30,22 +31,105 @@ function readPhoneFromAttributesJson(attributes) {
 }
 
 async function syncStoreDetailsFromPlace(placeId) {
-  const { rows } = await pool.query(
-    `SELECT p.phone_number, p.attributes FROM places p WHERE p.id = $1`,
-    [placeId]
-  );
-  const row = rows[0];
-  if (!row) return;
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.phone_number, p.attributes FROM places p WHERE p.id = $1`,
+      [placeId]
+    );
+    const row = rows[0];
+    if (!row) return;
 
-  // يعطي الأولوية لـ phone_number المباشر ثم attributes كـ fallback
-  const raw = row.phone_number || readPhoneFromAttributesJson(row.attributes);
-  // store_details.phone يجب أن يبقى متسقاً مع VARCHAR(30) مثل places.phone_number
-  const phone = raw != null && String(raw).trim() !== '' ? String(raw).trim().slice(0, 30) : null;
-  await pool.query(
-    `INSERT INTO store_details (place_id, phone) VALUES ($1, $2)
-     ON CONFLICT (place_id) DO UPDATE SET phone = EXCLUDED.phone`,
-    [placeId, phone]
-  );
+    // يعطي الأولوية لـ phone_number المباشر ثم attributes كـ fallback
+    const raw = row.phone_number || readPhoneFromAttributesJson(row.attributes);
+    // store_details.phone يجب أن يبقى متسقاً مع VARCHAR(30) مثل places.phone_number
+    const phone = raw != null && String(raw).trim() !== '' ? String(raw).trim().slice(0, 30) : null;
+
+    const upsertPhone = async () => {
+      await pool.query(
+        `INSERT INTO store_details (place_id, phone) VALUES ($1, $2)
+         ON CONFLICT (place_id) DO UPDATE SET phone = EXCLUDED.phone`,
+        [placeId, phone]
+      );
+    };
+
+    try {
+      await upsertPhone();
+    } catch (err) {
+      const msg = String(err?.message || '');
+      const code = err?.code;
+
+      // جدول مفقود تماماً (قاعدة قديمة جداً)
+      if (code === '42P01' && /store_details/i.test(msg)) {
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS store_details (
+            place_id UUID PRIMARY KEY REFERENCES places(id) ON DELETE CASCADE,
+            phone VARCHAR(30),
+            opening_hours TEXT
+          );
+        `);
+        await upsertPhone();
+        return;
+      }
+
+      // عمود store_id بدل place_id (مخطط قديم قبل migrate rename)
+      if (code === '42703' && /place_id/i.test(msg)) {
+        await pool.query(`
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'store_details' AND column_name = 'store_id'
+            ) AND NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'store_details' AND column_name = 'place_id'
+            ) THEN
+              ALTER TABLE store_details RENAME COLUMN store_id TO place_id;
+            END IF;
+          END $$;
+        `);
+        await upsertPhone();
+        return;
+      }
+
+      // بلا عمود phone (migrate-v6) أو phone ضيق VARCHAR(20) (migrate-v5)
+      if (code === '42703' && /phone/i.test(msg)) {
+        await pool.query(
+          `ALTER TABLE store_details ADD COLUMN IF NOT EXISTS phone VARCHAR(30);`
+        );
+        await upsertPhone();
+        return;
+      }
+      if (code === '22001') {
+        await pool.query(
+          `ALTER TABLE store_details ALTER COLUMN phone TYPE VARCHAR(30);`
+        );
+        await upsertPhone();
+        return;
+      }
+
+      // #region agent log
+      debugSessionLog({
+        hypothesisId: 'sync_fail',
+        location: 'places.service.js:syncStoreDetailsFromPlace',
+        message: 'unhandled_after_self_heal',
+        data: { pgCode: code, errMsg: msg.slice(0, 400) },
+      });
+      // #endregion
+      throw err;
+    }
+  } catch (err) {
+    // لا نُرجع 500 بعد إنشاء المكان: الهاتف محفوظ في places.phone_number
+    const msg = String(err?.message || '');
+    console.error('[syncStoreDetailsFromPlace] skipped', err?.code, msg.slice(0, 200));
+    // #region agent log
+    debugSessionLog({
+      hypothesisId: 'sync_swallowed',
+      location: 'places.service.js:syncStoreDetailsFromPlace',
+      message: 'sync_failed_non_fatal',
+      data: { pgCode: err?.code, errMsg: msg.slice(0, 400) },
+    });
+    // #endregion
+  }
 }
 
 /** هل النوع يستدعي إنشاء سجل في complexes؟ */
@@ -74,10 +158,6 @@ export const placesService = {
 
     assertWithinTulkarmGovernorate(data.latitude, data.longitude);
 
-    // #region agent log
-    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H1',location:'places.service.js:create',message:'after_assert_region',data:{typeIdPresent:!!data.type_id,attrCount:data.attributes?.length??0,hasPhoneField:!!data.phone_number},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-
     const place = await placesRepo.create({
       name: data.name,
       description: data.description,
@@ -93,10 +173,6 @@ export const placesService = {
       longitude: data.longitude,
     });
 
-    // #region agent log
-    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H1',location:'places.service.js:create',message:'after_place_and_location',data:{placeIdPrefix:String(place.id).slice(0,8)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-
     if (data.attributes?.length) {
       for (const attr of data.attributes) {
         await placesRepo.upsertAttribute({
@@ -107,10 +183,6 @@ export const placesService = {
         });
       }
     }
-
-    // #region agent log
-    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H3',location:'places.service.js:create',message:'after_attributes_loop',data:{attrKeys:(data.attributes||[]).map((a)=>a.key)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     if (data.image_urls?.length) {
       for (let i = 0; i < data.image_urls.length; i++) {
@@ -166,14 +238,6 @@ export const placesService = {
     }
 
     await syncStoreDetailsFromPlace(place.id);
-
-    // #region agent log
-    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H2',location:'places.service.js:create',message:'after_sync_store_details',data:{ok:true},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-
-    // #region agent log
-    fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H4',location:'places.service.js:create',message:'before_findById',data:{placeIdPrefix:String(place.id).slice(0,8)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     return placesRepo.findById(place.id);
   },
@@ -278,6 +342,9 @@ export const placesService = {
     if (user.role !== 'admin' && place.created_by !== user.id) {
       throw ApiError.forbidden('لا يمكنك حذف هذا المكان');
     }
+
+    // Unlink any complex_units pointing to this place before deletion
+    await placesRepo.unlinkComplexUnitsByChildPlaceId(id);
 
     const st = String(place.status || '').toLowerCase();
     const unpublished = st !== 'active';

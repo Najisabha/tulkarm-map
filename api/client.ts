@@ -77,6 +77,15 @@ function formatApiError(data: unknown, status: number): string {
     const joined = details.map(String).join(' — ');
     return msg ? `${msg}: ${joined}` : joined;
   }
+  // عند تفعيل EXPOSE_INTERNAL_ERRORS على الخادم يُرجع body.debug — يجب أن يظهر قبل message العام
+  if (status >= 500 && d?.debug && typeof d.debug === 'object' && d.debug !== null) {
+    const dbg = d.debug as Record<string, unknown>;
+    const pg = typeof dbg.pgCode === 'string' ? dbg.pgCode : '';
+    const detail = typeof dbg.message === 'string' ? dbg.message : '';
+    if (detail.trim()) {
+      return pg ? `[${pg}] ${detail}` : detail;
+    }
+  }
   if (msg) return msg;
   if (typeof d?.error === 'string' && d.error) return d.error;
   if (status === 413) return 'حجم الطلب كبير جداً. جرّب صوراً أصغر.';
@@ -532,15 +541,16 @@ export const api = {
   // Place categories (main/sub tree)
   // =========================
 
-  getPlaceCategories: (parentId?: string | null) =>
-    request<ApiResponse<PlaceCategory[]>>(
-      parentId ? `/api/place-categories?parent_id=${encodeURIComponent(parentId)}` : '/api/place-categories'
-    ),
+  getPlaceCategories: (placeTypeId: string, parentId?: string | null) => {
+    const params = new URLSearchParams({ place_type_id: placeTypeId });
+    if (parentId) params.set('parent_id', parentId);
+    return request<ApiResponse<PlaceCategory[]>>(`/api/place-categories?${params}`);
+  },
 
-  getPlaceCategoriesTree: () =>
-    request<ApiResponse<PlaceCategory[]>>('/api/place-categories/tree'),
+  getPlaceCategoriesTree: (placeTypeId: string) =>
+    request<ApiResponse<PlaceCategory[]>>(`/api/place-categories/tree?place_type_id=${encodeURIComponent(placeTypeId)}`),
 
-  createPlaceCategory: (data: { name: string; emoji?: string | null; color?: string | null; sort_order?: number; parent_id?: string | null }) =>
+  createPlaceCategory: (data: { name: string; place_type_id: string; emoji?: string | null; color?: string | null; sort_order?: number; parent_id?: string | null }) =>
     request<ApiResponse<PlaceCategory>>('/api/place-categories', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -558,6 +568,9 @@ export const api = {
   // =========================
   // Complexes
   // =========================
+
+  getResidentialComplexChildPlaceIds: () =>
+    request<ApiResponse<{ child_place_ids: string[] }>>('/api/complexes/residential/child-place-ids'),
 
   getComplex: (placeId: string) =>
     request<ApiResponse<{ complex: any; units: any[] }>>(`/api/complexes/${placeId}`),

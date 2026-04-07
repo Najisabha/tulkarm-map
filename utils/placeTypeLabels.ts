@@ -26,13 +26,67 @@ export type CanonicalPlaceTypeName = (typeof CANONICAL_PLACE_TYPE_NAMES)[number]
 
 /**
  * أنواع تُعرض لها حقول تصنيف المنتجات (رئيسي/فرعي) + رقم + صور في مودال الإضافة —
- * يطابق القائمة المحمية في `placeTypes.controller.js` (ما عدا الأنواع الخمسة الأساسية).
+ * بدون تصنيف رئيسي/فرعي: مسجد، كنيسة، موقف سيارات، مؤسسة حكومية، أخرى (نموذج بسيط + صور حيث ينطبق).
  */
 export const PLACE_TYPES_WITH_PRODUCT_CATEGORY_FORM_FIELDS: readonly CanonicalPlaceTypeName[] = [
   'مطعم',
-  'مسجد',
-  'كنيسة',
-  'موقف سيارات',
+  'مكتب',
+  'مستشفى',
+  'عيادة',
+  'صالون',
+  'مؤسسة تعليمية',
+] as const;
+
+/** بادئة «لـ…» لعناوين التصنيف (تلاصق مع «التصنيف الرئيسي») */
+const LI_PREFIX_FOR_CATEGORY_LABELS: Partial<Record<CanonicalPlaceTypeName, string>> = {
+  مطعم: 'للمطعم',
+  مكتب: 'للمكتب',
+  مستشفى: 'للمستشفى',
+  عيادة: 'للعيادة',
+  صالون: 'للصالون',
+  'مؤسسة تعليمية': 'للمؤسسة التعليمية',
+};
+
+const RAQM_LABEL_BY_TYPE: Partial<Record<CanonicalPlaceTypeName, string>> = {
+  مطعم: 'رقم هاتف المطعم',
+  مكتب: 'رقم هاتف المكتب',
+  مستشفى: 'رقم هاتف المستشفى',
+  عيادة: 'رقم هاتف العيادة',
+  صالون: 'رقم هاتف الصالون',
+  'مؤسسة تعليمية': 'رقم هاتف المؤسسة التعليمية',
+};
+
+/** صور مودال الإضافة للأنواع التي لها حقول تصنيف منتجات */
+const PHOTOS_LABEL_BY_TYPE: Partial<Record<CanonicalPlaceTypeName, string>> = {
+  مطعم: 'صور المطعم',
+  مكتب: 'صور المكتب',
+  مستشفى: 'صور المستشفى',
+  عيادة: 'صور العيادة',
+  صالون: 'صور الصالون',
+  'مؤسسة تعليمية': 'صور المؤسسة التعليمية',
+};
+
+/** صور مودال الإضافة للأنواع البسيطة (بدون تصنيف رئيسي/فرعي) */
+const PHOTOS_LABEL_SIMPLE_PLACE_TYPES: Partial<Record<CanonicalPlaceTypeName, string>> = {
+  مسجد: 'صور المسجد',
+  كنيسة: 'صور الكنيسة',
+  'موقف سيارات': 'صور موقف السيارات',
+  'مؤسسة حكومية': 'صور المؤسسة الحكومية',
+};
+
+export function usesProductCategoryFieldsForPlaceType(name?: string | null): boolean {
+  const key = resolveCanonicalPlaceTypeKey(name);
+  if (!key) return false;
+  return (PLACE_TYPES_WITH_PRODUCT_CATEGORY_FORM_FIELDS as readonly string[]).includes(key);
+}
+
+/**
+ * متجر + مطعم + مكتب + مستشفى + عيادة + صالون + مؤسسة تعليمية + مؤسسة حكومية:
+ * لا يُعرض حقل «رقم الهاتف» المنفصل؛ حقل «رقم …» الديناميكي (store_number) يمثّل رقم الهاتف ويُرسل كـ phone_number.
+ */
+const PLACE_TYPES_WITH_PLACE_PHONE_AS_STORE_NUMBER: readonly CanonicalPlaceTypeName[] = [
+  'متجر تجاري',
+  'مطعم',
   'مكتب',
   'مستشفى',
   'عيادة',
@@ -41,50 +95,10 @@ export const PLACE_TYPES_WITH_PRODUCT_CATEGORY_FORM_FIELDS: readonly CanonicalPl
   'مؤسسة حكومية',
 ] as const;
 
-/** بادئة «لـ…» لعناوين التصنيف (تلاصق مع «التصنيف الرئيسي») */
-const LI_PREFIX_FOR_CATEGORY_LABELS: Partial<Record<CanonicalPlaceTypeName, string>> = {
-  مطعم: 'للمطعم',
-  مسجد: 'للمسجد',
-  كنيسة: 'للكنيسة',
-  'موقف سيارات': 'لموقف السيارات',
-  مكتب: 'للمكتب',
-  مستشفى: 'للمستشفى',
-  عيادة: 'للعيادة',
-  صالون: 'للصالون',
-  'مؤسسة تعليمية': 'للمؤسسة التعليمية',
-  'مؤسسة حكومية': 'للمؤسسة الحكومية',
-};
-
-const RAQM_LABEL_BY_TYPE: Partial<Record<CanonicalPlaceTypeName, string>> = {
-  مطعم: 'رقم المطعم',
-  مسجد: 'رقم المسجد',
-  كنيسة: 'رقم الكنيسة',
-  'موقف سيارات': 'رقم موقف السيارات',
-  مكتب: 'رقم المكتب',
-  مستشفى: 'رقم المستشفى',
-  عيادة: 'رقم العيادة',
-  صالون: 'رقم الصالون',
-  'مؤسسة تعليمية': 'رقم المؤسسة التعليمية',
-  'مؤسسة حكومية': 'رقم المؤسسة الحكومية',
-};
-
-const PHOTOS_LABEL_BY_TYPE: Partial<Record<CanonicalPlaceTypeName, string>> = {
-  مطعم: 'صور المطعم',
-  مسجد: 'صور المسجد',
-  كنيسة: 'صور الكنيسة',
-  'موقف سيارات': 'صور موقف السيارات',
-  مكتب: 'صور المكتب',
-  مستشفى: 'صور المستشفى',
-  عيادة: 'صور العيادة',
-  صالون: 'صور الصالون',
-  'مؤسسة تعليمية': 'صور المؤسسة التعليمية',
-  'مؤسسة حكومية': 'صور المؤسسة الحكومية',
-};
-
-export function usesProductCategoryFieldsForPlaceType(name?: string | null): boolean {
+export function usesPlacePhoneAsStoreNumberField(name?: string | null): boolean {
   const key = resolveCanonicalPlaceTypeKey(name);
   if (!key) return false;
-  return (PLACE_TYPES_WITH_PRODUCT_CATEGORY_FORM_FIELDS as readonly string[]).includes(key);
+  return (PLACE_TYPES_WITH_PLACE_PHONE_AS_STORE_NUMBER as readonly string[]).includes(key);
 }
 
 /** عناوين حقول التصنيف/الرقم/الصور لمودال الإضافة لهذه الأنواع فقط */
@@ -107,6 +121,18 @@ export function getPlaceTypeProductCategoryFieldLabels(name?: string | null): {
     number: rq,
     photos: ph,
   };
+}
+
+/** عنوان قسم الصور في مودال إضافة المكان (أو null = لا يُعرض القسم) */
+export function getAddPlaceModalPhotoLabel(name?: string | null): string | null {
+  const key = resolveCanonicalPlaceTypeKey(name);
+  if (!key) return null;
+  if (usesProductCategoryFieldsForPlaceType(name)) {
+    return getPlaceTypeProductCategoryFieldLabels(name)?.photos ?? null;
+  }
+  if (key === 'منزل') return 'صور المنزل';
+  if (key === 'متجر تجاري') return 'صور المتجر';
+  return PHOTOS_LABEL_SIMPLE_PLACE_TYPES[key] ?? null;
 }
 
 /** جمع عناوين الاختيار في المودال — مفاتيحها = CANONICAL_PLACE_TYPE_NAMES */

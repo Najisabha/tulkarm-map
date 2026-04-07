@@ -14,6 +14,7 @@
     "migrate:v3": "node scripts/migrate-v1.js v3",
     "migrate:v4": "node scripts/migrate-v1.js v4",
     "migrate:v5": "node scripts/migrate-v1.js v5",
+    "migrate:v6": "node scripts/migrate-v1.js v6",
     "migrate:all": "node scripts/migrate-v1.js all"
   },
   "dependencies": {

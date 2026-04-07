@@ -11,4 +11,6 @@ export const env = {
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
   NODE_ENV: process.env.NODE_ENV || 'development',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  /** عند true يُرجع الـ 500 حقل debug مع رسالة/pgCode — للتشخيص فقط */
+  EXPOSE_INTERNAL_ERRORS: process.env.EXPOSE_INTERNAL_ERRORS === 'true',
 };

@@ -13,6 +13,8 @@ export interface PlaceFormValidationInput {
   phoneNumber?: string;
   floorsCount?: string;
   unitsPerFloor?: string;
+  /** حقل store_number يمثّل رقم الهاتف (لا يُعرض حقل هاتف منفصل) */
+  storeNumberIsPlacePhone?: boolean;
 }
 
 export interface ValidationResult {
@@ -35,7 +37,13 @@ export function validatePlaceForm(input: PlaceFormValidationInput): ValidationRe
     }
   }
 
-  if (input.phoneNumber && !/^[0-9+\-\s()]{0,30}$/.test(input.phoneNumber)) {
+  const phoneOk = (s: string) => /^[0-9+\-\s()]{0,30}$/.test(s);
+  if (input.storeNumberIsPlacePhone) {
+    const sn = (input.dynamicValues?.store_number ?? '').trim();
+    if (sn && !phoneOk(sn)) {
+      return fail('رقم الهاتف غير صالح (أرقام، +، -، مسافات فقط، حد 30 رمز)');
+    }
+  } else if (input.phoneNumber && !phoneOk(input.phoneNumber)) {
     return fail('رقم الهاتف غير صالح (أرقام، +، -، مسافات فقط، حد 30 رمز)');
   }
 

@@ -2,22 +2,25 @@ import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    Alert,
-    Animated,
-    FlatList,
-    Linking,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Alert,
+  Animated,
+  FlatList,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { api } from '../../api/client';
 import { AddPlaceModal } from '../../components/AddPlaceModal';
 import { Circle, MapView, Marker, Polyline, PROVIDER_GOOGLE } from '../../components/MapWrapper';
+import { PlaceCard } from '../../components/places/PlaceCard';
+import { ComplexBuildingViewer, ComplexUnit } from '../../components/places/ComplexBuildingViewer';
+import { PlaceDetails } from '../../components/places/PlaceDetails';
 import { ReportModal } from '../../components/ReportModal';
 import { LAYOUT } from '../../constants/layout';
 import { MAP_STYLE_NO_POI } from '../../constants/mapStyle';
@@ -25,6 +28,7 @@ import { useCategories } from '../../context/CategoryContext';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { usePlacesStore } from '../../stores/usePlacesStore';
 import type { Place } from '../../types/place';
+import { placeService } from '../../services/placeService';
 import { isInsideTulkarm, startGeofencing, TULKARM_REGION } from '../../utils/geofencing';
 import {
   CANONICAL_PLACE_TYPE_NAMES,
@@ -345,6 +349,7 @@ function StoreServicesSheet({ store, user, onClose }: { store: Store; user: any;
 function StoreDetailSheet({
   store, userLocation, user, categoryList,
   onClose, onNavigate, onReport, onServices, onEdit, onDelete,
+  onOpenChildPlace, onAddUnit,
 }: {
   store: Store;
   userLocation: { latitude: number; longitude: number } | null;
@@ -356,6 +361,8 @@ function StoreDetailSheet({
   onServices: () => void;
   onEdit: () => void;
   onDelete: () => Promise<void>;
+  onOpenChildPlace: (childPlaceId: string) => void;
+  onAddUnit: (unit: ComplexUnit, store: Store) => void;
 }) {
   const catStyle = getCategoryStyle(categoryList, store.category);
   const dist = userLocation
@@ -363,13 +370,36 @@ function StoreDetailSheet({
     : null;
 
   const attrs = store.attributes || [];
-  const attr = (key: string) => attrs.find((a) => a.key === key)?.value;
+  const attrRaw = (key: string) => attrs.find((a) => a.key === key)?.value;
+  const attr = (key: string) => {
+    const raw = attrRaw(key);
+    if (!raw) return undefined;
+    // Some legacy attributes store JSON like {"v":"059..."} or {"value":"..."}
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const candidate = (parsed as any).v ?? (parsed as any).value ?? (parsed as any).val ?? null;
+        if (candidate !== null && candidate !== undefined) return String(candidate);
+      }
+    } catch {
+      // plain string
+    }
+    return raw;
+  };
+  const firstAttr = (...keys: string[]) => {
+    for (const k of keys) {
+      const v = attr(k);
+      if (v && String(v).trim()) return String(v).trim();
+    }
+    return undefined;
+  };
 
   const typeName = store.category;
   const isHouse = typeName === 'منزل';
   const isStoreLike = typeName === 'متجر تجاري' || typeName === 'مجمّع تجاري';
   const isResidentialComplex = typeName === 'مجمّع سكني';
   const isCommercialComplex = typeName === 'مجمّع تجاري';
+  const isComplex = isResidentialComplex || isCommercialComplex;
 
   const locationText = attr('location_text');
   const houseNumber = attr('house_number');
@@ -378,8 +408,14 @@ function StoreDetailSheet({
   const storeNumber = attr('store_number');
   const complexNumber = attr('complex_number');
   const floorsCount = attr('floors_count');
-  const housesPerFloor = attr('houses_per_floor');
-  const storesPerFloor = attr('stores_per_floor');
+  const unitsPerFloor = attr('units_per_floor') ?? attr('houses_per_floor') ?? attr('stores_per_floor');
+
+  const floorsCountNum = floorsCount ? parseInt(String(floorsCount), 10) : 0;
+  const unitsPerFloorNum = unitsPerFloor ? parseInt(String(unitsPerFloor), 10) : 0;
+  const phoneForCall =
+    store.phone ||
+    firstAttr('phone', 'phone_number', 'store_number', 'raqm') ||
+    null;
 
   return (
     <View style={styles.overlayContainer} pointerEvents="box-none">
@@ -396,10 +432,11 @@ function StoreDetailSheet({
           </View>
         </View>
         <View style={styles.storeModalBody}>
-          <Text style={styles.storeModalName}>{store.name}</Text>
           <View style={styles.storeModalPillsRow}>
             <View style={[styles.storeModalCategoryPill, { backgroundColor: catStyle.color + '18' }]}>
-              <Text style={[styles.storeModalCategoryText, { color: catStyle.color }]}>{getPlaceTypeDisplayName(store.category)}</Text>
+              <Text style={[styles.storeModalCategoryText, { color: catStyle.color }]}>
+                {getPlaceTypeDisplayName(store.category)}
+              </Text>
             </View>
             {dist !== null && (
               <View style={styles.storeModalDistancePill}>
@@ -407,55 +444,42 @@ function StoreDetailSheet({
               </View>
             )}
           </View>
-          {store.description ? (
-            <Text style={styles.storeModalDescription}>{store.description}</Text>
-          ) : null}
-          {store.phone && (
-            <TouchableOpacity style={styles.storeModalPhoneRow} onPress={() => Linking.openURL(`tel:${store.phone}`)}>
-              <Text style={styles.storeModalPhoneIcon}>📞</Text>
-              <Text style={styles.storeModalPhoneText}>{store.phone}</Text>
-            </TouchableOpacity>
-          )}
 
-          {/* Typed details (fixed schema keys) */}
-          {locationText ? (
-            <Text style={styles.storeModalDescription}>{'📍 '}{locationText}</Text>
-          ) : null}
+          <PlaceDetails
+            place={{
+              id: store.id,
+              name: store.name,
+              description: store.description || null,
+              phoneNumber: store.phone ?? null,
+              images:
+                store.images?.map((img) => ({ id: img.id, url: img.image_url, sortOrder: img.sort_order })) ?? [],
+              location: { latitude: store.latitude, longitude: store.longitude },
+              typeId: store.type_id ?? '',
+              typeName: store.type_name ?? store.category,
+              kind: 'simple',
+              status: (store.status as any) ?? 'pending',
+              avgRating: parseFloat(store.avg_rating ?? '0'),
+              ratingCount: store.rating_count ?? 0,
+              createdAt: store.createdAt,
+              attributes:
+                store.attributes?.map((a) => ({ key: a.key, value: a.value, valueType: a.value_type })) ?? [],
+            } as any}
+          />
 
-          {isStoreLike && storeNumber ? (
-            <Text style={styles.storeModalDescription}>{'🏪 رقم المتجر: '}{storeNumber}</Text>
-          ) : null}
-
-          {isStoreLike && storeType ? (
-            <Text style={styles.storeModalDescription}>{'🧩 نوع المتجر: '}{storeType}</Text>
-          ) : null}
-
-          {isStoreLike && storeCategory ? (
-            <Text style={styles.storeModalDescription}>{'🏷️ تصنيف المتجر: '}{storeCategory}</Text>
-          ) : null}
-
-          {isResidentialComplex && complexNumber ? (
-            <Text style={styles.storeModalDescription}>{'🏘️ رقم المجمع: '}{complexNumber}</Text>
-          ) : null}
-
-          {isResidentialComplex && floorsCount ? (
-            <Text style={styles.storeModalDescription}>{'📚 عدد طوابق المجمع: '}{floorsCount}</Text>
-          ) : null}
-
-          {isResidentialComplex && housesPerFloor ? (
-            <Text style={styles.storeModalDescription}>{'🏠 عدد المنازل داخل كل طابق: '}{housesPerFloor}</Text>
-          ) : null}
-
-          {isCommercialComplex && complexNumber ? (
-            <Text style={styles.storeModalDescription}>{'🏬 رقم المجمع التجاري: '}{complexNumber}</Text>
-          ) : null}
-
-          {isCommercialComplex && floorsCount ? (
-            <Text style={styles.storeModalDescription}>{'📚 عدد طوابق المجمع التجاري: '}{floorsCount}</Text>
-          ) : null}
-
-          {isCommercialComplex && storesPerFloor ? (
-            <Text style={styles.storeModalDescription}>{'🏬 عدد المتاجر داخل كل طابق: '}{storesPerFloor}</Text>
+          {isComplex && floorsCountNum > 0 && unitsPerFloorNum > 0 ? (
+            <ComplexBuildingViewer
+              placeId={store.id}
+              complexType={isResidentialComplex ? 'residential' : 'commercial'}
+              floorsCount={floorsCountNum}
+              unitsPerFloor={unitsPerFloorNum}
+              onUnitPress={(unit) => {
+                if (unit.child_place_id && unit.child_place_name) {
+                  onOpenChildPlace(unit.child_place_id);
+                } else {
+                  onAddUnit(unit, store);
+                }
+              }}
+            />
           ) : null}
 
           <View style={styles.storeModalBtnRow}>
@@ -471,6 +495,18 @@ function StoreDetailSheet({
                 <Text style={styles.storeModalCallBtnLabel}>اتصال</Text>
                 <Text style={styles.storeModalCallBtnText}>{houseNumber}</Text>
               </TouchableOpacity>
+            ) : !isHouse && !isStoreLike && phoneForCall ? (
+              <TouchableOpacity
+                style={styles.storeModalCallBtn}
+                onPress={() => Linking.openURL(`tel:${phoneForCall}`)}
+                activeOpacity={0.86}
+              >
+                <View style={styles.storeModalCallBtnIconWrap}>
+                  <Text style={styles.storeModalCallBtnIcon}>📞</Text>
+                </View>
+                <Text style={styles.storeModalCallBtnLabel}>اتصال</Text>
+                <Text style={styles.storeModalCallBtnText}>{phoneForCall}</Text>
+              </TouchableOpacity>
             ) : null}
             <Pressable
               style={[styles.storeModalActionBtn, styles.storeModalNavigateBtn]}
@@ -484,10 +520,17 @@ function StoreDetailSheet({
                 <Text style={styles.storeModalNavigateBtnSub}>يبعد {formatDistance(dist)}</Text>
               )}
             </Pressable>
-            {isStoreLike ? (
-              <TouchableOpacity style={[styles.storeModalActionBtn, styles.storeModalServicesBtn]} onPress={onServices}>
-                <Text style={styles.storeModalServicesBtnIcon}>🛍️</Text>
-                <Text style={styles.storeModalServicesBtnText}>خدمات المتجر</Text>
+            {isStoreLike && phoneForCall ? (
+              <TouchableOpacity
+                style={styles.storeModalCallBtn}
+                onPress={() => Linking.openURL(`tel:${phoneForCall}`)}
+                activeOpacity={0.86}
+              >
+                <View style={styles.storeModalCallBtnIconWrap}>
+                  <Text style={styles.storeModalCallBtnIcon}>📞</Text>
+                </View>
+                <Text style={styles.storeModalCallBtnLabel}>اتصال</Text>
+                <Text style={styles.storeModalCallBtnText}>{phoneForCall}</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -562,6 +605,16 @@ export default function MapScreen() {
   const [showServicesModal, setShowServicesModal] = useState(false);
 
   const [placeSearchQuery, setPlaceSearchQuery] = useState('');
+
+  const [addUnitContext, setAddUnitContext] = useState<{
+    complexPlaceId: string;
+    complexType: 'residential' | 'commercial';
+    unitRowId: string;
+    floorNumber: number;
+    unitNumber: string;
+    latitude: number;
+    longitude: number;
+  } | null>(null);
 
   const bannerAnim = useRef(new Animated.Value(-100)).current;
   const [bannerMessage, setBannerMessage] = useState('');
@@ -1326,13 +1379,27 @@ export default function MapScreen() {
         </View>
       </View>
       <View style={styles.catStoreInfo}>
-        <Text style={styles.catStoreName}>{item.name}</Text>
-        <Text style={styles.catStoreDesc} numberOfLines={1}>
-          {item.description}
-        </Text>
-        {item.phone ? (
-          <Text style={styles.catStorePhone}>📞 {item.phone}</Text>
-        ) : null}
+        <PlaceCard
+          place={{
+            id: item.id,
+            name: item.name,
+            description: item.description || null,
+            phoneNumber: item.phone ?? null,
+            images:
+              item.images?.map((img) => ({ id: img.id, url: img.image_url, sortOrder: img.sort_order })) ??
+              [],
+            location: { latitude: item.latitude, longitude: item.longitude },
+            typeId: item.type_id ?? '',
+            typeName: item.type_name ?? item.category,
+            kind: 'simple',
+            status: (item.status as any) ?? 'pending',
+            avgRating: parseFloat(item.avg_rating ?? '0'),
+            ratingCount: item.rating_count ?? 0,
+            createdAt: item.createdAt,
+            attributes:
+              item.attributes?.map((a) => ({ key: a.key, value: a.value, valueType: a.value_type })) ?? [],
+          } as any}
+        />
       </View>
       <Text style={styles.catStoreEmoji}>
         {getCategoryStyle(categoryList, item.category).emoji}
@@ -1663,8 +1730,73 @@ export default function MapScreen() {
         />
       )}
 
+      {/* ── Add Unit Modal (from complex viewer) ── */}
+      {addUnitContext && (
+        <AddPlaceModal
+          visible={!!addUnitContext}
+          onClose={() => setAddUnitContext(null)}
+          submitSuccessTitle="تمت إضافة الوحدة بنجاح"
+          submitSuccessMessage="تم إنشاء الوحدة وربطها بالمجمّع."
+          initialTypeName={addUnitContext.complexType === 'commercial' ? 'متجر تجاري' : 'منزل'}
+          initialFormOverrides={{
+            name:
+              addUnitContext.complexType === 'commercial'
+                ? `وحدة ${addUnitContext.floorNumber}-${addUnitContext.unitNumber}`
+                : '',
+            dynamicValues: {
+              ...(addUnitContext.complexType === 'commercial'
+                ? { store_number: `${addUnitContext.floorNumber}-${addUnitContext.unitNumber}` }
+                : { house_number: `${addUnitContext.floorNumber}-${addUnitContext.unitNumber}` }),
+            },
+          }}
+          onSubmit={async (data) => {
+            if (!isValidPlaceTypeId(data.type_id)) {
+              throw new Error('معرّف نوع المكان غير صالح.');
+            }
+
+            const attributes = data.dynamicAttributes || [];
+
+            let imageUrls: string[] = [];
+            if (data.photos?.length) {
+              for (const photoUri of data.photos) {
+                try {
+                  const base64 = await uriToBase64(photoUri);
+                  const uploadRes = await api.uploadBase64(base64);
+                  const url = uploadRes?.data?.url;
+                  if (url && /^https?:\/\//i.test(url)) imageUrls.push(url);
+                } catch { /* skip */ }
+              }
+            }
+
+            const createRes = await api.createPlace({
+              name: data.name.trim(),
+              description: data.description?.trim() || undefined,
+              type_id: data.type_id.trim(),
+              latitude: Number(data.latitude),
+              longitude: Number(data.longitude),
+              phone_number: data.phoneNumber?.trim() || undefined,
+              attributes: attributes.length ? attributes : undefined,
+              image_urls: imageUrls.length ? imageUrls : undefined,
+            });
+
+            const newPlaceId = createRes?.data?.id;
+            if (newPlaceId && addUnitContext) {
+              try {
+                await placeService.linkUnitPlace(addUnitContext.unitRowId, newPlaceId);
+              } catch {
+                // Place created but link failed; user can retry via admin
+              }
+            }
+
+            await refresh();
+          }}
+          latitude={addUnitContext.latitude}
+          longitude={addUnitContext.longitude}
+        />
+      )}
+
       {/* ── Category Bar (Bottom) — إخفاؤه عند نافذة إضافة مكان حتى لا يغطي زر الإرسال (elevation + ترتيب الرسم) ── */}
-      {!addPlaceCoord && !isRouting && travelStep === 1 && (
+      {!addPlaceCoord && !addUnitContext && !isRouting && travelStep === 1 && (
       <View style={styles.categoryBar}>
         <ScrollView
           horizontal
@@ -1868,6 +2000,55 @@ export default function MapScreen() {
             setTravelChoice(null);
             setTravelPreviewLoading(false);
             clearRoute();
+          }}
+          onOpenChildPlace={(childPlaceId) => {
+            const existing = stores.find((s) => s.id === childPlaceId);
+            if (existing) {
+              setSelectedStore(existing);
+              mapRef.current?.animateToRegion(
+                {
+                  latitude: existing.latitude,
+                  longitude: existing.longitude,
+                  latitudeDelta: 0.008,
+                  longitudeDelta: 0.008,
+                },
+                600
+              );
+              return;
+            }
+            void (async () => {
+              try {
+                const p = await placeService.getById(childPlaceId);
+                const next = placeToStore(p);
+                setSelectedStore(next);
+                mapRef.current?.animateToRegion(
+                  {
+                    latitude: next.latitude,
+                    longitude: next.longitude,
+                    latitudeDelta: 0.008,
+                    longitudeDelta: 0.008,
+                  },
+                  600
+                );
+              } catch {
+                // ignore: user can still view parent
+              }
+            })();
+          }}
+          onAddUnit={(unit, parentStore) => {
+            if (user?.id === 'guest' || !user) {
+              Alert.alert('تنبيه', 'يجب تسجيل الدخول لإضافة وحدة');
+              return;
+            }
+            setAddUnitContext({
+              complexPlaceId: parentStore.id,
+              complexType: parentStore.category === 'مجمّع تجاري' ? 'commercial' : 'residential',
+              unitRowId: unit.id,
+              floorNumber: Number(unit.floor_number),
+              unitNumber: String(unit.unit_number),
+              latitude: parentStore.latitude,
+              longitude: parentStore.longitude,
+            });
           }}
         />
       )}

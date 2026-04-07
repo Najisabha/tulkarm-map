@@ -4,7 +4,7 @@
  */
 
 import { api } from '../api/client';
-import { mapApiToPlace, mapFormToPayload, Place, CreatePlacePayload, ComplexType, PlaceAttribute } from '../types/place';
+import { ComplexType, mapApiToPlace, mapFormToPayload, Place, PlaceAttribute } from '../types/place';
 
 export const placeService = {
   /** جلب جميع الأماكن (جميع الصفحات) */
@@ -35,6 +35,17 @@ export const placeService = {
   }): Promise<Place> {
     const payload = mapFormToPayload(form);
     const res = await api.createPlace(payload);
+    // If this is a complex, auto-generate its units (idempotent on the server).
+    if (payload.complex_kind && payload.floors_count && payload.units_per_floor) {
+      try {
+        await api.generateComplexUnits(res.data.id, {
+          floors_count: payload.floors_count,
+          units_per_floor: payload.units_per_floor,
+        });
+      } catch {
+        // Non-blocking: place creation succeeded; units can be generated later via admin.
+      }
+    }
     return mapApiToPlace(res.data);
   },
 
@@ -54,6 +65,16 @@ export const placeService = {
   }): Promise<Place> {
     const payload = mapFormToPayload(form);
     const res = await api.createPlaceFromAdmin(payload);
+    if (payload.complex_kind && payload.floors_count && payload.units_per_floor) {
+      try {
+        await api.generateComplexUnits(res.data.id, {
+          floors_count: payload.floors_count,
+          units_per_floor: payload.units_per_floor,
+        });
+      } catch {
+        // Non-blocking
+      }
+    }
     return mapApiToPlace(res.data);
   },
 
@@ -66,5 +87,19 @@ export const placeService = {
   /** حذف مكان */
   async delete(id: string): Promise<void> {
     await api.deletePlace(id);
+  },
+
+  // ── Complex helpers (optional callers) ────────────────────────────────────
+  async getComplex(placeId: string): Promise<{ complex: any; units: any[] }> {
+    const res = await api.getComplex(placeId);
+    return res.data;
+  },
+  async generateUnits(placeId: string, floorsCount: number, unitsPerFloor: number): Promise<any[]> {
+    const res = await api.generateComplexUnits(placeId, { floors_count: floorsCount, units_per_floor: unitsPerFloor });
+    return res.data.units;
+  },
+  async linkUnitPlace(unitId: string, childPlaceId: string | null): Promise<any> {
+    const res = await api.linkComplexUnitPlace(unitId, childPlaceId);
+    return res.data;
   },
 };

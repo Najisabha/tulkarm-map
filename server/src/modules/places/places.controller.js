@@ -1,3 +1,4 @@
+import { debugSessionLog } from '../../debugSessionLog.js';
 import { placesService } from './places.service.js';
 import { success, paginated } from '../../utils/response.js';
 
@@ -15,7 +16,15 @@ export const placesController = {
       return success(res, place, 201);
     } catch (err) {
       // #region agent log
-      fetch('http://127.0.0.1:7310/ingest/7168c5ca-ca5c-43c5-be0d-5064499bc23f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7f4b9d'},body:JSON.stringify({sessionId:'7f4b9d',runId:'pre-fix',hypothesisId:'H4',location:'places.controller.js:create',message:'create_failed',data:{errName:err?.name,errMsg:String(err?.message||'').slice(0,200),pgCode:err?.code},timestamp:Date.now()})}).catch(()=>{});
+      debugSessionLog({
+        hypothesisId: 'create_controller',
+        location: 'places.controller.js:create',
+        message: 'create_failed',
+        data: {
+          pgCode: err?.code,
+          errMsg: String(err?.message || '').slice(0, 400),
+        },
+      });
       // #endregion
       next(err);
     }

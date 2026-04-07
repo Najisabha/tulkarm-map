@@ -1,29 +1,444 @@
 import * as ImagePicker from 'expo-image-picker';
-import React, { useState, useEffect, useMemo } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  ScrollView,
-  Alert,
-  Modal,
-  KeyboardAvoidingView,
   ActivityIndicator,
-  Platform,
-  Linking,
+  Alert,
   Image,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useAuth } from '../../context/AuthContext';
-import { api } from '../../api/client';
-import { useStores, Store } from '../../context/StoreContext';
-import { useCategories } from '../../context/CategoryContext';
+import { api, type PlaceData } from '../../api/client';
+import { PlaceCard } from '../../components/places/PlaceCard';
+import { CategoryItem, CategorySelector } from '../../components/places/CategorySelector';
+import { ComplexBuildingViewer, ComplexUnit } from '../../components/places/ComplexBuildingViewer';
 import { LAYOUT } from '../../constants/layout';
 import { TULKARM_REGION } from '../../constants/tulkarmRegion';
+import { useAuth } from '../../context/AuthContext';
+import { useCategories } from '../../context/CategoryContext';
+import { Store, useStores } from '../../context/StoreContext';
+import { placeService } from '../../services/placeService';
+import { categoryService } from '../../services/categoryService';
+import { usePlacesStore } from '../../stores/usePlacesStore';
+import {
+  normalizePlaceTypeKind,
+  usesPlacePhoneAsStoreNumberField,
+  usesProductCategoryFieldsForPlaceType,
+} from '../../utils/placeTypeLabels';
+import { getPlaceAttrDefsForType } from '../../utils/placeFormAttrDefs';
 import { shadow } from '../../utils/shadowStyles';
-import { normalizePlaceTypeKind } from '../../utils/placeTypeLabels';
+
+function storeToDomainPlace(store: Store): any {
+  const phone = store.attributes?.find((a) => a.key === 'phone')?.value ?? store.phone ?? null;
+  return {
+    id: store.id,
+    name: store.name,
+    description: store.description || null,
+    phoneNumber: phone,
+    images: store.images?.map((img) => ({ id: img.id, url: img.image_url, sortOrder: img.sort_order })) ?? [],
+    location: { latitude: store.latitude, longitude: store.longitude },
+    typeId: store.type_id ?? '',
+    typeName: store.type_name ?? store.category,
+    kind: 'simple',
+    status: (store.status as any) ?? 'pending',
+    avgRating: parseFloat(store.avg_rating ?? '0'),
+    ratingCount: Number(store.rating_count ?? 0),
+    createdAt: store.createdAt,
+    attributes: store.attributes?.map((a) => ({ key: a.key, value: a.value, valueType: a.value_type })) ?? [],
+  };
+}
+
+function ComplexResidentialHousesModal({
+  visible,
+  complexStore,
+  allStores,
+  onClose,
+  onOpenHouse,
+}: {
+  visible: boolean;
+  complexStore: Store | null;
+  allStores: Store[];
+  onClose: () => void;
+  onOpenHouse: (houseStore: Store) => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [floorsCount, setFloorsCount] = useState<number>(1);
+  const [unitsPerFloor, setUnitsPerFloor] = useState<number>(1);
+
+  useEffect(() => {
+    if (!visible || !complexStore) return;
+    if (String(complexStore.category || '') !== 'مجمّع سكني') return;
+    setLoading(true);
+    setErr(null);
+    void (async () => {
+      try {
+        const res = await placeService.getComplex(complexStore.id);
+        const f = Number(res?.complex?.floors_count ?? 1);
+        const u = Number(res?.complex?.units_per_floor ?? 1);
+        setFloorsCount(Number.isFinite(f) && f >= 1 ? f : 1);
+        setUnitsPerFloor(Number.isFinite(u) && u >= 1 ? u : 1);
+      } catch (e: any) {
+        setErr(e?.message || 'فشل تحميل منازل المجمع');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [visible, complexStore?.id]);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={styles.housesOverlay}>
+        <TouchableOpacity style={styles.housesBackdrop} onPress={onClose} activeOpacity={1} />
+        <View style={styles.housesSheet}>
+          <View style={styles.housesSheetHeader}>
+            <TouchableOpacity onPress={onClose} activeOpacity={0.85}>
+              <Text style={styles.housesCloseText}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.housesSheetTitle} numberOfLines={1}>
+              منازل {complexStore?.name || 'المجمّع'}
+            </Text>
+            <View style={{ width: 28 }} />
+          </View>
+
+          {loading ? (
+            <View style={{ padding: 18 }}>
+              <ActivityIndicator />
+            </View>
+          ) : err ? (
+            <Text style={styles.housesErrorText}>{err}</Text>
+          ) : (
+            <View style={{ paddingHorizontal: 14, paddingBottom: 18 }}>
+              <ComplexBuildingViewer
+                placeId={complexStore?.id || ''}
+                complexType="residential"
+                floorsCount={floorsCount}
+                unitsPerFloor={unitsPerFloor}
+                onUnitPress={(unit: ComplexUnit) => {
+                  if (unit.child_place_id && unit.child_place_name) {
+                    const hit = allStores.find((s) => s.id === unit.child_place_id);
+                    if (hit) onOpenHouse(hit);
+                    else Alert.alert('تنبيه', 'تعذّر فتح بيانات المنزل. حدّث القائمة ثم حاول مجدداً.');
+                    return;
+                  }
+                  Alert.alert('تنبيه', 'هذه الوحدة غير مرتبطة بمنزل بعد.');
+                }}
+              />
+            </View>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ComplexUnitsManager({ placeId, complexLabel }: { placeId: string; complexLabel: string }) {
+  const { places, loadAll } = usePlacesStore();
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [units, setUnits] = useState<any[]>([]);
+  const [floorsCount, setFloorsCount] = useState('1');
+  const [unitsPerFloor, setUnitsPerFloor] = useState('1');
+  const [complexCoords, setComplexCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [placeTypes, setPlaceTypes] = useState<{ id: string; name: string }[]>([]);
+
+  const isResidential = complexLabel === 'مجمّع سكني';
+
+  const refresh = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await placeService.getComplex(placeId);
+      setUnits(res.units || []);
+      if (res.complex?.floors_count) setFloorsCount(String(res.complex.floors_count));
+      if (res.complex?.units_per_floor) setUnitsPerFloor(String(res.complex.units_per_floor));
+    } catch (e: any) {
+      setErr(e?.message || 'فشل تحميل الوحدات');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAll(true);
+    void refresh();
+  }, [placeId]);
+
+  useEffect(() => {
+    // Load the complex place itself (coords) + place types (for type_id selection)
+    void (async () => {
+      try {
+        const p = await placeService.getById(placeId);
+        setComplexCoords({ latitude: p.location.latitude, longitude: p.location.longitude });
+      } catch {
+        // ignore — user can still link existing places
+      }
+      try {
+        const res = await api.getPlaceTypes();
+        const list = Array.isArray(res?.data) ? res.data : [];
+        setPlaceTypes(list.map((t) => ({ id: t.id, name: t.name })));
+      } catch {
+        setPlaceTypes([]);
+      }
+    })();
+  }, [placeId]);
+
+  const findTypeIdByName = (name: string): string | null => {
+    const hit = placeTypes.find((t) => t.name === name);
+    return hit?.id ?? null;
+  };
+
+  const createAndLinkChildPlace = async (unit: any, childKind: 'house' | 'simple' | 'store') => {
+    const floor = Number(unit.floor_number);
+    const uNo = String(unit.unit_number);
+    const label = `${floor}-${uNo}`;
+
+    if (!complexCoords) {
+      Alert.alert('تنبيه', 'تعذّر قراءة إحداثيات المجمع. افتح/أغلق الشاشة ثم حاول مجدداً.');
+      return;
+    }
+
+    const isCommercial = !isResidential;
+    const typeName =
+      childKind === 'house'
+        ? 'منزل'
+        : childKind === 'store'
+          ? 'متجر تجاري'
+          : 'أخرى';
+
+    const typeId = findTypeIdByName(typeName);
+    if (!typeId) {
+      Alert.alert('خطأ', `لم يتم العثور على type_id لنوع: ${typeName}. تحقق من /api/place-types`);
+      return;
+    }
+
+    const baseAttrs: { key: string; value: string; value_type?: string }[] = [];
+    if (childKind === 'house') {
+      baseAttrs.push({ key: 'house_number', value: label, value_type: 'text' });
+    } else {
+      baseAttrs.push({ key: 'unit_number', value: label, value_type: 'text' });
+    }
+    if (isCommercial) {
+      // As requested: unit_type exists for commercial units (empty initially)
+      baseAttrs.push({ key: 'unit_type', value: '', value_type: 'text' });
+    }
+
+    const defaultName =
+      childKind === 'house'
+        ? `بيت ${label}`
+        : `وحدة ${label}`;
+
+    setLoading(true);
+    try {
+      const created = await api.createPlaceFromAdmin({
+        name: defaultName,
+        description: '',
+        type_id: typeId,
+        latitude: complexCoords.latitude,
+        longitude: complexCoords.longitude,
+        attributes: baseAttrs,
+        image_urls: [],
+      });
+      const childPlaceId = created.data.id;
+      await placeService.linkUnitPlace(unit.id, childPlaceId);
+      await loadAll(true);
+      await refresh();
+      Alert.alert('✅ تم', `تم إنشاء مكان وربطه بالوحدة ${label}`);
+    } catch (e: any) {
+      Alert.alert('خطأ', e?.message || 'فشل إنشاء/ربط المكان');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generate = async () => {
+    const f = parseInt(floorsCount);
+    const u = parseInt(unitsPerFloor);
+    if (!Number.isFinite(f) || f < 1) return Alert.alert('تنبيه', 'عدد الطوابق غير صالح');
+    if (!Number.isFinite(u) || u < 1) return Alert.alert('تنبيه', 'عدد الوحدات غير صالح');
+    setLoading(true);
+    try {
+      await placeService.generateUnits(placeId, f, u);
+      await refresh();
+      Alert.alert('✅ تم', 'تم توليد الوحدات');
+    } catch (e: any) {
+      Alert.alert('خطأ', e?.message || 'فشل توليد الوحدات');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const linkPlace = async (unitId: string, childPlaceId: string | null) => {
+    setLoading(true);
+    try {
+      await placeService.linkUnitPlace(unitId, childPlaceId);
+      await refresh();
+    } catch (e: any) {
+      Alert.alert('خطأ', e?.message || 'فشل الربط');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateUnitType = async (childPlaceId: string, unitType: string) => {
+    try {
+      const place = places.find((p) => p.id === childPlaceId);
+      const attrs = (place?.attributes || []).map((a) => ({ key: a.key, value: a.value, value_type: a.valueType }));
+      const filtered = attrs.filter((a) => a.key !== 'unit_type');
+      if (unitType.trim()) filtered.push({ key: 'unit_type', value: unitType.trim(), value_type: 'text' });
+      await placeService.update(childPlaceId, { attributes: filtered });
+      await loadAll(true);
+      Alert.alert('✅ تم', 'تم حفظ نوع الوحدة');
+    } catch (e: any) {
+      Alert.alert('خطأ', e?.message || 'فشل حفظ نوع الوحدة');
+    }
+  };
+
+  const placeOptions = useMemo(() => {
+    // Places that can be linked to units: simple/categorized/house (exclude complexes)
+    return places.filter((p) => p.kind !== 'complex');
+  }, [places]);
+
+  return (
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+      <Text style={{ fontSize: 14, fontWeight: '800', color: '#111827', textAlign: 'right' }}>
+        توليد وحدات (idempotent)
+      </Text>
+      <View style={{ flexDirection: 'row-reverse', gap: 10, marginTop: 10 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textAlign: 'right' }}>عدد الطوابق</Text>
+          <TextInput value={floorsCount} onChangeText={setFloorsCount} style={styles.formInput} keyboardType="numeric" textAlign="center" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textAlign: 'right' }}>وحدات/طابق</Text>
+          <TextInput value={unitsPerFloor} onChangeText={setUnitsPerFloor} style={styles.formInput} keyboardType="numeric" textAlign="center" />
+        </View>
+      </View>
+      <TouchableOpacity style={[styles.submitBtn, loading && styles.submitBtnDisabled]} onPress={() => void generate()} disabled={loading} activeOpacity={0.85}>
+        <Text style={styles.submitBtnText}>⚙️ توليد/تحديث الوحدات</Text>
+      </TouchableOpacity>
+
+      {err ? (
+        <Text style={{ marginTop: 10, color: '#EF4444', textAlign: 'right' }}>{err}</Text>
+      ) : null}
+
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: 16 }} />
+      ) : (
+        <View style={{ marginTop: 16, gap: 10 }}>
+          {units.map((u) => {
+            const label = `${u.floor_number}-${u.unit_number}`;
+            const linked = u.child_place_id ? placeOptions.find((p) => p.id === u.child_place_id) : null;
+            const unitType = linked?.attributes?.find((a) => a.key === 'unit_type')?.value ?? '';
+            return (
+              <View key={u.id} style={styles.unitCard}>
+                <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 14, fontWeight: '900', color: '#111827' }}>
+                    {isResidential ? 'بيت' : 'وحدة'} {label}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: linked ? '#16A34A' : '#9CA3AF', fontWeight: '800' }}>
+                    {linked ? 'مرتبط' : 'غير مرتبط'}
+                  </Text>
+                </View>
+
+                <Text style={{ marginTop: 6, fontSize: 12, color: '#374151', textAlign: 'right' }}>
+                  المكان التابع: {linked ? linked.name : '—'}
+                </Text>
+
+                {!linked && (
+                  <View style={{ marginTop: 10, flexDirection: 'row-reverse', gap: 10, flexWrap: 'wrap' }}>
+                    {isResidential ? (
+                      <TouchableOpacity
+                        style={[styles.storeActionBtn, styles.storeActionEdit]}
+                        onPress={() => void createAndLinkChildPlace(u, 'house')}
+                        activeOpacity={0.85}
+                        disabled={loading}
+                      >
+                        <Text style={styles.storeActionEditText}>➕ إنشاء بيت وربطه</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          style={[styles.storeActionBtn, styles.storeActionEdit]}
+                          onPress={() => void createAndLinkChildPlace(u, 'simple')}
+                          activeOpacity={0.85}
+                          disabled={loading}
+                        >
+                          <Text style={styles.storeActionEditText}>➕ إنشاء مكان بسيط وربطه</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.storeActionBtn, styles.storeActionShow]}
+                          onPress={() => void createAndLinkChildPlace(u, 'store')}
+                          activeOpacity={0.85}
+                          disabled={loading}
+                        >
+                          <Text style={styles.storeActionShowText}>➕ إنشاء متجر وربطه</Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </View>
+                )}
+
+                <View style={{ marginTop: 8 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textAlign: 'right' }}>
+                    اربط بمعرّف مكان
+                  </Text>
+                  <TextInput
+                    defaultValue={u.child_place_id ?? ''}
+                    placeholder="ضع placeId هنا (أو اتركه فارغ لفك الربط)"
+                    placeholderTextColor="#9CA3AF"
+                    style={styles.formInput}
+                    textAlign="left"
+                    onSubmitEditing={(e) => {
+                      const v = String(e.nativeEvent.text || '').trim();
+                      void linkPlace(u.id, v ? v : null);
+                    }}
+                  />
+                  <Text style={{ fontSize: 11, color: '#6B7280', textAlign: 'right', marginTop: 4 }}>
+                    Enter لحفظ الربط
+                  </Text>
+                </View>
+
+                {!isResidential && linked && (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textAlign: 'right' }}>نوع الوحدة (unit_type)</Text>
+                    <TextInput
+                      defaultValue={unitType}
+                      placeholder="مثال: متجر / مطعم / صيدلية ..."
+                      placeholderTextColor="#9CA3AF"
+                      style={styles.formInput}
+                      textAlign="right"
+                      onSubmitEditing={(e) => void updateUnitType(linked.id, String(e.nativeEvent.text || ''))}
+                    />
+                    <Text style={{ fontSize: 11, color: '#6B7280', textAlign: 'right', marginTop: 4 }}>Enter لحفظ النوع</Text>
+                  </View>
+                )}
+
+                {u.child_place_id && (
+                  <TouchableOpacity
+                    style={[styles.storeActionBtn, styles.storeActionDelete, { marginTop: 10 }]}
+                    onPress={() => void linkPlace(u.id, null)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.storeActionDeleteText}>🔗 فك الربط</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
 
 interface AttrDef {
   id: string;
@@ -40,16 +455,55 @@ interface EditableImage {
 
 const ATTR_LABELS: Record<string, string> = {
   house_number: 'رقم المنزل',
-  store_number: 'رقم المتجر',
+  store_number: 'رقم الهاتف',
   location_text: 'الموقع',
-  store_type: 'التصنيف الرئيسي للمتجر',
-  store_category: 'التصنيف الفرعي للمتجر',
+  store_type: 'التصنيف الرئيسي',
+  store_category: 'التصنيف الفرعي',
   complex_number: 'رقم المجمع',
   floors_count: 'عدد الطوابق',
   houses_per_floor: 'المنازل بكل طابق',
   stores_per_floor: 'المتاجر بكل طابق',
   phone: 'رقم الهاتف',
 };
+
+/** متجر + مطعم + مكتب + … — نفس شجرة «شجرة التصنيفات» حسب place_type_id */
+function needsPlaceCategoryTree(typeName: string): boolean {
+  return normalizePlaceTypeKind(typeName) === 'store' || usesProductCategoryFieldsForPlaceType(typeName);
+}
+
+function findSubCategoryNameInMap(
+  mainToSubs: Record<string, CategoryItem[]>,
+  subId: string
+): string | undefined {
+  for (const subs of Object.values(mainToSubs)) {
+    const hit = subs.find((s) => s.id === subId);
+    if (hit) return hit.name;
+  }
+  return undefined;
+}
+
+async function fetchPlaceCategoryTreeData(placeTypeId: string): Promise<{
+  mains: CategoryItem[];
+  map: Record<string, CategoryItem[]>;
+}> {
+  const tree = await categoryService.getPlaceCategoryTree(placeTypeId);
+  const mains: CategoryItem[] = tree.map((t) => ({
+    id: t.main.id,
+    name: t.main.name,
+    emoji: t.main.emoji ?? null,
+    color: t.main.color ?? null,
+  }));
+  const map: Record<string, CategoryItem[]> = {};
+  for (const t of tree) {
+    map[t.main.id] = (t.sub_categories || []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      emoji: s.emoji ?? null,
+      color: s.color ?? null,
+    }));
+  }
+  return { mains, map };
+}
 
 function catEmoji(cats: { name: string; emoji: string }[], name: string) {
   return cats.find((c) => c.name === name)?.emoji || '\u{1F4CD}';
@@ -69,7 +523,18 @@ export default function AdminStoresScreen() {
   const { user } = useAuth();
   const { categories } = useCategories();
   const { stores, deleteStore, refreshStores } = useStores();
-  const managedStores = useMemo(() => stores, [stores]);
+  const [residentialChildIds, setResidentialChildIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    void api.getResidentialComplexChildPlaceIds()
+      .then((res) => setResidentialChildIds(new Set(res?.data?.child_place_ids ?? [])))
+      .catch(() => setResidentialChildIds(new Set()));
+  }, [stores]);
+
+  const managedStores = useMemo(
+    () => stores.filter((s) => !residentialChildIds.has(s.id)),
+    [stores, residentialChildIds],
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'visible' | 'hidden'>('all');
   const kindFilter = useMemo(() => {
@@ -141,6 +606,9 @@ export default function AdminStoresScreen() {
   );
 
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showUnitsModal, setShowUnitsModal] = useState(false);
+  const [showResidentialHousesModal, setShowResidentialHousesModal] = useState(false);
+  const [selectedResidentialComplex, setSelectedResidentialComplex] = useState<Store | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [editImages, setEditImages] = useState<EditableImage[]>([]);
@@ -157,6 +625,35 @@ export default function AdminStoresScreen() {
   const [attrDefs, setAttrDefs] = useState<AttrDef[]>([]);
   const [editAttrDefs, setEditAttrDefs] = useState<AttrDef[]>([]);
   const [owners, setOwners] = useState<{ id: string; name: string; email: string; role: string }[]>([]);
+
+  const editingIsComplex = useMemo(() => {
+    const cat = String(editingStore?.category || '');
+    return cat === 'مجمّع سكني' || cat === 'مجمّع تجاري';
+  }, [editingStore?.id, editingStore?.category]);
+
+  const [addPcMainCategories, setAddPcMainCategories] = useState<CategoryItem[]>([]);
+  const [addPcSubCategories, setAddPcSubCategories] = useState<CategoryItem[]>([]);
+  const [addPcMainToSubs, setAddPcMainToSubs] = useState<Record<string, CategoryItem[]>>({});
+  const [loadingAddPcTree, setLoadingAddPcTree] = useState(false);
+  const [addPcShowMainList, setAddPcShowMainList] = useState(false);
+  const [addPcShowSubList, setAddPcShowSubList] = useState(false);
+  const [addPcMainColor, setAddPcMainColor] = useState('#2E86AB');
+  const [addPcCategoryIds, setAddPcCategoryIds] = useState<{ mainId: string | null; subId: string | null }>({
+    mainId: null,
+    subId: null,
+  });
+
+  const [editPcMainCategories, setEditPcMainCategories] = useState<CategoryItem[]>([]);
+  const [editPcSubCategories, setEditPcSubCategories] = useState<CategoryItem[]>([]);
+  const [editPcMainToSubs, setEditPcMainToSubs] = useState<Record<string, CategoryItem[]>>({});
+  const [loadingEditPcTree, setLoadingEditPcTree] = useState(false);
+  const [editPcShowMainList, setEditPcShowMainList] = useState(false);
+  const [editPcShowSubList, setEditPcShowSubList] = useState(false);
+  const [editPcMainColor, setEditPcMainColor] = useState('#2E86AB');
+  const [editPcCategoryIds, setEditPcCategoryIds] = useState<{ mainId: string | null; subId: string | null }>({
+    mainId: null,
+    subId: null,
+  });
 
   useEffect(() => {
     if (categories.length > 0 && !form.category?.trim()) {
@@ -183,6 +680,11 @@ export default function AdminStoresScreen() {
     }
   }, [params.editStoreId, stores]);
 
+  const canManageUnits = useMemo(() => {
+    const cat = String(editingStore?.category || '');
+    return cat === 'مجمّع سكني' || cat === 'مجمّع تجاري';
+  }, [editingStore?.id, editingStore?.category]);
+
   const loadAttrDefs = async (catName: string) => {
     const cat = categories.find((c) => c.name === catName);
     if (!cat) return [];
@@ -195,13 +697,66 @@ export default function AdminStoresScreen() {
   };
 
   const handleCategoryChange = async (catName: string, isEdit: boolean) => {
-    const defs = await loadAttrDefs(catName);
-    if (isEdit) {
-      setEditAttrDefs(defs);
-      setEditForm((p) => ({ ...p, category: catName }));
+    if (isEdit && editingIsComplex) return;
+    const fixedDefs = getPlaceAttrDefsForType(catName);
+    const hasFixedDefs = fixedDefs.length > 0 && fixedDefs[0].key !== 'location_text';
+    if (hasFixedDefs) {
+      if (isEdit) setEditAttrDefs(fixedDefs);
+      else setAttrDefs(fixedDefs);
     } else {
-      setAttrDefs(defs);
-      setForm((p) => ({ ...p, category: catName, dynamicAttrs: {} }));
+      const defs = await loadAttrDefs(catName);
+      if (isEdit) setEditAttrDefs(defs);
+      else setAttrDefs(defs);
+    }
+    const cat = categories.find((c) => c.name === catName);
+    if (needsPlaceCategoryTree(catName) && cat?.id) {
+      setLoadingAddPcTree(!isEdit);
+      setLoadingEditPcTree(!!isEdit);
+      try {
+        const { mains, map } = await fetchPlaceCategoryTreeData(cat.id);
+        if (isEdit) {
+          setEditPcMainCategories(mains);
+          setEditPcMainToSubs(map);
+          setEditPcSubCategories([]);
+          setEditPcCategoryIds({ mainId: null, subId: null });
+          setEditForm((p) => ({ ...p, category: catName, dynamicAttrs: {} }));
+        } else {
+          setAddPcMainCategories(mains);
+          setAddPcMainToSubs(map);
+          setAddPcSubCategories([]);
+          setAddPcCategoryIds({ mainId: null, subId: null });
+          setForm((p) => ({ ...p, category: catName, dynamicAttrs: {} }));
+        }
+      } catch {
+        if (isEdit) {
+          setEditPcMainCategories([]);
+          setEditPcMainToSubs({});
+          setEditPcSubCategories([]);
+        } else {
+          setAddPcMainCategories([]);
+          setAddPcMainToSubs({});
+          setAddPcSubCategories([]);
+        }
+        if (isEdit) setEditForm((p) => ({ ...p, category: catName, dynamicAttrs: {} }));
+        else setForm((p) => ({ ...p, category: catName, dynamicAttrs: {} }));
+      } finally {
+        setLoadingAddPcTree(false);
+        setLoadingEditPcTree(false);
+      }
+    } else {
+      if (isEdit) {
+        setEditPcMainCategories([]);
+        setEditPcMainToSubs({});
+        setEditPcSubCategories([]);
+        setEditPcCategoryIds({ mainId: null, subId: null });
+        setEditForm((p) => ({ ...p, category: catName, dynamicAttrs: {} }));
+      } else {
+        setAddPcMainCategories([]);
+        setAddPcMainToSubs({});
+        setAddPcSubCategories([]);
+        setAddPcCategoryIds({ mainId: null, subId: null });
+        setForm((p) => ({ ...p, category: catName, dynamicAttrs: {} }));
+      }
     }
   };
 
@@ -229,13 +784,44 @@ export default function AdminStoresScreen() {
       ownerId: null,
     });
     setAttrDefs([]);
+    setAddPcMainCategories([]);
+    setAddPcMainToSubs({});
+    setAddPcSubCategories([]);
+    setAddPcCategoryIds({ mainId: null, subId: null });
+    setAddPcShowMainList(false);
+    setAddPcShowSubList(false);
+    setAddPcMainColor('#2E86AB');
   };
 
   const handleOpenAdd = async () => {
     resetForm();
     if (defaultCategory) {
-      const defs = await loadAttrDefs(defaultCategory);
-      setAttrDefs(defs);
+      const fixedDefs = getPlaceAttrDefsForType(defaultCategory);
+      const hasFixedDefs = fixedDefs.length > 0 && fixedDefs[0].key !== 'location_text';
+      if (hasFixedDefs) {
+        setAttrDefs(fixedDefs);
+      } else {
+        const defs = await loadAttrDefs(defaultCategory);
+        setAttrDefs(defs);
+      }
+      if (needsPlaceCategoryTree(defaultCategory)) {
+        const cat = categories.find((c) => c.name === defaultCategory);
+        if (cat?.id) {
+          setLoadingAddPcTree(true);
+          try {
+            const { mains, map } = await fetchPlaceCategoryTreeData(cat.id);
+            setAddPcMainCategories(mains);
+            setAddPcMainToSubs(map);
+            setAddPcSubCategories([]);
+          } catch {
+            setAddPcMainCategories([]);
+            setAddPcMainToSubs({});
+            setAddPcSubCategories([]);
+          } finally {
+            setLoadingAddPcTree(false);
+          }
+        }
+      }
     }
     setShowAddModal(true);
   };
@@ -262,8 +848,14 @@ export default function AdminStoresScreen() {
     }
     setSaving(true);
     try {
+      const unifiedPhone = usesPlacePhoneAsStoreNumberField(form.category);
+      const treeMode = needsPlaceCategoryTree(form.category);
       const attributes = Object.entries(form.dynamicAttrs)
-        .filter(([, v]) => v.trim())
+        .filter(([key, v]) => {
+          if (!v.trim()) return false;
+          if (unifiedPhone && key === 'store_number') return false;
+          return true;
+        })
         .map(([key, value]) => {
           const def = attrDefs.find((d) => d.key === key);
           return { key, value: value.trim(), value_type: def?.value_type || 'string' };
@@ -274,6 +866,9 @@ export default function AdminStoresScreen() {
         type_id: cat.id,
         latitude: lat,
         longitude: lng,
+        phone_number: unifiedPhone ? form.dynamicAttrs['store_number']?.trim() || undefined : undefined,
+        main_category_id: treeMode ? addPcCategoryIds.mainId ?? undefined : undefined,
+        sub_category_id: treeMode ? addPcCategoryIds.subId ?? undefined : undefined,
         attributes: attributes.length ? attributes : undefined,
       });
 
@@ -294,6 +889,10 @@ export default function AdminStoresScreen() {
 
   const openEdit = async (store: Store) => {
     setEditingStore(store);
+    setShowUnitsModal(false);
+    setShowResidentialHousesModal(false);
+    setEditPcShowMainList(false);
+    setEditPcShowSubList(false);
     if (store.images && store.images.length > 0) {
       setEditImages(store.images.map((img) => ({ id: img.id, image_url: img.image_url })));
     } else {
@@ -305,6 +904,71 @@ export default function AdminStoresScreen() {
         existingAttrs[attr.key] = attr.value;
       }
     }
+
+    let fullPlace: PlaceData | null = null;
+    try {
+      const res = await api.getPlace(store.id);
+      fullPlace = res.data ?? null;
+    } catch {
+      fullPlace = null;
+    }
+
+    const unifiedPhone = usesPlacePhoneAsStoreNumberField(store.category);
+    if (unifiedPhone && !existingAttrs['store_number'] && fullPlace?.phone_number) {
+      existingAttrs['store_number'] = fullPlace.phone_number;
+    }
+
+    let mainIdResolved: string | null = fullPlace?.main_category_id ?? null;
+    let subIdResolved: string | null = fullPlace?.sub_category_id ?? null;
+
+    if (needsPlaceCategoryTree(store.category) && store.type_id) {
+      setLoadingEditPcTree(true);
+      try {
+        const { mains, map } = await fetchPlaceCategoryTreeData(store.type_id);
+        setEditPcMainCategories(mains);
+        setEditPcMainToSubs(map);
+
+        if (mainIdResolved) {
+          const m = mains.find((x) => x.id === mainIdResolved);
+          if (m) {
+            if (!existingAttrs['store_type']) existingAttrs['store_type'] = m.name;
+            setEditPcMainColor(m.color || '#2E86AB');
+            setEditPcSubCategories(map[mainIdResolved] ?? []);
+          }
+        } else if (existingAttrs['store_type']) {
+          const m = mains.find((x) => x.name === existingAttrs['store_type']);
+          if (m) {
+            mainIdResolved = m.id;
+            setEditPcMainColor(m.color || '#2E86AB');
+            setEditPcSubCategories(map[m.id] ?? []);
+          }
+        }
+
+        if (subIdResolved) {
+          const sName = findSubCategoryNameInMap(map, subIdResolved);
+          if (sName && !existingAttrs['store_category']) existingAttrs['store_category'] = sName;
+        } else if (existingAttrs['store_category'] && mainIdResolved) {
+          const subs = map[mainIdResolved] ?? [];
+          const s = subs.find((x) => x.name === existingAttrs['store_category']);
+          if (s) subIdResolved = s.id;
+        }
+
+        setEditPcCategoryIds({ mainId: mainIdResolved, subId: subIdResolved });
+      } catch {
+        setEditPcMainCategories([]);
+        setEditPcMainToSubs({});
+        setEditPcSubCategories([]);
+        setEditPcCategoryIds({ mainId: null, subId: null });
+      } finally {
+        setLoadingEditPcTree(false);
+      }
+    } else {
+      setEditPcMainCategories([]);
+      setEditPcMainToSubs({});
+      setEditPcSubCategories([]);
+      setEditPcCategoryIds({ mainId: null, subId: null });
+    }
+
     setEditForm({
       name: store.name,
       description: store.description,
@@ -313,20 +977,56 @@ export default function AdminStoresScreen() {
       lng: String(store.longitude),
       dynamicAttrs: existingAttrs,
     });
-    const defs = await loadAttrDefs(store.category);
-    if (defs.length > 0) {
-      setEditAttrDefs(defs);
+
+    const fixedDefs = getPlaceAttrDefsForType(store.category);
+    const hasFixedDefs = fixedDefs.length > 0 && fixedDefs[0].key !== 'location_text';
+    if (hasFixedDefs) {
+      setEditAttrDefs(fixedDefs);
     } else {
-      // Fallback: show persisted attributes even when type definitions are missing.
-      const inferredDefs: AttrDef[] = (store.attributes || []).map((a) => ({
-        id: `inferred-${a.key}`,
-        key: a.key,
-        label: ATTR_LABELS[a.key] || a.key.replaceAll('_', ' '),
-        value_type: a.value_type || 'string',
-        is_required: false,
-      }));
-      setEditAttrDefs(inferredDefs);
+      const defs = await loadAttrDefs(store.category);
+      if (defs.length > 0) {
+        setEditAttrDefs(defs);
+      } else {
+        const inferredDefs: AttrDef[] = (store.attributes || []).map((a) => ({
+          id: `inferred-${a.key}`,
+          key: a.key,
+          label: ATTR_LABELS[a.key] || a.key.replaceAll('_', ' '),
+          value_type: a.value_type || 'string',
+          is_required: false,
+        }));
+        setEditAttrDefs(inferredDefs);
+      }
     }
+  };
+
+  const handleAddPcMainSelect = (name: string, id: string, color: string) => {
+    setAddPcMainColor(color);
+    setAddPcShowMainList(false);
+    setAddPcSubCategories(addPcMainToSubs[id] ?? []);
+    setAddPcCategoryIds({ mainId: id, subId: null });
+    setForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, store_type: name, store_category: '' } }));
+  };
+
+  const handleAddPcSubSelect = (name: string) => {
+    const sub = addPcSubCategories.find((s) => s.name === name);
+    setAddPcShowSubList(false);
+    setAddPcCategoryIds((prev) => ({ ...prev, subId: sub?.id ?? null }));
+    setForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, store_category: name } }));
+  };
+
+  const handleEditPcMainSelect = (name: string, id: string, color: string) => {
+    setEditPcMainColor(color);
+    setEditPcShowMainList(false);
+    setEditPcSubCategories(editPcMainToSubs[id] ?? []);
+    setEditPcCategoryIds({ mainId: id, subId: null });
+    setEditForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, store_type: name, store_category: '' } }));
+  };
+
+  const handleEditPcSubSelect = (name: string) => {
+    const sub = editPcSubCategories.find((s) => s.name === name);
+    setEditPcShowSubList(false);
+    setEditPcCategoryIds((prev) => ({ ...prev, subId: sub?.id ?? null }));
+    setEditForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, store_category: name } }));
   };
 
   const handleAddEditImage = async () => {
@@ -397,20 +1097,39 @@ export default function AdminStoresScreen() {
     }
     try {
       const cat = categories.find((c) => c.name === editForm.category);
+      const unifiedPhone = usesPlacePhoneAsStoreNumberField(editForm.category);
+
       const attributes = Object.entries(editForm.dynamicAttrs)
-        .filter(([, v]) => v.trim())
+        .filter(([key, v]) => {
+          if (!v.trim()) return false;
+          if (unifiedPhone && key === 'store_number') return false;
+          return true;
+        })
         .map(([key, value]) => {
           const def = editAttrDefs.find((d) => d.key === key);
           return { key, value: value.trim(), value_type: def?.value_type || 'string' };
         });
-      await api.updatePlace(editingStore.id, {
+
+      const payload: Record<string, any> = {
         name: editForm.name.trim(),
         description: editForm.description.trim() || undefined,
         type_id: cat?.id,
         latitude: lat,
         longitude: lng,
         attributes: attributes.length ? attributes : undefined,
-      });
+      };
+
+      if (unifiedPhone) {
+        payload.phone_number = editForm.dynamicAttrs['store_number']?.trim() || null;
+      }
+
+      const treeMode = needsPlaceCategoryTree(editForm.category);
+      if (treeMode) {
+        payload.main_category_id = editPcCategoryIds.mainId ?? null;
+        payload.sub_category_id = editPcCategoryIds.subId ?? null;
+      }
+
+      await api.updatePlace(editingStore.id, payload);
       await refreshStores();
       setEditingStore(null);
       Alert.alert('\u2705 \u062A\u0645', '\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0643\u0627\u0646');
@@ -482,34 +1201,96 @@ export default function AdminStoresScreen() {
     await Linking.openURL(url);
   };
 
-  const renderAttrFields = (defs: AttrDef[], values: Record<string, string>, onChange: (key: string, value: string) => void) => {
+  const renderAttrFields = (
+    defs: AttrDef[],
+    values: Record<string, string>,
+    onChange: (key: string, value: string) => void,
+    treeCtx: {
+      mode: 'add' | 'edit';
+      categoryName: string;
+      mainCategories: CategoryItem[];
+      subCategories: CategoryItem[];
+      loading: boolean;
+      showMain: boolean;
+      showSub: boolean;
+      selectedMainColor: string;
+      onOpenMain: () => void;
+      onCloseMain: () => void;
+      onMainSelect: (name: string, id: string, color: string) => void;
+      onOpenSub: () => void;
+      onCloseSub: () => void;
+      onSubSelect: (name: string) => void;
+    } | null
+  ) => {
     if (defs.length === 0) return null;
+    const useTree = Boolean(treeCtx && needsPlaceCategoryTree(treeCtx.categoryName));
+    const mainLab = defs.find((d) => d.key === 'store_type')?.label ?? 'التصنيف الرئيسي';
+    const subLab = defs.find((d) => d.key === 'store_category')?.label ?? 'التصنيف الفرعي';
+
     return (
       <>
-        {defs.map((def) => (
-          <View key={def.id} style={styles.formGroup}>
-            <Text style={styles.formLabel}>{def.label}{def.is_required ? ' *' : ''}</Text>
-            {def.value_type === 'boolean' ? (
-              <TouchableOpacity
-                style={[styles.boolToggle, values[def.key] === 'true' && styles.boolToggleActive]}
-                onPress={() => onChange(def.key, values[def.key] === 'true' ? 'false' : 'true')}
-              >
-                <Text style={styles.boolToggleText}>
-                  {values[def.key] === 'true' ? '\u2705 \u0646\u0639\u0645' : '\u274C \u0644\u0627'}
+        {defs.map((def) => {
+          if (def.key === 'store_category' && useTree) {
+            return null;
+          }
+
+          const isPhone = def.value_type === 'phone';
+          const kbType = isPhone ? 'phone-pad' : def.value_type === 'number' ? 'numeric' : 'default';
+
+          if (def.key === 'store_type' && useTree && treeCtx) {
+            return (
+              <View key={def.id} style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  {mainLab}
+                  {def.is_required ? ' *' : ''}
                 </Text>
-              </TouchableOpacity>
-            ) : (
-              <TextInput
-                style={styles.formInput}
-                placeholder={def.label}
-                value={values[def.key] || ''}
-                onChangeText={(t) => onChange(def.key, t)}
-                keyboardType={def.value_type === 'number' ? 'numeric' : 'default'}
-                textAlign="right"
-              />
-            )}
-          </View>
-        ))}
+                <CategorySelector
+                  mainCategories={treeCtx.mainCategories}
+                  subCategories={treeCtx.subCategories}
+                  selectedMain={values.store_type || ''}
+                  selectedSub={values.store_category || ''}
+                  selectedMainColor={treeCtx.selectedMainColor}
+                  loading={treeCtx.loading}
+                  mainLabel={mainLab}
+                  subLabel={subLab}
+                  showMainList={treeCtx.showMain}
+                  showSubList={treeCtx.showSub}
+                  onOpenMainList={treeCtx.onOpenMain}
+                  onCloseMainList={treeCtx.onCloseMain}
+                  onMainSelect={treeCtx.onMainSelect}
+                  onOpenSubList={treeCtx.onOpenSub}
+                  onCloseSubList={treeCtx.onCloseSub}
+                  onSubSelect={treeCtx.onSubSelect}
+                />
+              </View>
+            );
+          }
+
+          return (
+            <View key={def.id} style={styles.formGroup}>
+              <Text style={styles.formLabel}>{def.label}{def.is_required ? ' *' : ''}</Text>
+              {def.value_type === 'boolean' ? (
+                <TouchableOpacity
+                  style={[styles.boolToggle, values[def.key] === 'true' && styles.boolToggleActive]}
+                  onPress={() => onChange(def.key, values[def.key] === 'true' ? 'false' : 'true')}
+                >
+                  <Text style={styles.boolToggleText}>
+                    {values[def.key] === 'true' ? '\u2705 \u0646\u0639\u0645' : '\u274C \u0644\u0627'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TextInput
+                  style={styles.formInput}
+                  placeholder={isPhone ? 'مثال: 059xxxxxxx' : def.label}
+                  value={values[def.key] || ''}
+                  onChangeText={(t) => onChange(def.key, t)}
+                  keyboardType={kbType}
+                  textAlign="right"
+                />
+              )}
+            </View>
+          );
+        })}
       </>
     );
   };
@@ -587,6 +1368,7 @@ export default function AdminStoresScreen() {
             {filteredStores.map((store) => {
               const phone = store.attributes?.find((a) => a.key === 'phone')?.value;
               const typeColor = catColor(categories, store.category);
+              const isResidentialComplex = String(store.category || '') === 'مجمّع سكني';
               return (
                 <View key={store.id} style={styles.storeCard}>
                   <TouchableOpacity style={styles.storeCardBody} onPress={() => openEdit(store)} activeOpacity={0.75}>
@@ -595,28 +1377,25 @@ export default function AdminStoresScreen() {
                         <Text style={styles.storeTypeIconEmoji}>{catEmoji(categories, store.category)}</Text>
                       </View>
                       <View style={styles.storeCardMain}>
-                        <Text style={styles.storeCardName} numberOfLines={2}>{store.name}</Text>
-                        {store.description ? (
-                          <Text style={styles.storeCardDesc} numberOfLines={2}>{store.description}</Text>
-                        ) : null}
-                        <View style={styles.storeChipsRow}>
-                          <View style={[styles.storeChip, { borderColor: typeColor + '55' }]}>
-                            <Text style={[styles.storeChipText, { color: typeColor }]}>{store.category}</Text>
-                          </View>
-                          {phone ? (
-                            <TouchableOpacity
-                              style={styles.storeChipPhone}
-                              onPress={() => void handleCallPhone(phone)}
-                              activeOpacity={0.85}
-                            >
-                              <Text style={styles.storeChipPhoneText}>{'\u{1F4DE}'} {phone}</Text>
-                            </TouchableOpacity>
-                          ) : null}
-                        </View>
+                        <PlaceCard place={storeToDomainPlace(store)} />
                       </View>
                     </View>
                   </TouchableOpacity>
                   <View style={styles.storeActionRow}>
+                  {isResidentialComplex && (
+                    <TouchableOpacity
+                      style={[styles.storeActionBtn, styles.storeActionEdit]}
+                      onPress={(e: any) => {
+                        e?.stopPropagation?.();
+                        setSelectedResidentialComplex(store);
+                        setShowResidentialHousesModal(true);
+                      }}
+                      activeOpacity={0.85}
+                      disabled={saving}
+                    >
+                      <Text style={styles.storeActionEditText}>🏠 منازل المجمع السكني</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     style={[
                       styles.storeActionBtn,
@@ -716,7 +1495,29 @@ export default function AdminStoresScreen() {
                 ))}
               </View>
             </View>
-            {renderAttrFields(attrDefs, form.dynamicAttrs, (key, value) => setForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, [key]: value } })))}
+            {renderAttrFields(
+              attrDefs,
+              form.dynamicAttrs,
+              (key, value) => setForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, [key]: value } })),
+              needsPlaceCategoryTree(form.category)
+                ? {
+                    mode: 'add',
+                    categoryName: form.category,
+                    mainCategories: addPcMainCategories,
+                    subCategories: addPcSubCategories,
+                    loading: loadingAddPcTree,
+                    showMain: addPcShowMainList,
+                    showSub: addPcShowSubList,
+                    selectedMainColor: addPcMainColor,
+                    onOpenMain: () => setAddPcShowMainList(true),
+                    onCloseMain: () => setAddPcShowMainList(false),
+                    onMainSelect: handleAddPcMainSelect,
+                    onOpenSub: () => setAddPcShowSubList(true),
+                    onCloseSub: () => setAddPcShowSubList(false),
+                    onSubSelect: handleAddPcSubSelect,
+                  }
+                : null
+            )}
             <View style={styles.formGroup}>
               <Text style={styles.formLabel}>{'\u0627\u0644\u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A'}</Text>
               <View style={styles.coordsRow}>
@@ -752,15 +1553,61 @@ export default function AdminStoresScreen() {
               </View>
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>{'\u0627\u0644\u0641\u0626\u0629'}</Text>
+                {editingIsComplex ? (
+                  <Text style={styles.categoryLockedHint}>لا يمكن تعديل فئة المجمعات السكنية/التجارية</Text>
+                ) : null}
                 <View style={styles.chipsWrap}>
                   {[...categories].sort((a, b) => a.name.localeCompare(b.name, 'ar')).map((cat) => (
-                    <TouchableOpacity key={cat.id} style={[styles.categoryChip, editForm.category === cat.name && styles.categoryChipActive]} onPress={() => handleCategoryChange(cat.name, true)}>
-                      <Text style={[styles.categoryChipText, editForm.category === cat.name && styles.categoryChipTextActive]}>{cat.emoji} {cat.name}</Text>
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[
+                        styles.categoryChip,
+                        editForm.category === cat.name && styles.categoryChipActive,
+                        editingIsComplex && styles.categoryChipDisabled,
+                      ]}
+                      onPress={() => {
+                        if (editingIsComplex) return;
+                        void handleCategoryChange(cat.name, true);
+                      }}
+                      activeOpacity={0.85}
+                      disabled={editingIsComplex}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryChipText,
+                          editForm.category === cat.name && styles.categoryChipTextActive,
+                          editingIsComplex && styles.categoryChipTextDisabled,
+                        ]}
+                      >
+                        {cat.emoji} {cat.name}
+                      </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               </View>
-              {renderAttrFields(editAttrDefs, editForm.dynamicAttrs, (key, value) => setEditForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, [key]: value } })))}
+              {renderAttrFields(
+                editAttrDefs,
+                editForm.dynamicAttrs,
+                (key, value) => setEditForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, [key]: value } })),
+                needsPlaceCategoryTree(editForm.category)
+                  ? {
+                      mode: 'edit',
+                      categoryName: editForm.category,
+                      mainCategories: editPcMainCategories,
+                      subCategories: editPcSubCategories,
+                      loading: loadingEditPcTree,
+                      showMain: editPcShowMainList,
+                      showSub: editPcShowSubList,
+                      selectedMainColor: editPcMainColor,
+                      onOpenMain: () => setEditPcShowMainList(true),
+                      onCloseMain: () => setEditPcShowMainList(false),
+                      onMainSelect: handleEditPcMainSelect,
+                      onOpenSub: () => setEditPcShowSubList(true),
+                      onCloseSub: () => setEditPcShowSubList(false),
+                      onSubSelect: handleEditPcSubSelect,
+                    }
+                  : null
+              )}
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>الصور الحالية ({editImages.length})</Text>
                 {editImages.length > 0 ? (
@@ -792,6 +1639,17 @@ export default function AdminStoresScreen() {
                   <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0637\u0648\u0644'} value={editForm.lng} onChangeText={(t) => setEditForm((p) => ({ ...p, lng: t }))} keyboardType="decimal-pad" textAlign="center" />
                 </View>
               </View>
+
+              {canManageUnits && (
+                <TouchableOpacity
+                  style={styles.unitsBtn}
+                  onPress={() => setShowUnitsModal(true)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.unitsBtnText}>🏢 إدارة وحدات المجمع</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity style={styles.deleteBtn} onPress={() => editingStore && handleDelete(editingStore)}>
                 <Text style={styles.deleteBtnText}>{'\u{1F5D1}\uFE0F'} {'\u062D\u0630\u0641 \u0627\u0644\u0645\u0643\u0627\u0646'}</Text>
               </TouchableOpacity>
@@ -799,6 +1657,28 @@ export default function AdminStoresScreen() {
           )}
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Complex Units Modal */}
+      <Modal visible={showUnitsModal && !!editingStore} animationType="slide">
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowUnitsModal(false)}>
+              <Text style={styles.modalCancelText}>إغلاق</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>وحدات المجمع</Text>
+            <View style={{ width: 52 }} />
+          </View>
+          <ComplexUnitsManager placeId={editingStore?.id || ''} complexLabel={editingStore?.category || ''} />
+        </View>
+      </Modal>
+
+      <ComplexResidentialHousesModal
+        visible={showResidentialHousesModal}
+        complexStore={selectedResidentialComplex}
+        allStores={stores}
+        onClose={() => setShowResidentialHousesModal(false)}
+        onOpenHouse={(houseStore) => openEdit(houseStore)}
+      />
     </View>
   );
 }
@@ -815,6 +1695,24 @@ const styles = StyleSheet.create({
   headerBadge: { backgroundColor: '#F59E0B', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   headerBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   content: { flex: 1, padding: 16 },
+  unitsBtn: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 10,
+    alignItems: 'center',
+  },
+  unitsBtnText: { color: '#1D4ED8', fontSize: 14, fontWeight: '800' },
+  unitCard: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    padding: 12,
+  },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
   sectionTitleRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1A3A5C', textAlign: 'right' },
@@ -983,6 +1881,9 @@ const styles = StyleSheet.create({
   categoryChipActive: { backgroundColor: '#2E86AB' },
   categoryChipText: { fontSize: 14, color: '#374151', fontWeight: '500' },
   categoryChipTextActive: { color: '#fff', fontWeight: '700' },
+  categoryChipDisabled: { opacity: 0.55 },
+  categoryChipTextDisabled: { color: '#6B7280' },
+  categoryLockedHint: { marginTop: 6, color: '#6B7280', fontSize: 12, fontWeight: '700', textAlign: 'right' },
   coordsRow: { flexDirection: 'row', gap: 10 },
   coordInput: { flex: 1 },
   deleteBtn: { backgroundColor: '#FEE2E2', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 24 },
@@ -990,4 +1891,44 @@ const styles = StyleSheet.create({
   boolToggle: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1.5, borderColor: '#E5E7EB' },
   boolToggleActive: { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' },
   boolToggleText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+
+  housesOverlay: { flex: 1, justifyContent: 'flex-end' },
+  housesBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
+  housesSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    maxHeight: '82%',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  housesSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  housesSheetTitle: { flex: 1, fontSize: 15, fontWeight: '900', color: '#111827', textAlign: 'center' },
+  housesCloseText: { fontSize: 18, fontWeight: '900', color: '#111827' },
+  housesErrorText: { padding: 14, color: '#B91C1C', fontWeight: '800', textAlign: 'right' },
+  housesEmptyText: { padding: 14, color: '#6B7280', fontWeight: '800', textAlign: 'right' },
+  housesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 10,
+  },
+  housesRowIcon: { fontSize: 18 },
+  housesRowName: { flex: 1, fontSize: 14, fontWeight: '900', color: '#111827', textAlign: 'right' },
+  housesRowArrow: { width: 20, textAlign: 'left', color: '#64748B', fontWeight: '900' },
 });

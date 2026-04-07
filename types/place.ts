@@ -15,7 +15,9 @@ import { normalizePlaceTypeKind } from '../utils/placeTypeLabels';
 // ─── Enums / scalar types ────────────────────────────────────────────────────
 
 export type PlaceKind = 'simple' | 'categorized' | 'house' | 'complex';
-export type PlaceStatus = 'pending' | 'active' | 'rejected';
+// Server currently uses `active`; original brief used `approved`.
+// Keep both accepted and normalize where needed.
+export type PlaceStatus = 'pending' | 'active' | 'approved' | 'rejected';
 export type ComplexType = 'residential' | 'commercial';
 
 // ─── Sub-types ───────────────────────────────────────────────────────────────
@@ -180,7 +182,10 @@ export function mapApiToPlace(p: PlaceData): Place {
     typeId: p.type_id,
     typeName: p.type_name,
     kind,
-    status: (p.status as PlaceStatus) ?? 'pending',
+    status:
+      (String(p.status || '').toLowerCase() === 'approved'
+        ? 'active'
+        : (p.status as PlaceStatus)) ?? 'pending',
     avgRating: parseNumber(p.avg_rating),
     ratingCount: p.rating_count ?? 0,
     createdAt: p.created_at,

@@ -1,14 +1,14 @@
-import { AdminScreenIcon } from '../../components/admin/AdminScreenIcon';
-import type { AdminDashboardIconName } from '../../components/admin/adminScreenIconTypes';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { api, AdminStats, ApiResponse } from '../../api/client';
+import { AdminStats, api, ApiResponse } from '../../api/client';
+import { AdminScreenIcon } from '../../components/admin/AdminScreenIcon';
+import type { AdminDashboardIconName } from '../../components/admin/adminScreenIconTypes';
 import { LAYOUT } from '../../constants/layout';
-import { useAuth } from '../../context/AuthContext';
-import { useStores } from '../../context/StoreContext';
-import { shadow } from '../../utils/shadowStyles';
+import { useAuthStore } from '../../stores/useAuthStore';
+import { usePlacesStore } from '../../stores/usePlacesStore';
 import { normalizePlaceTypeKind } from '../../utils/placeTypeLabels';
+import { shadow } from '../../utils/shadowStyles';
 
 type StatCardDef = {
   label: string;
@@ -24,8 +24,30 @@ type StatCardDef = {
 export default function AdminScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ editStoreId?: string }>();
-  const { user, logout } = useAuth();
-  const { stores } = useStores();
+  const { user, logout, init } = useAuthStore();
+  const { places, loadAll } = usePlacesStore();
+  const stores = useMemo(
+    () =>
+      places.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description || '',
+        category: p.typeName,
+        type_name: p.typeName,
+        type_id: p.typeId,
+        latitude: p.location.latitude,
+        longitude: p.location.longitude,
+        phone: p.phoneNumber || undefined,
+        photos: p.images?.map((img) => img.url) || [],
+        status: p.status,
+        avg_rating: String(p.avgRating ?? '0'),
+        rating_count: p.ratingCount ?? 0,
+        attributes: p.attributes?.map((a) => ({ key: a.key, value: a.value, value_type: a.valueType })),
+        images: p.images?.map((img) => ({ id: img.id, image_url: img.url, sort_order: img.sortOrder })) || [],
+        createdAt: p.createdAt,
+      })),
+    [places]
+  );
   const activePlacesCount = useMemo(
     () => stores.filter((s) => String(s.status || '').toLowerCase() === 'active').length,
     [stores]
@@ -49,6 +71,15 @@ export default function AdminScreen() {
     }
     return out;
   }, [stores]);
+
+  // Hydrate Zustand auth and load places for admin dashboards.
+  useEffect(() => {
+    void init();
+  }, []);
+
+  useEffect(() => {
+    void loadAll(true);
+  }, []);
   const [stats, setStats] = useState<Partial<AdminStats>>({});
   const [mainCategoriesCount, setMainCategoriesCount] = useState<number>(0);
   const statCards: StatCardDef[] = useMemo(
@@ -268,6 +299,18 @@ export default function AdminScreen() {
                 <AdminScreenIcon name="cloud-download" size={26} color="#9333EA" webGlyph="💾" />
               </View>
               <Text style={styles.menuGridCellText}>النسخ الاحتياطي</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.menuGridRow}>
+            <TouchableOpacity
+              style={[styles.menuGridCell, { flex: 1, marginHorizontal: 6 }]}
+              onPress={() => router.push('/(main)/admin-classification-tree')}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.menuIconWrap, { backgroundColor: '#ECFDF5' }]}>
+                <AdminScreenIcon name="account-tree" size={26} color="#059669" webGlyph="🌳" />
+              </View>
+              <Text style={styles.menuGridCellText}>شجرة التصنيفات</Text>
             </TouchableOpacity>
           </View>
           <TouchableOpacity style={styles.logoutBtn} onPress={() => { logout(); router.replace('/(main)/map'); }} activeOpacity={0.85}>

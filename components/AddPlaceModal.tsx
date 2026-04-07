@@ -1,33 +1,35 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { api, PlaceType } from '../api/client';
-import { shadow } from '../utils/shadowStyles';
+import { categoryService } from '../services/categoryService';
+import { PlaceKind } from '../types/place';
+import { getPlaceAttrDefsForType } from '../utils/placeFormAttrDefs';
+import { validatePlaceForm } from '../utils/placeFormValidation';
 import {
   CANONICAL_PLACE_TYPE_NAMES,
+  getAddPlaceModalPhotoLabel,
   getPlaceTypeDisplayName,
   getPlaceTypePluralLabel,
   getPlaceTypeProductCategoryFieldLabels,
   normalizePlaceTypeKind,
   resolveCanonicalPlaceTypeKey,
+  usesPlacePhoneAsStoreNumberField,
   usesProductCategoryFieldsForPlaceType,
 } from '../utils/placeTypeLabels';
+import { shadow } from '../utils/shadowStyles';
 import { isInsideTulkarm } from '../utils/tulkarmGovernorate';
-import { validatePlaceForm } from '../utils/placeFormValidation';
-import { PlaceKind } from '../types/place';
-import { ErrorBanner } from './places/ErrorBanner';
 import { CategoryItem } from './places/CategorySelector';
+import { ErrorBanner } from './places/ErrorBanner';
 import { PlaceForm, PlaceFormState } from './places/PlaceForm';
 
 const MAX_PHOTOS = 3;
@@ -73,6 +75,10 @@ interface AddPlaceModalProps {
   longitude: number;
   submitSuccessTitle?: string;
   submitSuccessMessage?: string;
+  /** Auto-select a type by canonical name (e.g. 'منزل') and skip the type picker */
+  initialTypeName?: string;
+  /** Pre-fill form fields when opening */
+  initialFormOverrides?: Partial<PlaceFormState>;
 }
 
 const DEFAULT_SUCCESS_TITLE = '✅ تم';
@@ -86,6 +92,8 @@ export function AddPlaceModal({
   longitude,
   submitSuccessTitle,
   submitSuccessMessage,
+  initialTypeName,
+  initialFormOverrides,
 }: AddPlaceModalProps) {
   const [step, setStep] = useState<'type' | 'form' | 'success'>('type');
   const [placeTypes, setPlaceTypes] = useState<PlaceTypeUI[]>([]);
@@ -110,13 +118,17 @@ export function AddPlaceModal({
   const [selectedMainCategoryColor, setSelectedMainCategoryColor] = useState('#2E86AB');
   const [showMainCategoryList, setShowMainCategoryList] = useState(false);
   const [showSubCategoryList, setShowSubCategoryList] = useState(false);
-  const [loadingProductCategories, setLoadingProductCategories] = useState(false);
+  const [loadingPlaceCategories, setLoadingPlaceCategories] = useState(false);
+  const [mainToSubs, setMainToSubs] = useState<Record<string, CategoryItem[]>>({});
 
   const selectedTypeSingularLabel = selectedType
     ? getPlaceTypeDisplayName(selectedType.name)
     : 'مكان';
   const productCategoryFormLabels = selectedType
     ? getPlaceTypeProductCategoryFieldLabels(selectedType.name)
+    : null;
+  const addPlacePhotoLabel = selectedType
+    ? getAddPlaceModalPhotoLabel(selectedType.name)
     : null;
   const placeKind: PlaceKind = selectedType
     ? (() => {
@@ -128,16 +140,9 @@ export function AddPlaceModal({
       })()
     : 'simple';
 
-  const showPhotos =
-    selectedTypeSingularLabel === 'منزل' ||
-    selectedTypeSingularLabel === 'متجر تجاري' ||
-    !!productCategoryFormLabels;
+  const showPhotos = !!addPlacePhotoLabel;
 
-  const photoLabel = selectedTypeSingularLabel === 'منزل'
-    ? 'صور المنزل'
-    : selectedTypeSingularLabel === 'متجر تجاري'
-      ? 'صور المتجر'
-      : productCategoryFormLabels?.photos ?? 'صور المكان';
+  const photoLabel = addPlacePhotoLabel ?? 'صور المكان';
 
   // ─── تحميل الأنواع ───────────────────────────────────────────────────────────
 
@@ -171,43 +176,8 @@ export function AddPlaceModal({
     }
   };
 
-  const getFixedAttrDefsForType = (typeName: string): AttributeDefinition[] => {
-    const trimmedName = typeName?.trim() ?? '';
-    const kind = normalizePlaceTypeKind(trimmedName);
-    const uid = (s: string) => `fixed-${trimmedName.replace(/\s+/g, '_')}-${s}`;
-
-    const productFieldLabels = getPlaceTypeProductCategoryFieldLabels(trimmedName);
-    if (productFieldLabels) {
-      return [
-        { id: uid('store_type'), key: 'store_type', label: productFieldLabels.main, value_type: 'string', is_required: true },
-        { id: uid('store_category'), key: 'store_category', label: productFieldLabels.sub, value_type: 'string', is_required: true },
-        { id: uid('store_number'), key: 'store_number', label: productFieldLabels.number, value_type: 'string', is_required: true },
-      ];
-    }
-
-    switch (kind) {
-      case 'house':
-        return [{ id: uid('house_number'), key: 'house_number', label: 'رقم المنزل', value_type: 'string', is_required: true }];
-      case 'store':
-        return [
-          { id: uid('store_type'), key: 'store_type', label: 'التصنيف الرئيسي\u200c للمتجر', value_type: 'string', is_required: true },
-          { id: uid('store_category'), key: 'store_category', label: 'التصنيف الفرعي\u200c للمتجر', value_type: 'string', is_required: true },
-          { id: uid('store_number'), key: 'store_number', label: 'رقم المتجر', value_type: 'string', is_required: true },
-        ];
-      case 'residentialComplex':
-        return [
-          { id: uid('complex_number'), key: 'complex_number', label: 'رقم المجمع', value_type: 'string', is_required: true },
-          { id: uid('location_text'), key: 'location_text', label: 'مكان المجمع', value_type: 'string', is_required: true },
-        ];
-      case 'commercialComplex':
-        return [
-          { id: uid('complex_number'), key: 'complex_number', label: 'رقم المجمع التجاري', value_type: 'string', is_required: true },
-          { id: uid('location_text'), key: 'location_text', label: 'مكان المجمع التجاري', value_type: 'string', is_required: true },
-        ];
-      default:
-        return [{ id: uid('location_text'), key: 'location_text', label: 'وصف الموقع', value_type: 'string', is_required: false }];
-    }
-  };
+  const getFixedAttrDefsForType = (typeName: string): AttributeDefinition[] =>
+    getPlaceAttrDefsForType(typeName);
 
   const reset = () => {
     setStep('type');
@@ -223,7 +193,35 @@ export function AddPlaceModal({
   useEffect(() => {
     if (!visible) return;
     reset();
-    void loadPlaceTypes();
+    void loadPlaceTypes().then(() => {
+      if (initialTypeName) {
+        // Auto-select matching type and skip to form
+        setPlaceTypes((prev) => {
+          const match = prev.find(
+            (t) => resolveCanonicalPlaceTypeKey(t.name) === initialTypeName || t.name === initialTypeName,
+          );
+          if (match) {
+            // We need to call handleSelectType logic inline because we're inside an effect
+            setSelectedType(match);
+            const overrides = initialFormOverrides ?? {};
+            setFormState((fs) => ({
+              ...fs,
+              dynamicValues: { ...overrides.dynamicValues },
+              photos: overrides.photos ?? [],
+              name: overrides.name ?? fs.name,
+              description: overrides.description ?? fs.description,
+              phoneNumber: overrides.phoneNumber ?? fs.phoneNumber,
+            }));
+            setAttrDefs(getFixedAttrDefsForType(match.name));
+            if (normalizePlaceTypeKind(match.name) === 'store' || usesProductCategoryFieldsForPlaceType(match.name)) {
+              void loadPlaceCategoriesTree(match.id);
+            }
+            setStep('form');
+          }
+          return prev;
+        });
+      }
+    });
   }, [visible]);
 
   const handleClose = () => { reset(); onClose(); };
@@ -236,39 +234,37 @@ export function AddPlaceModal({
     setShowSubCategoryList(false);
     setAttrDefs(getFixedAttrDefsForType(type.name));
     if (normalizePlaceTypeKind(type.name) === 'store' || usesProductCategoryFieldsForPlaceType(type.name)) {
-      void loadMainProductCategories();
+      void loadPlaceCategoriesTree(type.id);
     }
     setStep('form');
   };
 
-  const loadMainProductCategories = async () => {
+  const loadPlaceCategoriesTree = async (placeTypeId: string) => {
+    setLoadingPlaceCategories(true);
     try {
-      setLoadingProductCategories(true);
-      const res = await api.getProductMainCategories();
-      const list = Array.isArray(res.data) ? res.data : [];
-      setMainCategories(
-        list.map((x) => ({ id: x.id, name: x.name, emoji: x.emoji ?? null, color: x.arrow_color ?? null }))
-      );
+      const tree = await categoryService.getPlaceCategoryTree(placeTypeId);
+      const mains = tree.map((t) => ({
+        id: t.main.id,
+        name: t.main.name,
+        emoji: t.main.emoji ?? null,
+        color: t.main.color ?? null,
+      }));
+      const map: Record<string, CategoryItem[]> = {};
+      for (const t of tree) {
+        map[t.main.id] = (t.sub_categories || []).map((s) => ({
+          id: s.id,
+          name: s.name,
+          emoji: s.emoji ?? null,
+          color: s.color ?? null,
+        }));
+      }
+      setMainCategories(mains);
+      setMainToSubs(map);
     } catch {
       setMainCategories([]);
+      setMainToSubs({});
     } finally {
-      setLoadingProductCategories(false);
-    }
-  };
-
-  const loadSubProductCategories = async (mainId: string) => {
-    if (!mainId) { setSubCategories([]); return; }
-    try {
-      setLoadingProductCategories(true);
-      const res = await api.getProductSubCategories(mainId);
-      const list = Array.isArray(res.data) ? res.data : [];
-      setSubCategories(
-        list.map((x: any) => ({ id: x.id, name: x.name, emoji: x.emoji ?? null, color: x.arrow_color ?? null }))
-      );
-    } catch {
-      setSubCategories([]);
-    } finally {
-      setLoadingProductCategories(false);
+      setLoadingPlaceCategories(false);
     }
   };
 
@@ -279,7 +275,7 @@ export function AddPlaceModal({
     }));
     setSelectedMainCategoryColor(color);
     setShowMainCategoryList(false);
-    await loadSubProductCategories(id);
+    setSubCategories(mainToSubs[id] ?? []);
   };
 
   const handleSubSelect = (name: string) => {
@@ -297,10 +293,14 @@ export function AddPlaceModal({
 
     if (!selectedType) { setFormError('يرجى اختيار نوع المكان'); return; }
 
+    const unifiedPlacePhone = usesPlacePhoneAsStoreNumberField(selectedType.name);
+    const isHouse = placeKind === 'house';
+    const isComplex = placeKind === 'complex';
     const validation = validatePlaceForm({
       name: formState.name,
       typeId: selectedType.id,
-      phoneNumber: formState.phoneNumber,
+      phoneNumber: unifiedPlacePhone || isHouse || isComplex ? '' : formState.phoneNumber,
+      storeNumberIsPlacePhone: unifiedPlacePhone,
       dynamicValues: formState.dynamicValues,
       requiredAttrKeys: attrDefs
         .filter((d) => d.is_required)
@@ -318,11 +318,20 @@ export function AddPlaceModal({
     setLoading(true);
     try {
       const attrs = Object.entries(formState.dynamicValues)
-        .filter(([, v]) => v.trim())
+        .filter(([key, v]) => {
+          if (unifiedPlacePhone && key === 'store_number') return false;
+          return v.trim();
+        })
         .map(([key, value]) => {
           const def = attrDefs.find((d) => d.key === key);
           return { key, value: value.trim(), value_type: def?.value_type || 'string' };
         });
+
+      const phoneOut = unifiedPlacePhone
+        ? (formState.dynamicValues.store_number || '').trim() || undefined
+        : isHouse || isComplex
+          ? undefined
+          : formState.phoneNumber.trim() || undefined;
 
       await onSubmit({
         name: formState.name.trim(),
@@ -333,7 +342,7 @@ export function AddPlaceModal({
         longitude,
         photos: formState.photos.length ? formState.photos : undefined,
         dynamicAttributes: attrs.length ? attrs : undefined,
-        phoneNumber: formState.phoneNumber.trim() || undefined,
+        phoneNumber: phoneOut,
       });
       setStep('success');
     } catch (e: any) {
@@ -428,14 +437,23 @@ export function AddPlaceModal({
                 {selectedType && (
                   <>
                     {/* شارة النوع المختار مع زر تغيير */}
-                    <TouchableOpacity style={styles.selectedTypeBadge} onPress={() => setStep('type')}>
-                      <Text style={styles.selectedTypeBadgeArrow}>→</Text>
-                      <View style={[styles.selectedTypeDot, { backgroundColor: selectedType.color }]} />
-                      <Text style={styles.selectedTypeBadgeText}>
-                        {selectedType.emoji} {selectedTypeSingularLabel}
-                      </Text>
-                      <Text style={styles.selectedTypeChange}>تغيير</Text>
-                    </TouchableOpacity>
+                    {initialTypeName ? (
+                      <View style={styles.selectedTypeBadge}>
+                        <View style={[styles.selectedTypeDot, { backgroundColor: selectedType.color }]} />
+                        <Text style={styles.selectedTypeBadgeText}>
+                          {selectedType.emoji} {selectedTypeSingularLabel}
+                        </Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity style={styles.selectedTypeBadge} onPress={() => setStep('type')}>
+                        <Text style={styles.selectedTypeBadgeArrow}>→</Text>
+                        <View style={[styles.selectedTypeDot, { backgroundColor: selectedType.color }]} />
+                        <Text style={styles.selectedTypeBadgeText}>
+                          {selectedType.emoji} {selectedTypeSingularLabel}
+                        </Text>
+                        <Text style={styles.selectedTypeChange}>تغيير</Text>
+                      </TouchableOpacity>
+                    )}
 
                     {/* النموذج الديناميكي */}
                     <PlaceForm
@@ -447,7 +465,7 @@ export function AddPlaceModal({
                       longitude={longitude}
                       mainCategories={mainCategories}
                       subCategories={subCategories}
-                      loadingCategories={loadingProductCategories}
+                      loadingCategories={loadingPlaceCategories}
                       mainCategoryLabel={productCategoryFormLabels?.main ?? 'التصنيف الرئيسي'}
                       subCategoryLabel={productCategoryFormLabels?.sub ?? 'التصنيف الفرعي'}
                       photoLabel={photoLabel}
@@ -461,9 +479,14 @@ export function AddPlaceModal({
                       onOpenSubList={() => setShowSubCategoryList(true)}
                       onCloseSubList={() => setShowSubCategoryList(false)}
                       onSubSelect={handleSubSelect}
-                      onLoadSubCategories={loadSubProductCategories}
+                      onLoadSubCategories={(mainId) => setSubCategories(mainToSubs[mainId] ?? [])}
                       showPhotos={showPhotos}
                       maxPhotos={MAX_PHOTOS}
+                      hidePhoneField={
+                        usesPlacePhoneAsStoreNumberField(selectedType.name) ||
+                        placeKind === 'house' ||
+                        placeKind === 'complex'
+                      }
                     />
                   </>
                 )}

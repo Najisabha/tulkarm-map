@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { api, PlaceData } from '../api/client';
-import { useAuth } from './AuthContext';
 import { usePlacesStore } from '../stores/usePlacesStore';
+import { useAuth } from './AuthContext';
 
 export type { PlaceData };
 
@@ -34,7 +34,11 @@ function parseCoord(value: unknown): number {
 }
 
 function placeToStore(p: PlaceData): Store {
-  const phone = p.attributes?.find(a => a.key === 'phone')?.value;
+  const phone = p.phone_number
+    || p.attributes?.find(a => a.key === 'phone')?.value
+    || p.attributes?.find(a => a.key === 'phone_number')?.value
+    || p.attributes?.find(a => a.key === 'store_number')?.value
+    || p.attributes?.find(a => a.key === 'raqm')?.value;
   return {
     id: p.id,
     name: p.name,
@@ -88,7 +92,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (authLoading) return;
     // نُبقي Context يعمل كما هو، لكن نغذّي Zustand أيضاً تدريجياً
     void loadStores();
-    void loadAll(user?.role === 'admin' || user?.isAdmin === true);
   }, [authLoading, user?.id, user?.role, loadStores]);
 
   // عند تحديث Zustand places، نُحدّث stores أيضاً (تدريجي + غير كاسر)

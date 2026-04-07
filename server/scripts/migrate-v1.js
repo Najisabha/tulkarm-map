@@ -192,6 +192,15 @@ async function migrateV5() {
   console.log('✅ migrate-v5 completed');
 }
 
+async function migrateV6() {
+  // قواعد قديمة: وجود جدول store_details من مخطط سابق بلا عمود phone —
+  // CREATE TABLE IF NOT EXISTS لا يضيف أعمدة، فيفشل syncStoreDetailsFromPlace بـ 42703.
+  await pool.query(`
+    ALTER TABLE store_details ADD COLUMN IF NOT EXISTS phone VARCHAR(30);
+  `);
+  console.log('✅ migrate-v6 completed');
+}
+
 async function initDb() {
   const sql = `
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -560,12 +569,15 @@ async function main() {
       await migrateV4();
     } else if (mode === 'v5') {
       await migrateV5();
+    } else if (mode === 'v6') {
+      await migrateV6();
     } else if (mode === 'all') {
       await initDb();
       await migrateV2();
       await migrateV3();
       await migrateV4();
       await migrateV5();
+      await migrateV6();
     } else {
       await initDb();
     }

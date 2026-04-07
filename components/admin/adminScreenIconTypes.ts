@@ -16,7 +16,8 @@ export type AdminDashboardIconName =
   | 'label'
   | 'settings'
   | 'cloud-download'
-  | 'logout';
+  | 'logout'
+  | 'account-tree';
 
 export type AdminScreenIconProps = {
   name: AdminDashboardIconName;

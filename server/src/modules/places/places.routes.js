@@ -16,7 +16,8 @@ router.post(
   placesController.createFromAdmin
 );
 router.get('/:id', optionalAuth, placesController.getById);
-router.post('/', authenticate, validate(createPlaceSchema), placesController.create);
+/** الزائر يضيف طلباً (pending) بدون JWT — يطابق create(..., req.user ?? guest) */
+router.post('/', optionalAuth, validate(createPlaceSchema), placesController.create);
 router.patch('/:id', authenticate, validate(updatePlaceSchema), placesController.update);
 router.delete('/:id', authenticate, placesController.remove);
 router.post('/:id/images', authenticate, placesController.addImage);
