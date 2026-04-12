@@ -9,11 +9,7 @@ import placeTypesRoutes from './modules/placeTypes/placeTypes.routes.js';
 import placesRoutes from './modules/places/places.routes.js';
 import uploadsRoutes from './modules/uploads/uploads.routes.js';
 import ratingsRoutes, { placeRatingsRouter } from './modules/ratings/ratings.routes.js';
-import storeServicesRoutes from './modules/storeServices/storeServices.routes.js';
-import storeProductsRoutes from './modules/storeProducts/storeProducts.routes.js';
-import ordersRoutes from './modules/orders/orders.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
-import productCategoriesRoutes from './modules/productCategories/productCategories.routes.js';
 import placeCategoriesRoutes from './modules/placeCategories/placeCategories.routes.js';
 import complexesRoutes from './modules/complexes/complexes.routes.js';
 
@@ -49,18 +45,8 @@ app.use('/api/upload', uploadsRoutes);
 // Ratings
 app.use('/api/ratings', ratingsRoutes);
 
-// Store services & products
-app.use('/api/stores/:storeId/services', storeServicesRoutes);
-app.use('/api/stores/:storeId/products', storeProductsRoutes);
-
-// Orders
-app.use('/api/orders', ordersRoutes);
-
-// Admin (users, reports, activity, settings, stats, store ownership)
+// Admin (users, reports, activity, settings, stats)
 app.use('/api', adminRoutes);
-
-// Product categories (main/sub)
-app.use('/api', productCategoriesRoutes);
 
 // Place categories (main/sub tree)
 app.use('/api', placeCategoriesRoutes);

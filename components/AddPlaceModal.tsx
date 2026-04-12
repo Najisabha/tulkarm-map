@@ -21,6 +21,7 @@ import {
   getPlaceTypeDisplayName,
   getPlaceTypePluralLabel,
   getPlaceTypeProductCategoryFieldLabels,
+  isDisallowedComplexUnitChildTypeName,
   normalizePlaceTypeKind,
   resolveCanonicalPlaceTypeKey,
   usesPlacePhoneAsStoreNumberField,
@@ -79,6 +80,10 @@ interface AddPlaceModalProps {
   initialTypeName?: string;
   /** Pre-fill form fields when opening */
   initialFormOverrides?: Partial<PlaceFormState>;
+  /** استبعاد مجمّع تجاري/سكني وإظهار خطوة اختيار النوع (وحدات داخل المجمّع) */
+  complexUnitChildPicker?: boolean;
+  /** تسمية الوحدة مثل "3-2" — تُعرَض كاسم افتراضي وتُملأ house_number للمنزل */
+  complexUnitLabel?: string;
 }
 
 const DEFAULT_SUCCESS_TITLE = '✅ تم';
@@ -94,6 +99,8 @@ export function AddPlaceModal({
   submitSuccessMessage,
   initialTypeName,
   initialFormOverrides,
+  complexUnitChildPicker,
+  complexUnitLabel,
 }: AddPlaceModalProps) {
   const [step, setStep] = useState<'type' | 'form' | 'success'>('type');
   const [placeTypes, setPlaceTypes] = useState<PlaceTypeUI[]>([]);
@@ -168,7 +175,10 @@ export function AddPlaceModal({
         const d = sortRank(a.name) - sortRank(b.name);
         return d !== 0 ? d : a.name.localeCompare(b.name, 'ar');
       });
-      setPlaceTypes(list);
+      const filtered = complexUnitChildPicker
+        ? list.filter((t) => !isDisallowedComplexUnitChildTypeName(t.name))
+        : list;
+      setPlaceTypes(filtered);
     } catch {
       setPlaceTypes([]);
     } finally {
@@ -194,7 +204,7 @@ export function AddPlaceModal({
     if (!visible) return;
     reset();
     void loadPlaceTypes().then(() => {
-      if (initialTypeName) {
+      if (initialTypeName && !complexUnitChildPicker) {
         // Auto-select matching type and skip to form
         setPlaceTypes((prev) => {
           const match = prev.find(
@@ -228,7 +238,21 @@ export function AddPlaceModal({
 
   const handleSelectType = (type: PlaceTypeUI) => {
     setSelectedType(type);
-    setFormState((prev) => ({ ...prev, dynamicValues: {}, photos: [] }));
+    const unitLabel = (complexUnitLabel ?? '').trim();
+    const kind = normalizePlaceTypeKind(type.name);
+    const initialDynamic: Record<string, string> = {};
+    if (complexUnitChildPicker && unitLabel && kind === 'house') {
+      initialDynamic.house_number = unitLabel;
+    }
+    setFormState((prev) => ({
+      ...prev,
+      dynamicValues: initialDynamic,
+      photos: [],
+      name:
+        complexUnitChildPicker && unitLabel
+          ? `وحدة ${unitLabel}`
+          : prev.name,
+    }));
     setSubCategories([]);
     setShowMainCategoryList(false);
     setShowSubCategoryList(false);

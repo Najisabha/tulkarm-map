@@ -65,7 +65,7 @@ router.patch('/users/:id', authenticate, requireRole('admin'), async (req, res, 
       if (dup.length) throw ApiError.conflict('البريد مستخدم مسبقاً');
     }
 
-    if (role !== undefined && !['admin', 'user', 'owner'].includes(role)) {
+    if (role !== undefined && !['admin', 'user'].includes(role)) {
       throw ApiError.badRequest('الدور غير صالح');
     }
 
@@ -234,16 +234,9 @@ router.get('/admin/stats', authenticate, requireRole('admin'), async (_req, res,
         .catch(() => 0),
     ]);
 
-    const stores = parseInt(
-      (await pool.query(
-        `SELECT COUNT(*) FROM places
-         WHERE deleted_at IS NULL AND status = 'active' AND owner_id IS NOT NULL`
-      )).rows[0].count
-    );
-
     return success(res, {
       users,
-      stores,
+      stores: places,
       places,
       placeTypes,
       pendingReports,
@@ -259,41 +252,6 @@ router.get('/admin/stats', authenticate, requireRole('admin'), async (_req, res,
       pendingPlaceRequests: 0,
     });
   }
-});
-
-// ────── Store ownership ──────
-
-router.get('/my-stores', authenticate, async (req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT p.id, p.name, p.description, pt.name AS category,
-              pl.latitude, pl.longitude, sd.phone, p.created_at,
-              COALESCE(
-                (SELECT json_agg(m.url ORDER BY m.sort_order, m.created_at)
-                 FROM media m WHERE m.place_id = p.id AND m.type = 'image'),
-                '[]'::json
-              ) AS photos,
-              COALESCE(
-                (SELECT json_agg(m.url ORDER BY m.sort_order, m.created_at)
-                 FROM media m WHERE m.place_id = p.id AND m.type = 'video'),
-                '[]'::json
-              ) AS videos
-       FROM places p
-       LEFT JOIN place_types pt ON pt.id = p.type_id
-       LEFT JOIN place_locations pl ON pl.place_id = p.id
-       LEFT JOIN store_details sd ON sd.place_id = p.id
-       WHERE p.owner_id = $1 AND p.deleted_at IS NULL
-       ORDER BY p.created_at DESC`,
-      [req.user.id]
-    );
-    return success(res, rows.map((r) => ({
-      ...r,
-      latitude: r.latitude != null ? parseFloat(r.latitude) : null,
-      longitude: r.longitude != null ? parseFloat(r.longitude) : null,
-      photos: Array.isArray(r.photos) ? r.photos : [],
-      videos: Array.isArray(r.videos) ? r.videos : [],
-    })));
-  } catch (err) { next(err); }
 });
 
 router.get('/stores/:id/full', async (req, res, next) => {
@@ -318,22 +276,8 @@ router.get('/stores/:id/full', async (req, res, next) => {
        WHERE p.id = $1 AND p.deleted_at IS NULL`,
       [req.params.id]
     );
-    if (!storeRows[0]) throw ApiError.notFound('المتجر غير موجود');
+    if (!storeRows[0]) throw ApiError.notFound('المكان غير موجود');
     const store = storeRows[0];
-
-    const { rows: svcRows } = await pool.query(
-      `SELECT * FROM store_services
-       WHERE place_id = $1 AND is_available = true ORDER BY sort_order, name`,
-      [req.params.id]
-    );
-    const { rows: prodRows } = await pool.query(
-      `SELECT * FROM products
-       WHERE place_id = $1 AND is_available = true ORDER BY sort_order, name`,
-      [req.params.id]
-    );
-
-    const services = svcRows.map((r) => ({ ...r, store_id: r.place_id }));
-    const products = prodRows.map((r) => ({ ...r, store_id: r.place_id }));
 
     return success(res, {
       ...store,
@@ -341,34 +285,7 @@ router.get('/stores/:id/full', async (req, res, next) => {
       longitude: store.longitude != null ? parseFloat(store.longitude) : null,
       photos: Array.isArray(store.photos) ? store.photos : [],
       videos: Array.isArray(store.videos) ? store.videos : [],
-      services,
-      products,
     });
-  } catch (err) { next(err); }
-});
-
-router.patch('/stores/:id/owner', authenticate, requireRole('admin'), async (req, res, next) => {
-  try {
-    const { owner_id } = req.body;
-    const { rows: placeRows } = await pool.query(
-      'SELECT id FROM places WHERE id = $1 AND deleted_at IS NULL',
-      [req.params.id]
-    );
-    if (!placeRows[0]) throw ApiError.notFound('المتجر غير موجود');
-    if (owner_id) {
-      const { rows: userRows } = await pool.query(
-        'SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL',
-        [owner_id]
-      );
-      if (!userRows[0]) throw ApiError.notFound('المستخدم غير موجود');
-      await pool.query('UPDATE users SET role = $1 WHERE id = $2', ['owner', owner_id]);
-    }
-    await pool.query(
-      'UPDATE places SET owner_id = $1, updated_at = now() WHERE id = $2 AND deleted_at IS NULL',
-      [owner_id || null, req.params.id]
-    );
-    logActivity('assign_owner', 'place', req.params.id, { owner_id });
-    return success(res, { message: 'تم تعيين صاحب المتجر' });
   } catch (err) { next(err); }
 });
 

@@ -43,6 +43,24 @@ router.get('/complexes/residential/child-place-ids', authenticate, async (req, r
   }
 });
 
+// GET /api/complexes/commercial/child-place-ids
+// Returns all child_place_ids linked to commercial complexes (for filtering in admin UI)
+router.get('/complexes/commercial/child-place-ids', authenticate, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT cu.child_place_id
+       FROM complex_units cu
+       JOIN complexes c ON c.id = cu.complex_id
+       JOIN places p ON p.id = cu.child_place_id AND p.deleted_at IS NULL
+       WHERE c.complex_type = 'commercial'
+         AND cu.child_place_id IS NOT NULL`
+    );
+    return success(res, { child_place_ids: rows.map((r) => r.child_place_id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/complexes/:placeId
 router.get('/complexes/:placeId', authenticate, async (req, res, next) => {
   try {
@@ -162,6 +180,11 @@ router.patch('/complex-units/:id/link-place', authenticate, async (req, res, nex
     if (childPlaceId) {
       const { rows: pRows } = await pool.query('SELECT id FROM places WHERE id = $1 AND deleted_at IS NULL', [childPlaceId]);
       if (!pRows[0]) throw ApiError.notFound('المكان التابع غير موجود');
+
+      const { rows: asComplex } = await pool.query('SELECT 1 FROM complexes WHERE place_id = $1 LIMIT 1', [childPlaceId]);
+      if (asComplex[0]) {
+        throw ApiError.badRequest('لا يمكن ربط وحدة بمكان يمثّل مجمّعاً تجارياً أو سكنياً. اختر نوعاً آخر.');
+      }
     }
 
     const { rows } = await pool.query(

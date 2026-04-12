@@ -41,32 +41,6 @@ export const categoryService = {
     }));
   },
 
-  /** جلب التصنيفات الرئيسية للمنتجات */
-  async getMainCategories(): Promise<MainCategory[]> {
-    const res = await api.getProductMainCategories();
-    const list = Array.isArray(res.data) ? res.data : [];
-    return list.map((c) => ({
-      id: c.id,
-      name: c.name,
-      emoji: c.emoji ?? null,
-      color: c.arrow_color ?? null,
-    }));
-  },
-
-  /** جلب التصنيفات الفرعية لتصنيف رئيسي معين */
-  async getSubCategories(mainCategoryId: string): Promise<SubCategory[]> {
-    if (!mainCategoryId) return [];
-    const res = await api.getProductSubCategories(mainCategoryId);
-    const list = Array.isArray(res.data) ? res.data : [];
-    return list.map((c: any) => ({
-      id: c.id,
-      mainCategoryId,
-      name: c.name,
-      emoji: c.emoji ?? null,
-      color: c.arrow_color ?? null,
-    }));
-  },
-
   /** جلب تصنيفات الأماكن الرئيسية (parent_id = null) لنوع مكان معين */
   async getPlaceMainCategories(placeTypeId: string): Promise<MainCategory[]> {
     const res = await api.getPlaceCategories(placeTypeId, null);

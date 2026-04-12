@@ -9,12 +9,6 @@ import { env } from './config/env.js';
 import pool from './config/db.js';
 import bcrypt from 'bcryptjs';
 import { notFoundHandler, errorHandler } from './middleware/error.middleware.js';
-import storeServicesRoutes from './modules/storeServices/storeServices.routes.js';
-import storeProductsRoutes from './modules/storeProducts/storeProducts.routes.js';
-import ordersRoutes from './modules/orders/orders.routes.js';
-import { authenticate } from './middleware/auth.middleware.js';
-import { ApiError } from './utils/ApiError.js';
-import { success } from './utils/response.js';
 
 async function logActivity(action, entityType, entityId, details = {}) {
   try {
@@ -309,13 +303,7 @@ app.get('/api/admin/stats', async (_req, res) => {
   } catch (err) { res.json({ users: 0, stores: 0, categories: 0, pendingPlaceRequests: 0, pendingReports: 0, storesThisMonth: 0, requestsThisWeek: 0 }); }
 });
 
-// ============ Store Services, Products, Orders ============
-
-app.use('/api/stores/:storeId/services', storeServicesRoutes);
-app.use('/api/stores/:storeId/products', storeProductsRoutes);
-app.use('/api/orders', ordersRoutes);
-
-// GET store with services + products
+// GET legacy store (بدون منتجات/خدمات — مخطط v1 قديم)
 app.get('/api/stores/:id/full', async (req, res) => {
   try {
     const { rows: storeRows } = await pool.query(
@@ -327,64 +315,15 @@ app.get('/api/stores/:id/full', async (req, res) => {
     if (!storeRows[0]) return res.status(404).json({ success: false, message: 'المتجر غير موجود' });
     const store = storeRows[0];
 
-    const { rows: services } = await pool.query(
-      'SELECT * FROM store_services WHERE store_id = $1 AND is_available = true ORDER BY sort_order, name',
-      [req.params.id]
-    );
-    const { rows: products } = await pool.query(
-      'SELECT * FROM store_products WHERE store_id = $1 AND is_available = true ORDER BY sort_order, name',
-      [req.params.id]
-    );
-
     res.json({
       success: true,
       data: {
         ...store,
         latitude: parseFloat(store.latitude),
         longitude: parseFloat(store.longitude),
-        services,
-        products,
       },
     });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
-});
-
-// Assign store owner (admin only)
-app.patch('/api/stores/:id/owner', authenticate, async (req, res, next) => {
-  try {
-    if (req.user.role !== 'admin') throw ApiError.forbidden('مسموح فقط للمدير');
-    const { owner_id } = req.body;
-    if (owner_id) {
-      const { rows: userRows } = await pool.query('SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL', [owner_id]);
-      if (!userRows[0]) throw ApiError.notFound('المستخدم غير موجود');
-      await pool.query('UPDATE users SET role = $1 WHERE id = $2', ['owner', owner_id]);
-    }
-    await pool.query('UPDATE stores SET owner_id = $1 WHERE id = $2', [owner_id || null, req.params.id]);
-    return success(res, { message: 'تم تعيين صاحب المتجر' });
-  } catch (err) { next(err); }
-});
-
-// Get my stores (for owner)
-app.get('/api/my-stores', authenticate, async (req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT s.id, s.name, s.description, c.name as category, s.latitude, s.longitude, s.phone, s.photos, s.videos, s.created_at
-       FROM stores s JOIN categories c ON s.category_id = c.id
-       WHERE s.owner_id = $1
-       ORDER BY s.created_at DESC`,
-      [req.user.id]
-    );
-    res.json({
-      success: true,
-      data: rows.map((r) => ({
-        ...r,
-        latitude: parseFloat(r.latitude),
-        longitude: parseFloat(r.longitude),
-        photos: r.photos || [],
-        videos: r.videos || [],
-      })),
-    });
-  } catch (err) { next(err); }
 });
 
 // 404 and error handler must come after ALL routes

@@ -34,14 +34,15 @@ export const updatePlaceSchema = z.object({
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
   status: z.enum(['active', 'pending', 'rejected']).optional(),
-  phone_number: z.string().max(30).optional(),
+  /** null يُمسح من الواجهة — optional لا يقبل null في Zod بدون nullish */
+  phone_number: z.string().max(30).nullish(),
   attributes: z.array(attributeSchema).optional(),
   // تحديث بيانات المجمع
   floors_count: z.coerce.number().int().min(1).max(200).optional(),
   units_per_floor: z.coerce.number().int().min(1).max(500).optional(),
-  // تحديث روابط التصنيفات
-  main_category_id: z.string().uuid().optional(),
-  sub_category_id: z.string().uuid().optional(),
+  // تحديث روابط التصنيفات (null مسموح كي لا يفشل PATCH عندما ترسل الواجهة null)
+  main_category_id: z.string().uuid().nullish(),
+  sub_category_id: z.string().uuid().nullish(),
 });
 
 export const placesQuerySchema = z.object({

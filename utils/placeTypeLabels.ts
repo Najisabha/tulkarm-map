@@ -24,6 +24,12 @@ export const CANONICAL_PLACE_TYPE_NAMES = [
 
 export type CanonicalPlaceTypeName = (typeof CANONICAL_PLACE_TYPE_NAMES)[number];
 
+/** لا يُسمح بربط وحدة داخل مجمّع بمكان من هذين النوعين */
+export const PLACE_TYPES_DISALLOWED_AS_COMPLEX_UNIT_CHILD: readonly CanonicalPlaceTypeName[] = [
+  'مجمّع تجاري',
+  'مجمّع سكني',
+] as const;
+
 /**
  * أنواع تُعرض لها حقول تصنيف المنتجات (رئيسي/فرعي) + رقم + صور في مودال الإضافة —
  * بدون تصنيف رئيسي/فرعي: مسجد، كنيسة، موقف سيارات، مؤسسة حكومية، أخرى (نموذج بسيط + صور حيث ينطبق).
@@ -206,6 +212,12 @@ export function resolveCanonicalPlaceTypeKey(name?: string | null): CanonicalPla
   return null;
 }
 
+export function isDisallowedComplexUnitChildTypeName(name?: string | null): boolean {
+  const key = resolveCanonicalPlaceTypeKey(name);
+  if (!key) return false;
+  return (PLACE_TYPES_DISALLOWED_AS_COMPLEX_UNIT_CHILD as readonly string[]).includes(key);
+}
+
 export function normalizePlaceTypeKind(name?: string | null): PlaceTypeKind {
   let n = String(name ?? '').trim();
   if (!n) return 'other';
@@ -245,6 +257,15 @@ export function normalizePlaceTypeKind(name?: string | null): PlaceTypeKind {
   }
 
   return 'other';
+}
+
+/**
+ * متجر تجاري + أنواع لها حقول تصنيف منتجات في النماذج + مؤسسة حكومية (شجرة التصنيفات في الإدارة والخريطة).
+ */
+export function needsPlaceCategoryTree(typeName: string): boolean {
+  const key = resolveCanonicalPlaceTypeKey(typeName);
+  if (key === 'مؤسسة حكومية') return true;
+  return normalizePlaceTypeKind(typeName) === 'store' || usesProductCategoryFieldsForPlaceType(typeName);
 }
 
 /**

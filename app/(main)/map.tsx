@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   FlatList,
@@ -28,11 +29,15 @@ import { useCategories } from '../../context/CategoryContext';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { usePlacesStore } from '../../stores/usePlacesStore';
 import type { Place } from '../../types/place';
+import type { PlaceCategoryTreeItem } from '../../types/placeCategories';
+import { categoryService } from '../../services/categoryService';
 import { placeService } from '../../services/placeService';
 import { isInsideTulkarm, startGeofencing, TULKARM_REGION } from '../../utils/geofencing';
 import {
   CANONICAL_PLACE_TYPE_NAMES,
   getPlaceTypeDisplayName,
+  needsPlaceCategoryTree,
+  normalizePlaceTypeKind,
   resolveCanonicalPlaceTypeKey,
 } from '../../utils/placeTypeLabels';
 import { shadow } from '../../utils/shadowStyles';
@@ -61,10 +66,14 @@ export interface Store {
   attributes?: { key: string; value: string; value_type: string }[];
   images?: { id: string; image_url: string; sort_order: number }[];
   createdAt: string;
+  mainCategoryId?: string | null;
+  subCategoryId?: string | null;
+  mainCategory?: string | null;
+  subCategory?: string | null;
 }
 
 function placeToStore(p: Place): Store {
-  return {
+  const base: Store = {
     id: p.id,
     name: p.name,
     description: p.description || '',
@@ -82,6 +91,109 @@ function placeToStore(p: Place): Store {
     images: p.images?.map((img) => ({ id: img.id, image_url: img.url, sort_order: img.sortOrder })) || [],
     createdAt: p.createdAt,
   };
+  if (p.kind === 'categorized') {
+    return {
+      ...base,
+      mainCategoryId: p.mainCategoryId,
+      subCategoryId: p.subCategoryId,
+      mainCategory: p.mainCategory,
+      subCategory: p.subCategory,
+    };
+  }
+  return base;
+}
+
+type CategoryBrowseStep = 'main' | 'sub' | 'places';
+
+interface CategoryBrowseState {
+  placeTypeId: string;
+  step: CategoryBrowseStep;
+  mainId?: string;
+  mainName?: string;
+  subId?: string;
+  subName?: string;
+}
+
+function parsedAttrFromStore(store: Store, ...keys: string[]): string | undefined {
+  const attrs = store.attributes || [];
+  for (const key of keys) {
+    const raw = attrs.find((a) => a.key === key)?.value;
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const v = (parsed as { v?: unknown; value?: unknown; val?: unknown }).v
+          ?? (parsed as { value?: unknown }).value
+          ?? (parsed as { val?: unknown }).val;
+        if (v != null && String(v).trim()) return String(v).trim();
+      }
+    } catch {
+      /* plain string */
+    }
+    if (String(raw).trim()) return String(raw).trim();
+  }
+  return undefined;
+}
+
+function stripForCompare(s: string): string {
+  return s
+    .replace(/[\u064B-\u065F]/g, '')
+    .replace(/ـ/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function namesMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  return stripForCompare(a) === stripForCompare(b);
+}
+
+function storeMatchesMainCategory(store: Store, mainId: string, mainName: string): boolean {
+  if (store.mainCategoryId) {
+    return store.mainCategoryId === mainId;
+  }
+  const legacy =
+    store.mainCategory ??
+    parsedAttrFromStore(store, 'main_category', 'store_type') ??
+    null;
+  return namesMatch(legacy, mainName);
+}
+
+function storeMatchesSubCategory(store: Store, subId: string, subName: string): boolean {
+  if (store.subCategoryId) {
+    return store.subCategoryId === subId;
+  }
+  const legacy =
+    store.subCategory ??
+    parsedAttrFromStore(store, 'sub_category', 'store_category') ??
+    null;
+  return namesMatch(legacy, subName);
+}
+
+function storeMatchesCategoryDrill(
+  store: Store,
+  selectedCategory: string | null,
+  browse: CategoryBrowseState | null,
+): boolean {
+  if (!selectedCategory) return true;
+  if (store.category !== selectedCategory) return false;
+  if (!browse) return true;
+  if (browse.step === 'main') return true;
+  if (browse.step === 'sub') {
+    if (!browse.mainId || !browse.mainName) return true;
+    return storeMatchesMainCategory(store, browse.mainId, browse.mainName);
+  }
+  if (browse.step === 'places') {
+    if (browse.mainId && browse.mainName) {
+      if (!storeMatchesMainCategory(store, browse.mainId, browse.mainName)) return false;
+    }
+    if (browse.subId && browse.subName) {
+      if (!storeMatchesSubCategory(store, browse.subId, browse.subName)) return false;
+    }
+    return true;
+  }
+  return true;
 }
 
 async function uriToBase64(uri: string): Promise<string> {
@@ -131,6 +243,53 @@ function formatRemainingMeters(meters: number): string {
   return `${Math.max(0, Math.round(meters))} م`;
 }
 
+function choiceToOsrmProfile(choice: TravelChoice): 'driving' | 'walking' | 'cycling' {
+  if (choice === 'walking') return 'walking';
+  if (choice === 'driving') return 'driving';
+  return 'cycling';
+}
+
+function geoJsonLineToPath(geometry: { coordinates?: number[][] } | null | undefined): { latitude: number; longitude: number }[] {
+  const coords = geometry?.coordinates;
+  if (!coords?.length) return [];
+  return coords.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+}
+
+/** بعد تحديد الوجهة: deltas أصغر = تقريب أقوى (~200% مقارنة بالعرض السابق). */
+const ROUTE_DESTINATION_ZOOM_FACTOR = 0.5;
+
+/** بعد اختيار وسيلة النقل: تقريب أقوى بمقدار zoomInFactor (كلما زاد الرقم زاد التقريب). */
+const TRAVEL_MODE_ROUTE_ZOOM_IN_FACTOR = 128;
+
+function regionForRouteDestination(
+  origin: { latitude: number; longitude: number },
+  destination: { latitude: number; longitude: number },
+  zoomInFactor: number = 1
+) {
+  const span = 2.5;
+  const minDelta = 0.005;
+  const z = ROUTE_DESTINATION_ZOOM_FACTOR;
+  const f = Math.max(zoomInFactor, 0.05);
+  return {
+    latitude: (origin.latitude + destination.latitude) / 2,
+    longitude: (origin.longitude + destination.longitude) / 2,
+    latitudeDelta: ((Math.abs(origin.latitude - destination.latitude) * span + minDelta) * z) / f,
+    longitudeDelta: ((Math.abs(origin.longitude - destination.longitude) * span + minDelta) * z) / f,
+  };
+}
+
+/** تمركز الخلفية على المكان المحدد (تقريب قوي جداً). */
+const SELECTED_PLACE_MAP_DELTA = 0.000125;
+
+function regionForSelectedPlace(latitude: number, longitude: number) {
+  return {
+    latitude,
+    longitude,
+    latitudeDelta: SELECTED_PLACE_MAP_DELTA,
+    longitudeDelta: SELECTED_PLACE_MAP_DELTA,
+  };
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isValidPlaceTypeId(id: string): boolean {
@@ -149,206 +308,10 @@ function matchesQuery(store: { name: string; description?: string; category: str
   );
 }
 
-function StoreServicesSheet({ store, user, onClose }: { store: Store; user: any; onClose: () => void }) {
-  const [services, setServices] = React.useState<any[]>([]);
-  const [products, setProducts] = React.useState<any[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [cart, setCart] = React.useState<Record<string, number>>({});
-  const [ordering, setOrdering] = React.useState(false);
-
-  React.useEffect(() => {
-    loadData();
-  }, [store.id]);
-
-  const loadData = async () => {
-    try {
-      const [svcRes, prodRes] = await Promise.all([
-        api.getStoreServices(store.id),
-        api.getStoreProducts(store.id),
-      ]);
-      setServices(svcRes.data || []);
-      setProducts(prodRes.data || []);
-    } catch {
-      setServices([]);
-      setProducts([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const addToCart = (productId: string) => {
-    setCart((prev) => ({ ...prev, [productId]: (prev[productId] || 0) + 1 }));
-  };
-
-  const removeFromCart = (productId: string) => {
-    setCart((prev) => {
-      const next = { ...prev };
-      if (next[productId] > 1) next[productId]--;
-      else delete next[productId];
-      return next;
-    });
-  };
-
-  const cartTotal = products
-    .filter((p: any) => cart[p.id])
-    .reduce((sum: number, p: any) => sum + parseFloat(p.price) * cart[p.id], 0);
-
-  const cartCount = Object.values(cart).reduce((a, b) => a + b, 0);
-
-  const handleOrder = async () => {
-    if (user?.id === 'guest' || !user) {
-      Alert.alert('تنبيه', 'يجب تسجيل الدخول لإتمام الطلب');
-      return;
-    }
-    setOrdering(true);
-    try {
-      const items = Object.entries(cart).map(([product_id, quantity]) => ({ product_id, quantity }));
-      const res = await api.createOrder({ store_id: store.id, items });
-      const order = res.data;
-      Alert.alert('تم الطلب بنجاح', `رقم الطلب: ${order.id.slice(0, 8)}\nالمجموع: ${parseFloat(order.total).toFixed(2)} ₪`);
-      setCart({});
-    } catch (err: any) {
-      Alert.alert('خطأ', err.message);
-    } finally {
-      setOrdering(false);
-    }
-  };
-
-  return (
-    <View style={styles.servicesModal}>
-      <View style={styles.servicesModalHeader}>
-        <TouchableOpacity onPress={onClose}>
-          <Text style={styles.servicesModalCloseText}>✕</Text>
-        </TouchableOpacity>
-        <Text style={styles.servicesModalTitle}>🛍️ {store.name}</Text>
-      </View>
-      <ScrollView style={styles.servicesModalBody}>
-        {loading ? (
-          <View style={{ padding: 40, alignItems: 'center' }}>
-            <Text style={{ color: '#9CA3AF' }}>جارٍ التحميل...</Text>
-          </View>
-        ) : (
-          <>
-            {store.description ? (
-              <View style={styles.servicesItem}>
-                <Text style={styles.servicesItemIcon}>📋</Text>
-                <Text style={styles.servicesItemText}>{store.description}</Text>
-              </View>
-            ) : null}
-            {store.phone ? (
-              <TouchableOpacity
-                style={styles.servicesItem}
-                onPress={() => Linking.openURL(`tel:${store.phone}`)}
-              >
-                <Text style={styles.servicesItemIcon}>📞</Text>
-                <Text style={[styles.servicesItemText, { color: '#2E86AB' }]}>{store.phone}</Text>
-              </TouchableOpacity>
-            ) : null}
-
-            {services.length > 0 && (
-              <>
-                <Text style={styles.servicesSectionTitle}>🛎️ الخدمات</Text>
-                {services.map((svc: any) => (
-                  <View key={svc.id} style={styles.servicesItem}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.servicesItemText}>{svc.name}</Text>
-                      {svc.description && <Text style={{ fontSize: 12, color: '#6B7280' }}>{svc.description}</Text>}
-                    </View>
-                    {svc.price != null && (
-                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#10B981' }}>{svc.price} ₪</Text>
-                    )}
-                  </View>
-                ))}
-              </>
-            )}
-
-            {products.length > 0 && (
-              <>
-                <Text style={styles.servicesSectionTitle}>📦 المنتجات</Text>
-                {products.map((prod: any) => (
-                  <View key={prod.id} style={styles.servicesItem}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.servicesItemText}>{prod.name}</Text>
-                      {prod.description && <Text style={{ fontSize: 12, color: '#6B7280' }}>{prod.description}</Text>}
-                      {prod.company_name ? (
-                        <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '700', marginTop: 2 }}>
-                          🏢 {prod.company_name}
-                        </Text>
-                      ) : null}
-                      {prod.main_category ? (
-                        <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '700' }}>
-                          📚 {prod.main_category}{prod.sub_category ? ` / ${prod.sub_category}` : ''}
-                        </Text>
-                      ) : null}
-                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#10B981', marginTop: 4 }}>{prod.price} ₪</Text>
-                    </View>
-                    {user?.id !== 'guest' && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        {cart[prod.id] ? (
-                          <>
-                            <TouchableOpacity
-                              onPress={() => removeFromCart(prod.id)}
-                              style={{ backgroundColor: '#FEE2E2', borderRadius: 8, width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
-                            >
-                              <Text style={{ fontSize: 16, color: '#EF4444' }}>-</Text>
-                            </TouchableOpacity>
-                            <Text style={{ fontSize: 16, fontWeight: '700', minWidth: 20, textAlign: 'center' }}>{cart[prod.id]}</Text>
-                          </>
-                        ) : null}
-                        <TouchableOpacity
-                          onPress={() => addToCart(prod.id)}
-                          style={{ backgroundColor: '#DCFCE7', borderRadius: 8, width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
-                        >
-                          <Text style={{ fontSize: 16, color: '#16A34A' }}>+</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </View>
-                ))}
-              </>
-            )}
-
-            {services.length === 0 && products.length === 0 && !store.description && !store.phone && (
-              <View style={styles.servicesEmpty}>
-                <Text style={styles.servicesEmptyText}>لا توجد خدمات أو منتجات مسجلة حالياً</Text>
-              </View>
-            )}
-
-            {user?.id === 'guest' && products.length > 0 && (
-              <Text style={[styles.guestHint, { marginTop: 16 }]}>سجّل دخولك لتتمكن من الشراء</Text>
-            )}
-          </>
-        )}
-      </ScrollView>
-
-      {cartCount > 0 && (
-        <View style={styles.cartBar}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
-              🛒 {cartCount} منتج · {cartTotal.toFixed(2)} ₪
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.cartBtn}
-            onPress={handleOrder}
-            disabled={ordering}
-          >
-            {ordering ? (
-              <Text style={styles.cartBtnText}>جاري...</Text>
-            ) : (
-              <Text style={styles.cartBtnText}>إتمام الطلب</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      )}
-    </View>
-  );
-}
-
 // ── Store Detail Sheet ────────────────────────────────────────────────────────
 function StoreDetailSheet({
   store, userLocation, user, categoryList,
-  onClose, onNavigate, onReport, onServices, onEdit, onDelete,
+  onClose, onNavigate, onReport, onEdit, onDelete,
   onOpenChildPlace, onAddUnit,
 }: {
   store: Store;
@@ -358,7 +321,6 @@ function StoreDetailSheet({
   onClose: () => void;
   onNavigate: () => void;
   onReport: () => void;
-  onServices: () => void;
   onEdit: () => void;
   onDelete: () => Promise<void>;
   onOpenChildPlace: (childPlaceId: string) => void;
@@ -571,6 +533,9 @@ export default function MapScreen() {
   const stores = useMemo(() => places.map(placeToStore).filter((s) => String(s.status || '').toLowerCase() === 'active'), [places]);
   const router = useRouter();
   const mapRef = useRef<MapView>(null);
+  const routingLocationSubRef = useRef<{ remove: () => void } | null>(null);
+  const categoryTreeLoadedForIdRef = useRef<string | null>(null);
+  const placeCategoryTreeRef = useRef<PlaceCategoryTreeItem[]>([]);
 
   const defaultRegion = useRef({
     latitude: TULKARM_REGION.latitude,
@@ -592,18 +557,22 @@ export default function MapScreen() {
   const [selectedStore, setSelectedStore] = useState<Store | null>(null);
   const [showSidebar, setShowSidebar] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [categoryBrowse, setCategoryBrowse] = useState<CategoryBrowseState | null>(null);
+  const [placeCategoryTree, setPlaceCategoryTree] = useState<PlaceCategoryTreeItem[]>([]);
+  const [treeLoading, setTreeLoading] = useState(false);
+
+  placeCategoryTreeRef.current = placeCategoryTree;
   const [tappedCoord, setTappedCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [addPlaceCoord, setAddPlaceCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [routePath, setRoutePath] = useState<{ latitude: number; longitude: number }[] | null>(null);
+  const [alternativeRoutes, setAlternativeRoutes] = useState<{ latitude: number; longitude: number }[][]>([]);
   const [routeDestination, setRouteDestination] = useState<{ latitude: number; longitude: number } | null>(null);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(null);
   const [isRouting, setIsRouting] = useState(false);
   const [travelStep, setTravelStep] = useState<1 | 2 | 3>(1);
   const [travelChoice, setTravelChoice] = useState<TravelChoice | null>(null);
   const [travelPreviewLoading, setTravelPreviewLoading] = useState(false);
-  const [showServicesModal, setShowServicesModal] = useState(false);
-
   const [placeSearchQuery, setPlaceSearchQuery] = useState('');
 
   const [addUnitContext, setAddUnitContext] = useState<{
@@ -643,33 +612,96 @@ export default function MapScreen() {
   }, [categoryList, stores]);
 
   const placeSearchQ = placeSearchQuery.trim().toLowerCase();
+
+  /** زر تمركز الخريطة: يظهر فقط على الخريطة «النظيفة»، لا فوق النوافذ/الأوراق */
+  const showMapLocateButton =
+    !selectedStore &&
+    !tappedCoord &&
+    !addPlaceCoord &&
+    !addUnitContext &&
+    !selectedCategory &&
+    !showSidebar &&
+    !isRouting &&
+    travelStep === 1 &&
+    !placeSearchQ;
+
   const placeSearchResults = !placeSearchQ
     ? []
     : stores
         .filter((s) => matchesQuery(s, placeSearchQ))
         .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
 
-  // stores filtered by selected category, sorted by distance
-  const categoryStores: (Store & { distance: number | null })[] = stores
-    .filter((s) => s.category === selectedCategory)
-    .map((s) => ({
-      ...s,
-      distance: userLocation
-        ? haversineDistance(
-            userLocation.latitude, userLocation.longitude,
-            s.latitude, s.longitude
-          )
-        : null,
-    }))
-    .sort((a, b) => {
-      if (a.distance === null) return 1;
-      if (b.distance === null) return -1;
-      return a.distance - b.distance;
-    });
+  const withDistance = useCallback(
+    (list: Store[]): (Store & { distance: number | null })[] =>
+      list
+        .map((s) => ({
+          ...s,
+          distance: userLocation
+            ? haversineDistance(
+                userLocation.latitude,
+                userLocation.longitude,
+                s.latitude,
+                s.longitude,
+              )
+            : null,
+        }))
+        .sort((a, b) => {
+          if (a.distance === null) return 1;
+          if (b.distance === null) return -1;
+          return a.distance - b.distance;
+        }),
+    [userLocation],
+  );
+
+  // stores filtered by selected category (+ شجرة تصنيفات عند التصفية المتدرجة)، مرتّبة حسب المسافة
+  const categoryStores: (Store & { distance: number | null })[] = useMemo(() => {
+    if (!selectedCategory) return [];
+    let list = stores.filter((s) => s.category === selectedCategory);
+    if (categoryBrowse) {
+      list = list.filter((s) => storeMatchesCategoryDrill(s, selectedCategory, categoryBrowse));
+    }
+    return withDistance(list);
+  }, [stores, selectedCategory, categoryBrowse, withDistance]);
 
   useEffect(() => {
     setupLocation();
   }, []);
+
+  useEffect(() => {
+    if (!selectedCategory || !categoryBrowse || categoryBrowse.step !== 'main') return;
+    const id = categoryBrowse.placeTypeId;
+    if (!isValidPlaceTypeId(id)) {
+      setCategoryBrowse(null);
+      setTreeLoading(false);
+      return;
+    }
+    if (categoryTreeLoadedForIdRef.current === id && placeCategoryTreeRef.current.length > 0) {
+      setTreeLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setTreeLoading(true);
+    void categoryService
+      .getPlaceCategoryTree(id)
+      .then((tree) => {
+        if (cancelled) return;
+        categoryTreeLoadedForIdRef.current = id;
+        setPlaceCategoryTree(tree);
+        if (tree.length === 0) {
+          setCategoryBrowse(null);
+        }
+        setTreeLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPlaceCategoryTree([]);
+        setCategoryBrowse(null);
+        setTreeLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCategory, categoryBrowse]);
 
   // Ensure Zustand auth state is hydrated (login/register may happen via AuthContext screens).
   useEffect(() => {
@@ -688,6 +720,16 @@ export default function MapScreen() {
     setTravelPreviewLoading(false);
   }, [selectedStore?.id]);
 
+  // عند تحديد مكان (من العلامة، البحث، الفئة…): تمركز الخريطة عليه وتقريب
+  useEffect(() => {
+    if (!selectedStore || isRouting) return;
+    if (travelStep === 3) return;
+
+    const region = regionForSelectedPlace(selectedStore.latitude, selectedStore.longitude);
+    setMapRegionOverride(region);
+    mapRef.current?.animateToRegion(region, 600);
+  }, [selectedStore?.id, travelStep, isRouting]);
+
   useEffect(() => {
     if (!routeDestination || !userLocation || !routeInfo) return;
     const remainingMeters = haversineDistance(
@@ -698,6 +740,73 @@ export default function MapScreen() {
     );
     setRouteInfo((prev) => (prev ? { ...prev, distance: formatRemainingMeters(remainingMeters) } : prev));
   }, [routeDestination, userLocation]);
+
+  // أثناء التنقل (بعد «تأكيد»): تقريب الخريطة على موقعك وتحريكها مع كل تحديث موقع
+  useEffect(() => {
+    if (!isRouting || !userLocation) return;
+
+    const radiusMeters = 95;
+    const pad = 2.5;
+    /** تقريب أقوى عن النطاق الأساسي (مساحة أصغر على الشاشة = تكبير أكبر) — 16× عن الحساب الأولي */
+    const followZoomMultiplier = 16;
+    const half = radiusMeters * pad;
+    const mLat = 111_320;
+    const mLon = 111_320 * Math.cos((userLocation.latitude * Math.PI) / 180);
+    const latDelta = (2 * half) / mLat / followZoomMultiplier;
+    const lonDelta = (2 * half) / Math.max(mLon, 1e-6) / followZoomMultiplier;
+    const minDelta = 0.00035 / followZoomMultiplier;
+
+    const nextRegion = {
+      latitude: userLocation.latitude,
+      longitude: userLocation.longitude,
+      latitudeDelta: Math.max(latDelta, minDelta),
+      longitudeDelta: Math.max(lonDelta, minDelta),
+    };
+
+    setMapRegionOverride(nextRegion);
+    mapRef.current?.animateToRegion(nextRegion, 320);
+  }, [isRouting, userLocation]);
+
+  // أثناء التنقل: تحديثات موقع أقصر من watch الافتراضي (كل ~8 م) لسلاسة التتبع
+  useEffect(() => {
+    if (!isRouting) {
+      routingLocationSubRef.current?.remove();
+      routingLocationSubRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted' || cancelled) return;
+
+        const sub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 8 },
+          (loc) => {
+            const { latitude: lat, longitude: lng } = loc.coords;
+            setUserLocation({ latitude: lat, longitude: lng });
+            setInTulkarm(isInsideTulkarm(lat, lng));
+          }
+        );
+
+        if (cancelled) {
+          sub.remove();
+          return;
+        }
+        routingLocationSubRef.current = sub;
+      } catch {
+        /* يبقى التحديث عبر watch الأساسي في setupLocation */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      routingLocationSubRef.current?.remove();
+      routingLocationSubRef.current = null;
+    };
+  }, [isRouting]);
 
   const setupLocation = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -851,7 +960,21 @@ export default function MapScreen() {
 
   const handleCategoryPress = useCallback(
     (cat: string) => {
+      if (selectedCategory === cat) return;
+
       setSelectedCategory(cat);
+      const pt = categoryList.find((c) => c.name === cat);
+      const placeTypeId = pt?.id ?? '';
+      if (needsPlaceCategoryTree(cat) && isValidPlaceTypeId(placeTypeId)) {
+        setCategoryBrowse({ step: 'main', placeTypeId });
+        setPlaceCategoryTree([]);
+        setTreeLoading(true);
+      } else {
+        setCategoryBrowse(null);
+        setPlaceCategoryTree([]);
+        setTreeLoading(false);
+      }
+
       const catStores = stores.filter((s) => s.category === cat);
       if (catStores.length > 0 && mapRef.current) {
         const lats = catStores.map((s) => s.latitude);
@@ -871,8 +994,108 @@ export default function MapScreen() {
         );
       }
     },
-    [stores]
+    [stores, categoryList, selectedCategory],
   );
+
+  const clearCategorySheet = useCallback(() => {
+    categoryTreeLoadedForIdRef.current = null;
+    setSelectedCategory(null);
+    setCategoryBrowse(null);
+    setPlaceCategoryTree([]);
+    setTreeLoading(false);
+  }, []);
+
+  const handleCategorySheetBack = useCallback(() => {
+    setCategoryBrowse((prev) => {
+      if (!prev) return null;
+      if (prev.step === 'places') {
+        const subs =
+          placeCategoryTree.find((t) => t.main.id === prev.mainId)?.sub_categories ?? [];
+        if (subs.length > 0) {
+          return {
+            step: 'sub',
+            placeTypeId: prev.placeTypeId,
+            mainId: prev.mainId,
+            mainName: prev.mainName,
+          };
+        }
+        return { step: 'main', placeTypeId: prev.placeTypeId };
+      }
+      if (prev.step === 'sub') {
+        return { step: 'main', placeTypeId: prev.placeTypeId };
+      }
+      return prev;
+    });
+  }, [placeCategoryTree]);
+
+  const onPickMainCategory = useCallback(
+    (main: { id: string; name: string }) => {
+      setCategoryBrowse((prev) => {
+        if (!prev) return prev;
+        const subs = placeCategoryTree.find((t) => t.main.id === main.id)?.sub_categories ?? [];
+        if (subs.length > 0) {
+          return {
+            step: 'sub',
+            placeTypeId: prev.placeTypeId,
+            mainId: main.id,
+            mainName: main.name,
+          };
+        }
+        return {
+          step: 'places',
+          placeTypeId: prev.placeTypeId,
+          mainId: main.id,
+          mainName: main.name,
+        };
+      });
+    },
+    [placeCategoryTree],
+  );
+
+  const onPickSubCategory = useCallback((sub: { id: string; name: string }) => {
+    setCategoryBrowse((prev) =>
+      prev
+        ? {
+            ...prev,
+            step: 'places',
+            subId: sub.id,
+            subName: sub.name,
+          }
+        : prev,
+    );
+  }, []);
+
+  const categorySheetSubtitle = useMemo(() => {
+    if (!selectedCategory) return '';
+    const distHint = userLocation ? ' · مرتّب حسب المسافة' : '';
+    if (categoryBrowse?.step === 'main' && treeLoading) {
+      return 'جاري التحميل…';
+    }
+    if (categoryBrowse?.step === 'main' && !treeLoading) {
+      return `اختر التصنيف الرئيسي · ${placeCategoryTree.length} تصنيفاً رئيسياً`;
+    }
+    if (categoryBrowse?.step === 'sub') {
+      return `اختر التصنيف الفرعي · ${categoryBrowse.mainName ?? ''} · ${categoryStores.length} مكان ضمن هذا القسم${distHint}`;
+    }
+    if (categoryBrowse?.step === 'places') {
+      const path =
+        categoryBrowse.subName && categoryBrowse.mainName
+          ? `${categoryBrowse.mainName} › ${categoryBrowse.subName}`
+          : categoryBrowse.mainName
+            ? `${categoryBrowse.mainName}`
+            : '';
+      const prefix = path ? `${path} · ` : '';
+      return `${prefix}${categoryStores.length} مكان${distHint}`;
+    }
+    return `${categoryStores.length} مكان${distHint}`;
+  }, [
+    selectedCategory,
+    categoryBrowse,
+    treeLoading,
+    placeCategoryTree.length,
+    categoryStores.length,
+    userLocation,
+  ]);
 
   const handleLogout = async () => {
     await logout();
@@ -908,6 +1131,45 @@ export default function MapScreen() {
     destination: { latitude: number; longitude: number },
     travelChoice: TravelChoice
   ) => {
+    setAlternativeRoutes([]);
+
+    // 1) OSRM (OpenStreetMap) — مسار على الشارع + طرق بديلة
+    try {
+      const profile = choiceToOsrmProfile(travelChoice);
+      const osrmUrl =
+        `https://router.project-osrm.org/route/v1/${profile}/` +
+        `${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}` +
+        `?overview=full&geometries=geojson&alternatives=true`;
+      const osrmRes = await fetch(osrmUrl);
+      const osrmData = await osrmRes.json();
+      if (osrmData.code === 'Ok' && Array.isArray(osrmData.routes) && osrmData.routes.length > 0) {
+        const paths = osrmData.routes
+          .map((r: { geometry?: { coordinates?: number[][] } }) => geoJsonLineToPath(r.geometry))
+          .filter((p: { latitude: number; longitude: number }[]) => p.length >= 2);
+        if (paths.length > 0) {
+          setRoutePath(paths[0]);
+          setAlternativeRoutes(paths.slice(1));
+          const main = osrmData.routes[0] as { distance?: number; duration?: number };
+          const remainingMeters = haversineDistance(
+            origin.latitude,
+            origin.longitude,
+            destination.latitude,
+            destination.longitude
+          );
+          const durationSec = typeof main.duration === 'number' ? main.duration : 0;
+          const minutesFromApi = durationSec > 0 ? durationSec / 60 : remainingMeters / getSpeedMPerMin(travelChoice);
+          setRouteInfo({
+            distance: formatRemainingMeters(remainingMeters),
+            duration: formatDurationMinutes(minutesFromApi),
+          });
+          return;
+        }
+      }
+    } catch {
+      // جرّب Google أو الخط المستقيم
+    }
+
+    // 2) Google Directions (إن وُجد مفتاح)
     try {
       const apiKey = process?.env?.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
       if (apiKey) {
@@ -919,6 +1181,7 @@ export default function MapScreen() {
           const route = data.routes[0];
           const points = decodePolyline(route.overview_polyline.points);
           setRoutePath(points);
+          setAlternativeRoutes([]);
           const remainingMeters = haversineDistance(
             origin.latitude,
             origin.longitude,
@@ -937,7 +1200,9 @@ export default function MapScreen() {
     } catch {
       // straight line fallback
     }
+
     setRoutePath([origin, destination]);
+    setAlternativeRoutes([]);
     const dist = haversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude);
     const speedMPerMin = getSpeedMPerMin(travelChoice);
     const minutes = dist / speedMPerMin;
@@ -1028,6 +1293,7 @@ export default function MapScreen() {
       const destination = { latitude: selectedStore.latitude, longitude: selectedStore.longitude };
       setRouteDestination(destination);
       setRoutePath(null);
+      setAlternativeRoutes([]);
       setRouteInfo(null);
 
       await fetchRoute(origin, destination, travelChoice);
@@ -1038,12 +1304,7 @@ export default function MapScreen() {
       }
 
       mapRef.current?.animateToRegion(
-        {
-          latitude: (origin.latitude + destination.latitude) / 2,
-          longitude: (origin.longitude + destination.longitude) / 2,
-          latitudeDelta: Math.abs(origin.latitude - destination.latitude) * 2.5 + 0.005,
-          longitudeDelta: Math.abs(origin.longitude - destination.longitude) * 2.5 + 0.005,
-        },
+        regionForRouteDestination(origin, destination, TRAVEL_MODE_ROUTE_ZOOM_IN_FACTOR),
         800
       );
 
@@ -1064,7 +1325,6 @@ export default function MapScreen() {
     setShowSidebar(false);
     setSelectedCategory(null);
     setShowReportModal(false);
-    setShowServicesModal(false);
 
     // Hide store UI immediately after choosing the mode.
     setSelectedStore(null);
@@ -1116,18 +1376,14 @@ export default function MapScreen() {
 
     const destination = { latitude: store.latitude, longitude: store.longitude };
     setRoutePath(null);
+    setAlternativeRoutes([]);
     setRouteInfo(null);
     setRouteDestination(destination);
 
     fetchRoute(origin, destination, travelChoice);
 
     mapRef.current?.animateToRegion(
-      {
-        latitude: (origin.latitude + destination.latitude) / 2,
-        longitude: (origin.longitude + destination.longitude) / 2,
-        latitudeDelta: Math.abs(origin.latitude - destination.latitude) * 2.5 + 0.005,
-        longitudeDelta: Math.abs(origin.longitude - destination.longitude) * 2.5 + 0.005,
-      },
+      regionForRouteDestination(origin, destination, TRAVEL_MODE_ROUTE_ZOOM_IN_FACTOR),
       800
     );
   };
@@ -1139,12 +1395,14 @@ export default function MapScreen() {
     setTravelChoice(null);
     setTravelPreviewLoading(false);
     setRoutePath(null);
+    setAlternativeRoutes([]);
     setRouteDestination(null);
     setRouteInfo(null);
   };
 
   const clearRoute = () => {
     setRoutePath(null);
+    setAlternativeRoutes([]);
     setRouteDestination(null);
     setRouteInfo(null);
     setIsRouting(false);
@@ -1155,7 +1413,6 @@ export default function MapScreen() {
     setTravelStep(1);
     setTravelChoice(null);
     setTravelPreviewLoading(false);
-    setShowServicesModal(false);
     setShowReportModal(false);
     clearRoute();
   };
@@ -1165,7 +1422,6 @@ export default function MapScreen() {
     setShowSidebar(false);
     setSelectedCategory(null);
     setShowReportModal(false);
-    setShowServicesModal(false);
 
     setTravelStep(1);
     setTravelChoice(null);
@@ -1340,17 +1596,8 @@ export default function MapScreen() {
     <TouchableOpacity
       style={styles.catStoreItem}
       onPress={() => {
-        setSelectedCategory(null);
+        clearCategorySheet();
         setSelectedStore(item);
-        mapRef.current?.animateToRegion(
-          {
-            latitude: item.latitude,
-            longitude: item.longitude,
-            latitudeDelta: 0.008,
-            longitudeDelta: 0.008,
-          },
-          600
-        );
       }}
     >
       <View style={styles.catStoreLeft}>
@@ -1431,17 +1678,29 @@ export default function MapScreen() {
           strokeWidth={2}
         />
 
+        {alternativeRoutes.map((coords, idx) =>
+          coords.length >= 2 ? (
+            <Polyline
+              key={`alt-route-${idx}`}
+              coordinates={coords}
+              strokeColor="#9E9E9E"
+              strokeWidth={3}
+            />
+          ) : null
+        )}
+
         {routePath && routePath.length >= 2 && (
           <Polyline
             coordinates={routePath}
-            strokeColor="#2E86AB"
+            strokeColor="#E53935"
             strokeWidth={4}
           />
         )}
 
         {stores.map((store) => {
           const isActive =
-            selectedCategory === null || store.category === selectedCategory;
+            selectedCategory === null ||
+            storeMatchesCategoryDrill(store, selectedCategory, categoryBrowse);
           const matches = !placeSearchQ || matchesQuery(store, placeSearchQ);
           return (
             <Marker
@@ -1589,15 +1848,6 @@ export default function MapScreen() {
                         setPlaceSearchQuery('');
                         setSelectedCategory(null);
                         setSelectedStore(s);
-                        mapRef.current?.animateToRegion(
-                          {
-                            latitude: s.latitude,
-                            longitude: s.longitude,
-                            latitudeDelta: 0.008,
-                            longitudeDelta: 0.008,
-                          },
-                          600
-                        );
                       }}
                       activeOpacity={0.85}
                     >
@@ -1628,12 +1878,12 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* Center Button */}
-      {!selectedStore && (
+      {/* Center Button — تحت طبقات الـ overlay (zIndex) ويُخفى أثناء أي تداخل UI */}
+      {showMapLocateButton ? (
         <TouchableOpacity style={styles.centerBtn} onPress={() => zoomToNearbyMe(5)}>
           <Text style={styles.centerBtnText}>🎯</Text>
         </TouchableOpacity>
-      )}
+      ) : null}
 
       {/* Tap options: Add place / Navigate — rendered directly (no Modal) for web+mobile */}
       {tappedCoord && (
@@ -1737,24 +1987,26 @@ export default function MapScreen() {
           onClose={() => setAddUnitContext(null)}
           submitSuccessTitle="تمت إضافة الوحدة بنجاح"
           submitSuccessMessage="تم إنشاء الوحدة وربطها بالمجمّع."
-          initialTypeName={addUnitContext.complexType === 'commercial' ? 'متجر تجاري' : 'منزل'}
-          initialFormOverrides={{
-            name:
-              addUnitContext.complexType === 'commercial'
-                ? `وحدة ${addUnitContext.floorNumber}-${addUnitContext.unitNumber}`
-                : '',
-            dynamicValues: {
-              ...(addUnitContext.complexType === 'commercial'
-                ? { store_number: `${addUnitContext.floorNumber}-${addUnitContext.unitNumber}` }
-                : { house_number: `${addUnitContext.floorNumber}-${addUnitContext.unitNumber}` }),
-            },
-          }}
+          complexUnitChildPicker
+          complexUnitLabel={`${addUnitContext.floorNumber}-${addUnitContext.unitNumber}`}
           onSubmit={async (data) => {
             if (!isValidPlaceTypeId(data.type_id)) {
               throw new Error('معرّف نوع المكان غير صالح.');
             }
 
-            const attributes = data.dynamicAttributes || [];
+            const unitLabel = `${addUnitContext.floorNumber}-${addUnitContext.unitNumber}`;
+            const isHouse = normalizePlaceTypeKind(data.type_name) === 'house';
+            const unitKey = isHouse ? 'house_number' : 'unit_number';
+            const attrs = [...(data.dynamicAttributes || [])];
+            const idx = attrs.findIndex((a) => a.key === unitKey);
+            const def = attrs[idx];
+            const merged = {
+              key: unitKey,
+              value: unitLabel,
+              value_type: def?.value_type || (isHouse ? 'string' : 'text'),
+            };
+            if (idx >= 0) attrs[idx] = merged;
+            else attrs.push(merged);
 
             let imageUrls: string[] = [];
             if (data.photos?.length) {
@@ -1775,7 +2027,7 @@ export default function MapScreen() {
               latitude: Number(data.latitude),
               longitude: Number(data.longitude),
               phone_number: data.phoneNumber?.trim() || undefined,
-              attributes: attributes.length ? attributes : undefined,
+              attributes: attrs.length ? attrs : undefined,
               image_urls: imageUrls.length ? imageUrls : undefined,
             });
 
@@ -1815,9 +2067,7 @@ export default function MapScreen() {
                   active && { backgroundColor: color, borderColor: color },
                 ]}
                 onPress={() =>
-                  selectedCategory === cat
-                    ? setSelectedCategory(null)
-                    : handleCategoryPress(cat)
+                  selectedCategory === cat ? clearCategorySheet() : handleCategoryPress(cat)
                 }
               >
                 <Text style={styles.categoryChipEmoji}>
@@ -1860,32 +2110,80 @@ export default function MapScreen() {
         <View style={styles.overlayContainer} pointerEvents="box-none">
           <TouchableOpacity
             style={styles.overlayBackdrop}
-            onPress={() => setSelectedCategory(null)}
+            onPress={clearCategorySheet}
             activeOpacity={1}
           />
           <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
-              <TouchableOpacity
-                style={styles.sheetCloseBtn}
-                onPress={() => setSelectedCategory(null)}
-              >
-                <Text style={styles.sheetCloseBtnText}>✕</Text>
-              </TouchableOpacity>
+              {categoryBrowse && (categoryBrowse.step === 'sub' || categoryBrowse.step === 'places') ? (
+                <TouchableOpacity style={styles.sheetBackBtn} onPress={handleCategorySheetBack}>
+                  <Text style={styles.sheetBackBtnText}>‹</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.sheetHeaderLeadingSpacer} />
+              )}
               <View style={styles.sheetTitleRow}>
                 <Text style={styles.sheetTitleEmoji}>
                   {getCategoryStyle(categoryList, selectedCategory ?? '').emoji}
                 </Text>
-                <View>
+                <View style={styles.sheetTitleTextCol}>
                   <Text style={styles.sheetTitle}>{getPlaceTypeDisplayName(selectedCategory)}</Text>
-                  <Text style={styles.sheetSubtitle}>
-                    {categoryStores.length} مكان
-                    {userLocation ? ' · مرتّب حسب المسافة' : ''}
-                  </Text>
+                  <Text style={styles.sheetSubtitle}>{categorySheetSubtitle}</Text>
                 </View>
               </View>
+              <TouchableOpacity style={styles.sheetCloseBtn} onPress={clearCategorySheet}>
+                <Text style={styles.sheetCloseBtnText}>✕</Text>
+              </TouchableOpacity>
             </View>
-            {categoryStores.length === 0 ? (
+
+            {categoryBrowse?.step === 'main' && treeLoading ? (
+              <View style={styles.sheetEmpty}>
+                <ActivityIndicator size="large" color="#2E86AB" />
+              </View>
+            ) : categoryBrowse?.step === 'main' && placeCategoryTree.length > 0 ? (
+              <FlatList
+                data={placeCategoryTree}
+                keyExtractor={(item) => item.main.id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.sheetTreeItem}
+                    onPress={() => onPickMainCategory(item.main)}
+                  >
+                    <Text style={styles.sheetTreeItemEmoji}>{item.main.emoji ?? '📁'}</Text>
+                    <Text style={styles.sheetTreeItemText}>{item.main.name}</Text>
+                    <Text style={styles.sheetTreeItemChevron}>‹</Text>
+                  </TouchableOpacity>
+                )}
+                contentContainerStyle={styles.sheetList}
+                showsVerticalScrollIndicator={false}
+              />
+            ) : categoryBrowse?.step === 'sub' ? (
+              <FlatList
+                data={
+                  placeCategoryTree.find((t) => t.main.id === categoryBrowse.mainId)?.sub_categories ??
+                  []
+                }
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.sheetTreeItem}
+                    onPress={() => onPickSubCategory(item)}
+                  >
+                    <Text style={styles.sheetTreeItemEmoji}>{item.emoji ?? '📂'}</Text>
+                    <Text style={styles.sheetTreeItemText}>{item.name}</Text>
+                    <Text style={styles.sheetTreeItemChevron}>‹</Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <View style={styles.sheetEmpty}>
+                    <Text style={styles.sheetEmptyText}>لا توجد تصنيفات فرعية</Text>
+                  </View>
+                }
+                contentContainerStyle={styles.sheetList}
+                showsVerticalScrollIndicator={false}
+              />
+            ) : categoryStores.length === 0 ? (
               <View style={styles.sheetEmpty}>
                 <Text style={styles.sheetEmptyText}>لا توجد أماكن في هذه الفئة بعد</Text>
               </View>
@@ -1922,11 +2220,6 @@ export default function MapScreen() {
                   <Text style={styles.adminBadgeText}>مدير النظام 👑</Text>
                 </View>
               )}
-              {user?.role === 'owner' && !user?.isAdmin && (
-                <View style={[styles.adminBadge, { backgroundColor: '#10B981' }]}>
-                  <Text style={styles.adminBadgeText}>صاحب متجر 🏪</Text>
-                </View>
-              )}
             </View>
             <ScrollView style={styles.sidebarList}>
               <Text style={styles.sidebarSectionTitle}>الفئات ({categories.length})</Text>
@@ -1949,16 +2242,6 @@ export default function MapScreen() {
                 );
               })}
             </ScrollView>
-            {(user?.role === 'owner' || user?.role === 'store_owner' || user?.isAdmin) && (
-              <TouchableOpacity style={styles.sidebarOwnerBtn} onPress={() => { setShowSidebar(false); router.push('/(main)/my-store'); }}>
-                <Text style={styles.sidebarOwnerBtnText}>🏪 متجري</Text>
-              </TouchableOpacity>
-            )}
-            {(user?.role === 'owner' || user?.role === 'store_owner' || user?.isAdmin) && (
-              <TouchableOpacity style={styles.sidebarOwnerBtn} onPress={() => { setShowSidebar(false); router.push('/(main)/owner-dashboard'); }}>
-                <Text style={styles.sidebarOwnerBtnText}>📊 لوحة تحكم المتجر</Text>
-              </TouchableOpacity>
-            )}
             {user?.isAdmin && (
               <TouchableOpacity style={styles.sidebarAdminBtn} onPress={() => { setShowSidebar(false); router.push('/(main)/admin'); }}>
                 <Text style={styles.sidebarAdminBtnText}>⚙️ لوحة الإدارة</Text>
@@ -1981,7 +2264,6 @@ export default function MapScreen() {
           onClose={closeTravelFlow}
           onNavigate={handleOpenTravelModePicker}
           onReport={() => setShowReportModal(true)}
-          onServices={() => setShowServicesModal(true)}
           onEdit={() => {
             setSelectedStore(null);
             setTravelStep(1);
@@ -2005,15 +2287,6 @@ export default function MapScreen() {
             const existing = stores.find((s) => s.id === childPlaceId);
             if (existing) {
               setSelectedStore(existing);
-              mapRef.current?.animateToRegion(
-                {
-                  latitude: existing.latitude,
-                  longitude: existing.longitude,
-                  latitudeDelta: 0.008,
-                  longitudeDelta: 0.008,
-                },
-                600
-              );
               return;
             }
             void (async () => {
@@ -2021,15 +2294,6 @@ export default function MapScreen() {
                 const p = await placeService.getById(childPlaceId);
                 const next = placeToStore(p);
                 setSelectedStore(next);
-                mapRef.current?.animateToRegion(
-                  {
-                    latitude: next.latitude,
-                    longitude: next.longitude,
-                    latitudeDelta: 0.008,
-                    longitudeDelta: 0.008,
-                  },
-                  600
-                );
               } catch {
                 // ignore: user can still view parent
               }
@@ -2051,14 +2315,6 @@ export default function MapScreen() {
             });
           }}
         />
-      )}
-
-      {/* Services Sheet */}
-      {showServicesModal && selectedStore && !isRouting && travelStep === 1 && (
-        <View style={styles.overlayContainer} pointerEvents="box-none">
-          <TouchableOpacity style={styles.overlayBackdrop} onPress={() => setShowServicesModal(false)} activeOpacity={1} />
-          <StoreServicesSheet store={selectedStore} user={user} onClose={() => setShowServicesModal(false)} />
-        </View>
       )}
 
       {selectedStore && !isRouting && travelStep === 1 && (
@@ -2123,7 +2379,8 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: 110, right: 14,
     width: 46, height: 46, borderRadius: 23,
     backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1000,
+    // أقل من overlayContainer (200) حتى لا يطفو فوق الـ bottom sheet
+    zIndex: 20,
     pointerEvents: 'auto',
     ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
   },
@@ -2226,23 +2483,61 @@ const styles = StyleSheet.create({
     alignSelf: 'center', marginTop: 10,
   },
   sheetHeader: {
-    paddingHorizontal: 20, paddingVertical: 14,
-    borderBottomWidth: 1, borderBottomColor: '#F3F4F6',
-    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
+  sheetHeaderLeadingSpacer: { width: 36, height: 36 },
+  sheetBackBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#EEF2F7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetBackBtnText: { fontSize: 22, color: '#374151', fontWeight: '700', marginTop: -2 },
   sheetCloseBtn: {
-    width: 30, height: 30, borderRadius: 15,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#F3F4F6',
-    alignItems: 'center', justifyContent: 'center', marginLeft: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sheetCloseBtnText: { fontSize: 14, color: '#6B7280', fontWeight: '700' },
   sheetTitleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 10 },
+  sheetTitleTextCol: { flex: 1, alignItems: 'flex-end' },
   sheetTitleEmoji: { fontSize: 30 },
   sheetTitle: { fontSize: 18, fontWeight: '800', color: '#1A3A5C', textAlign: 'right' },
   sheetSubtitle: { fontSize: 12, color: '#6B7280', textAlign: 'right', marginTop: 2 },
   sheetEmpty: { padding: 40, alignItems: 'center' },
   sheetEmptyText: { color: '#9CA3AF', fontSize: 15 },
   sheetList: { padding: 16, paddingBottom: 30 },
+  sheetTreeItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  sheetTreeItemEmoji: { fontSize: 22, marginLeft: 12 },
+  sheetTreeItemText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+    textAlign: 'right',
+  },
+  sheetTreeItemChevron: { fontSize: 20, color: '#9CA3AF', marginRight: 4 },
 
   catStoreItem: {
     flexDirection: 'row', alignItems: 'center',
@@ -2541,72 +2836,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10, alignItems: 'center',
   },
   storeModalDeleteBtnText: { color: '#DC2626', fontSize: 13, fontWeight: '700' },
-
-  servicesModal: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    overflow: 'hidden',
-    ...shadow({ offset: { width: 0, height: -6 }, opacity: 0.18, radius: 16, elevation: 24 }),
-  },
-  servicesModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  servicesModalTitle: {
-    fontSize: 18, fontWeight: '800', color: '#1A3A5C', textAlign: 'right',
-  },
-  servicesModalCloseText: {
-    fontSize: 18, color: '#6B7280', fontWeight: '700',
-  },
-  servicesModalBody: { padding: 20 },
-  servicesItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-    gap: 10,
-  },
-  servicesItemIcon: { fontSize: 20 },
-  servicesItemText: {
-    flex: 1, fontSize: 14, color: '#374151',
-    textAlign: 'right', lineHeight: 22,
-  },
-  servicesEmpty: { padding: 30, alignItems: 'center' },
-  servicesEmptyText: { color: '#9CA3AF', fontSize: 15 },
-  servicesSectionTitle: {
-    fontSize: 16, fontWeight: '700', color: '#1A3A5C',
-    textAlign: 'right', marginTop: 16, marginBottom: 10, paddingBottom: 6,
-    borderBottomWidth: 1, borderBottomColor: '#E5E7EB',
-  },
-  guestHint: {
-    textAlign: 'center', color: '#9CA3AF', fontSize: 13,
-    marginTop: 8, fontStyle: 'italic',
-  },
-  sidebarOwnerBtn: {
-    backgroundColor: '#10B981', borderRadius: 12,
-    paddingVertical: 14, alignItems: 'center', marginHorizontal: 16,
-    marginBottom: 8,
-    ...shadow({ offset: { width: 0, height: 2 }, opacity: 0.15, radius: 6, elevation: 4 }),
-  },
-  sidebarOwnerBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  cartBar: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#2E86AB', padding: 16, paddingBottom: 20,
-    borderTopLeftRadius: 0, borderTopRightRadius: 0,
-  },
-  cartBtn: {
-    backgroundColor: '#fff', borderRadius: 12,
-    paddingHorizontal: 20, paddingVertical: 10,
-  },
-  cartBtnText: { color: '#2E86AB', fontWeight: '700', fontSize: 15 },
 
   placeSearchWrap: {
     position: 'absolute',

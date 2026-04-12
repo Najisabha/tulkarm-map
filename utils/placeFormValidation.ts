@@ -68,14 +68,3 @@ export function validatePlaceForm(input: PlaceFormValidationInput): ValidationRe
 
   return { valid: true, error: null };
 }
-
-export function validateProductForm(input: {
-  name: string;
-  price: string;
-}): ValidationResult {
-  const fail = (error: string): ValidationResult => ({ valid: false, error });
-  if (!input.name?.trim()) return fail('اسم المنتج مطلوب');
-  const price = parseFloat(input.price);
-  if (isNaN(price) || price < 0) return fail('السعر يجب أن يكون رقماً موجباً');
-  return { valid: true, error: null };
-}

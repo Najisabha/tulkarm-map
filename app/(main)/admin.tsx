@@ -81,7 +81,7 @@ export default function AdminScreen() {
     void loadAll(true);
   }, []);
   const [stats, setStats] = useState<Partial<AdminStats>>({});
-  const [mainCategoriesCount, setMainCategoriesCount] = useState<number>(0);
+  const [placeCategoryCount, setPlaceCategoryCount] = useState<number>(0);
   const statCards: StatCardDef[] = useMemo(
     () => [
       {
@@ -139,13 +139,13 @@ export default function AdminScreen() {
         onPress: () => router.push('/(main)/admin-stores?kind=all'),
       },
       {
-        label: 'التصنيفات الرئيسية',
-        value: mainCategoriesCount,
+        label: 'تصنيفات الأماكن',
+        value: placeCategoryCount,
         icon: 'category',
         webGlyph: '🏷️',
         iconColor: '#B45309',
         iconBg: '#FEF3C7',
-        onPress: () => router.push('/(main)/admin-main-categories'),
+        onPress: () => router.push('/(main)/admin-classification-tree'),
       },
       {
         label: 'المستخدمون',
@@ -180,7 +180,7 @@ export default function AdminScreen() {
     [
       activeTypeCounts,
       activePlacesCount,
-      mainCategoriesCount,
+      placeCategoryCount,
       router,
       stats.places,
       stats.pendingPlaceRequests,
@@ -210,13 +210,33 @@ export default function AdminScreen() {
 
   useEffect(() => {
     if (!user?.isAdmin) return;
-    api
-      .getProductMainCategories()
-      .then((res) => {
-        const list = res?.data ?? [];
-        setMainCategoriesCount(Array.isArray(list) ? list.length : 0);
-      })
-      .catch(() => setMainCategoriesCount(0));
+    let cancelled = false;
+    void (async () => {
+      try {
+        const typesRes = await api.getPlaceTypes();
+        const types = typesRes.data ?? [];
+        let n = 0;
+        for (const t of types) {
+          try {
+            const treeRes = await api.getPlaceCategoriesTree(t.id);
+            const roots = Array.isArray(treeRes.data) ? treeRes.data : [];
+            for (const root of roots) {
+              n += 1;
+              const ch = (root as { children?: unknown[] }).children;
+              if (Array.isArray(ch)) n += ch.length;
+            }
+          } catch {
+            /* نوع بلا شجرة بعد */
+          }
+        }
+        if (!cancelled) setPlaceCategoryCount(n);
+      } catch {
+        if (!cancelled) setPlaceCategoryCount(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [user?.isAdmin]);
 
   if (!user?.isAdmin) {

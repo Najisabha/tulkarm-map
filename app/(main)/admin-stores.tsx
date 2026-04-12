@@ -29,9 +29,11 @@ import { placeService } from '../../services/placeService';
 import { categoryService } from '../../services/categoryService';
 import { usePlacesStore } from '../../stores/usePlacesStore';
 import {
+  getPlaceTypePluralLabel,
+  isDisallowedComplexUnitChildTypeName,
+  needsPlaceCategoryTree,
   normalizePlaceTypeKind,
   usesPlacePhoneAsStoreNumberField,
-  usesProductCategoryFieldsForPlaceType,
 } from '../../utils/placeTypeLabels';
 import { getPlaceAttrDefsForType } from '../../utils/placeFormAttrDefs';
 import { shadow } from '../../utils/shadowStyles';
@@ -149,6 +151,7 @@ function ComplexUnitsManager({ placeId, complexLabel }: { placeId: string; compl
   const [unitsPerFloor, setUnitsPerFloor] = useState('1');
   const [complexCoords, setComplexCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [placeTypes, setPlaceTypes] = useState<{ id: string; name: string }[]>([]);
+  const [unitForTypePick, setUnitForTypePick] = useState<any | null>(null);
 
   const isResidential = complexLabel === 'مجمّع سكني';
 
@@ -191,12 +194,12 @@ function ComplexUnitsManager({ placeId, complexLabel }: { placeId: string; compl
     })();
   }, [placeId]);
 
-  const findTypeIdByName = (name: string): string | null => {
-    const hit = placeTypes.find((t) => t.name === name);
-    return hit?.id ?? null;
-  };
+  const linkablePlaceTypes = useMemo(
+    () => placeTypes.filter((t) => !isDisallowedComplexUnitChildTypeName(t.name)),
+    [placeTypes],
+  );
 
-  const createAndLinkChildPlace = async (unit: any, childKind: 'house' | 'simple' | 'store') => {
+  const createAndLinkChildPlace = async (unit: any, selectedType: { id: string; name: string }) => {
     const floor = Number(unit.floor_number);
     const uNo = String(unit.unit_number);
     const label = `${floor}-${uNo}`;
@@ -206,35 +209,19 @@ function ComplexUnitsManager({ placeId, complexLabel }: { placeId: string; compl
       return;
     }
 
-    const isCommercial = !isResidential;
-    const typeName =
-      childKind === 'house'
-        ? 'منزل'
-        : childKind === 'store'
-          ? 'متجر تجاري'
-          : 'أخرى';
+    setUnitForTypePick(null);
 
-    const typeId = findTypeIdByName(typeName);
-    if (!typeId) {
-      Alert.alert('خطأ', `لم يتم العثور على type_id لنوع: ${typeName}. تحقق من /api/place-types`);
-      return;
-    }
+    const kind = normalizePlaceTypeKind(selectedType.name);
+    const typeId = selectedType.id;
 
     const baseAttrs: { key: string; value: string; value_type?: string }[] = [];
-    if (childKind === 'house') {
+    if (kind === 'house') {
       baseAttrs.push({ key: 'house_number', value: label, value_type: 'text' });
     } else {
       baseAttrs.push({ key: 'unit_number', value: label, value_type: 'text' });
     }
-    if (isCommercial) {
-      // As requested: unit_type exists for commercial units (empty initially)
-      baseAttrs.push({ key: 'unit_type', value: '', value_type: 'text' });
-    }
 
-    const defaultName =
-      childKind === 'house'
-        ? `بيت ${label}`
-        : `وحدة ${label}`;
+    const defaultName = kind === 'house' ? `بيت ${label}` : `وحدة ${label}`;
 
     setLoading(true);
     try {
@@ -307,7 +294,12 @@ function ComplexUnitsManager({ placeId, complexLabel }: { placeId: string; compl
     return places.filter((p) => p.kind !== 'complex');
   }, [places]);
 
+  const pickLabel = unitForTypePick
+    ? `${unitForTypePick.floor_number}-${unitForTypePick.unit_number}`
+    : '';
+
   return (
+    <>
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
       <Text style={{ fontSize: 14, fontWeight: '800', color: '#111827', textAlign: 'right' }}>
         توليد وحدات (idempotent)
@@ -354,37 +346,14 @@ function ComplexUnitsManager({ placeId, complexLabel }: { placeId: string; compl
                 </Text>
 
                 {!linked && (
-                  <View style={{ marginTop: 10, flexDirection: 'row-reverse', gap: 10, flexWrap: 'wrap' }}>
-                    {isResidential ? (
-                      <TouchableOpacity
-                        style={[styles.storeActionBtn, styles.storeActionEdit]}
-                        onPress={() => void createAndLinkChildPlace(u, 'house')}
-                        activeOpacity={0.85}
-                        disabled={loading}
-                      >
-                        <Text style={styles.storeActionEditText}>➕ إنشاء بيت وربطه</Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <>
-                        <TouchableOpacity
-                          style={[styles.storeActionBtn, styles.storeActionEdit]}
-                          onPress={() => void createAndLinkChildPlace(u, 'simple')}
-                          activeOpacity={0.85}
-                          disabled={loading}
-                        >
-                          <Text style={styles.storeActionEditText}>➕ إنشاء مكان بسيط وربطه</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.storeActionBtn, styles.storeActionShow]}
-                          onPress={() => void createAndLinkChildPlace(u, 'store')}
-                          activeOpacity={0.85}
-                          disabled={loading}
-                        >
-                          <Text style={styles.storeActionShowText}>➕ إنشاء متجر وربطه</Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-                  </View>
+                  <TouchableOpacity
+                    style={[styles.storeActionBtn, styles.storeActionEdit, { marginTop: 10 }]}
+                    onPress={() => setUnitForTypePick(u)}
+                    activeOpacity={0.85}
+                    disabled={loading || linkablePlaceTypes.length === 0}
+                  >
+                    <Text style={styles.storeActionEditText}>➕ إنشاء مكان وربطه</Text>
+                  </TouchableOpacity>
                 )}
 
                 <View style={{ marginTop: 8 }}>
@@ -437,6 +406,46 @@ function ComplexUnitsManager({ placeId, complexLabel }: { placeId: string; compl
         </View>
       )}
     </ScrollView>
+
+    <Modal visible={!!unitForTypePick} animationType="slide" transparent>
+      <View style={styles.housesOverlay}>
+        <TouchableOpacity style={styles.housesBackdrop} onPress={() => setUnitForTypePick(null)} activeOpacity={1} />
+        <View style={styles.housesSheet}>
+          <View style={styles.housesSheetHeader}>
+            <TouchableOpacity onPress={() => setUnitForTypePick(null)} activeOpacity={0.85}>
+              <Text style={styles.housesCloseText}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.housesSheetTitle} numberOfLines={2}>
+              اختر نوع المكان — {isResidential ? 'بيت' : 'وحدة'} {pickLabel}
+            </Text>
+            <View style={{ width: 28 }} />
+          </View>
+          <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ padding: 14, paddingBottom: 24 }}>
+            {linkablePlaceTypes.length === 0 ? (
+              <Text style={{ textAlign: 'right', color: '#6B7280', fontSize: 13 }}>
+                لا توجد أنواع متاحة. تحقق من تحميل الأنواع أو الاتصال بالسيرفر.
+              </Text>
+            ) : (
+              linkablePlaceTypes.map((t) => (
+                <TouchableOpacity
+                  key={t.id}
+                  style={styles.unitTypePickRow}
+                  onPress={() => void createAndLinkChildPlace(unitForTypePick!, { id: t.id, name: t.name })}
+                  activeOpacity={0.85}
+                  disabled={loading}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827', textAlign: 'right', flex: 1 }}>
+                    {getPlaceTypePluralLabel(t.name)}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#6B7280', marginLeft: 8 }}>←</Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 
@@ -465,11 +474,6 @@ const ATTR_LABELS: Record<string, string> = {
   stores_per_floor: 'المتاجر بكل طابق',
   phone: 'رقم الهاتف',
 };
-
-/** متجر + مطعم + مكتب + … — نفس شجرة «شجرة التصنيفات» حسب place_type_id */
-function needsPlaceCategoryTree(typeName: string): boolean {
-  return normalizePlaceTypeKind(typeName) === 'store' || usesProductCategoryFieldsForPlaceType(typeName);
-}
 
 function findSubCategoryNameInMap(
   mainToSubs: Record<string, CategoryItem[]>,
@@ -524,16 +528,23 @@ export default function AdminStoresScreen() {
   const { categories } = useCategories();
   const { stores, deleteStore, refreshStores } = useStores();
   const [residentialChildIds, setResidentialChildIds] = useState<Set<string>>(new Set());
+  const [commercialChildIds, setCommercialChildIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void api.getResidentialComplexChildPlaceIds()
       .then((res) => setResidentialChildIds(new Set(res?.data?.child_place_ids ?? [])))
       .catch(() => setResidentialChildIds(new Set()));
+    void api.getCommercialComplexChildPlaceIds()
+      .then((res) => setCommercialChildIds(new Set(res?.data?.child_place_ids ?? [])))
+      .catch(() => setCommercialChildIds(new Set()));
   }, [stores]);
 
   const managedStores = useMemo(
-    () => stores.filter((s) => !residentialChildIds.has(s.id)),
-    [stores, residentialChildIds],
+    () =>
+      stores.filter(
+        (s) => !residentialChildIds.has(s.id) && !commercialChildIds.has(s.id),
+      ),
+    [stores, residentialChildIds, commercialChildIds],
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'visible' | 'hidden'>('all');
@@ -620,11 +631,9 @@ export default function AdminStoresScreen() {
     lat: String(TULKARM_REGION.latitude),
     lng: String(TULKARM_REGION.longitude),
     dynamicAttrs: {} as Record<string, string>,
-    ownerId: null as string | null,
   });
   const [attrDefs, setAttrDefs] = useState<AttrDef[]>([]);
   const [editAttrDefs, setEditAttrDefs] = useState<AttrDef[]>([]);
-  const [owners, setOwners] = useState<{ id: string; name: string; email: string; role: string }[]>([]);
 
   const editingIsComplex = useMemo(() => {
     const cat = String(editingStore?.category || '');
@@ -660,14 +669,6 @@ export default function AdminStoresScreen() {
       setForm((f) => ({ ...f, category: categories[0].name }));
     }
   }, [categories]);
-
-  useEffect(() => {
-    if (!user?.isAdmin) return;
-    void api
-      .getUsers()
-      .then((res) => setOwners(res.data || []))
-      .catch(() => setOwners([]));
-  }, [user?.isAdmin]);
 
   useEffect(() => {
     const id = params.editStoreId;
@@ -781,7 +782,6 @@ export default function AdminStoresScreen() {
       lat: String(TULKARM_REGION.latitude),
       lng: String(TULKARM_REGION.longitude),
       dynamicAttrs: {},
-      ownerId: null,
     });
     setAttrDefs([]);
     setAddPcMainCategories([]);
@@ -860,7 +860,7 @@ export default function AdminStoresScreen() {
           const def = attrDefs.find((d) => d.key === key);
           return { key, value: value.trim(), value_type: def?.value_type || 'string' };
         });
-      const created = await api.createPlaceFromAdmin({
+      await api.createPlaceFromAdmin({
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         type_id: cat.id,
@@ -872,10 +872,6 @@ export default function AdminStoresScreen() {
         attributes: attributes.length ? attributes : undefined,
       });
 
-      const placeId = created?.data?.id;
-      if (placeId && form.ownerId) {
-        await api.assignStoreOwner(placeId, form.ownerId);
-      }
       await refreshStores();
       setShowAddModal(false);
       resetForm();
@@ -1095,6 +1091,16 @@ export default function AdminStoresScreen() {
       Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u064A\u0631\u062C\u0649 \u0625\u062F\u062E\u0627\u0644 \u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A \u0635\u062D\u064A\u062D\u0629');
       return;
     }
+    const treeModeEdit = needsPlaceCategoryTree(editForm.category);
+    const hasMainCategorySelection =
+      !!editPcCategoryIds.mainId || !!editForm.dynamicAttrs['store_type']?.trim();
+    if (treeModeEdit && !hasMainCategorySelection) {
+      Alert.alert(
+        'تنبيه',
+        'يرجى اختيار التصنيف الرئيسي (حقل مطلوب) قبل الحفظ.',
+      );
+      return;
+    }
     try {
       const cat = categories.find((c) => c.name === editForm.category);
       const unifiedPhone = usesPlacePhoneAsStoreNumberField(editForm.category);
@@ -1123,8 +1129,7 @@ export default function AdminStoresScreen() {
         payload.phone_number = editForm.dynamicAttrs['store_number']?.trim() || null;
       }
 
-      const treeMode = needsPlaceCategoryTree(editForm.category);
-      if (treeMode) {
+      if (treeModeEdit) {
         payload.main_category_id = editPcCategoryIds.mainId ?? null;
         payload.sub_category_id = editPcCategoryIds.subId ?? null;
       }
@@ -1467,30 +1472,6 @@ export default function AdminStoresScreen() {
                 {[...categories].sort((a, b) => a.name.localeCompare(b.name, 'ar')).map((cat) => (
                   <TouchableOpacity key={cat.id} style={[styles.categoryChip, form.category === cat.name && styles.categoryChipActive]} onPress={() => handleCategoryChange(cat.name, false)}>
                     <Text style={[styles.categoryChipText, form.category === cat.name && styles.categoryChipTextActive]}>{cat.emoji} {cat.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>
-                {'\u0635\u0627\u062d\u0628 \u0627\u0644\u0645\u062a\u062c\u0631'} <Text style={{ color: '#9CA3AF' }}>{'(اختياري)'}</Text>
-              </Text>
-              <View style={styles.chipsWrap}>
-                <TouchableOpacity
-                  style={[styles.categoryChip, !form.ownerId && styles.categoryChipActive]}
-                  onPress={() => setForm((p) => ({ ...p, ownerId: null }))}
-                >
-                  <Text style={[styles.categoryChipText, !form.ownerId && styles.categoryChipTextActive]}>بدون</Text>
-                </TouchableOpacity>
-                {owners.map((o) => (
-                  <TouchableOpacity
-                    key={o.id}
-                    style={[styles.categoryChip, form.ownerId === o.id && styles.categoryChipActive]}
-                    onPress={() => setForm((p) => ({ ...p, ownerId: o.id }))}
-                  >
-                    <Text style={[styles.categoryChipText, form.ownerId === o.id && styles.categoryChipTextActive]}>
-                      {o.name}
-                    </Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -1931,4 +1912,15 @@ const styles = StyleSheet.create({
   housesRowIcon: { fontSize: 18 },
   housesRowName: { flex: 1, fontSize: 14, fontWeight: '900', color: '#111827', textAlign: 'right' },
   housesRowArrow: { width: 20, textAlign: 'left', color: '#64748B', fontWeight: '900' },
+  unitTypePickRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 10,
+  },
 });

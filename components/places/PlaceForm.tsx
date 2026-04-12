@@ -75,6 +75,61 @@ interface PlaceFormProps {
   hidePhoneField?: boolean;
 }
 
+function clampInt(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function parseIntOr(s: string | undefined, fallback: number) {
+  const n = parseInt((s ?? '').trim(), 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function NumberStepper({
+  label,
+  value,
+  min,
+  max,
+  onChangeValue,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChangeValue: (next: number) => void;
+}) {
+  const decDisabled = value <= min;
+  const incDisabled = value >= max;
+  return (
+    <View style={styles.stepperWrap}>
+      <View style={styles.labelRow}>
+        <Text style={styles.label}>{label}</Text>
+        <Text style={styles.asterisk}> *</Text>
+      </View>
+      <View style={styles.stepperRow}>
+        <TouchableOpacity
+          style={[styles.stepperBtn, decDisabled && styles.stepperBtnDisabled]}
+          onPress={() => onChangeValue(clampInt(value - 1, min, max))}
+          disabled={decDisabled}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.stepperBtnText}>-</Text>
+        </TouchableOpacity>
+        <View style={styles.stepperValueBox}>
+          <Text style={styles.stepperValueText}>{value}</Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.stepperBtn, incDisabled && styles.stepperBtnDisabled]}
+          onPress={() => onChangeValue(clampInt(value + 1, min, max))}
+          disabled={incDisabled}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.stepperBtnText}>+</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 export function PlaceForm({
   kind,
   typeLabel,
@@ -104,58 +159,6 @@ export function PlaceForm({
 }: PlaceFormProps) {
   const setDynamic = (key: string, value: string) => {
     onChange({ dynamicValues: { ...formState.dynamicValues, [key]: value } });
-  };
-
-  const clampInt = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-  const parseIntOr = (s: string | undefined, fallback: number) => {
-    const n = parseInt((s ?? '').trim(), 10);
-    return Number.isFinite(n) ? n : fallback;
-  };
-
-  const NumberStepper = ({
-    label,
-    value,
-    min,
-    max,
-    onChangeValue,
-  }: {
-    label: string;
-    value: number;
-    min: number;
-    max: number;
-    onChangeValue: (next: number) => void;
-  }) => {
-    const decDisabled = value <= min;
-    const incDisabled = value >= max;
-    return (
-      <View style={styles.stepperWrap}>
-        <View style={styles.labelRow}>
-          <Text style={styles.label}>{label}</Text>
-          <Text style={styles.asterisk}> *</Text>
-        </View>
-        <View style={styles.stepperRow}>
-          <TouchableOpacity
-            style={[styles.stepperBtn, decDisabled && styles.stepperBtnDisabled]}
-            onPress={() => onChangeValue(clampInt(value - 1, min, max))}
-            disabled={decDisabled}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.stepperBtnText}>-</Text>
-          </TouchableOpacity>
-          <View style={styles.stepperValueBox}>
-            <Text style={styles.stepperValueText}>{value}</Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.stepperBtn, incDisabled && styles.stepperBtnDisabled]}
-            onPress={() => onChangeValue(clampInt(value + 1, min, max))}
-            disabled={incDisabled}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.stepperBtnText}>+</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
   };
 
   const nameLabel =

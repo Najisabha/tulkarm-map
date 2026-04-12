@@ -222,76 +222,6 @@ export interface RatingData {
   created_at: string;
 }
 
-export interface StoreService {
-  id: string;
-  store_id: string;
-  name: string;
-  description: string | null;
-  price: string | null;
-  is_available: boolean;
-  sort_order: number;
-}
-
-export interface StoreProduct {
-  id: string;
-  store_id: string;
-  name: string;
-  description: string | null;
-  price: string;
-  image_url: string | null;
-  stock: number;
-  is_available: boolean;
-  main_category?: string | null;
-  sub_category?: string | null;
-  company_name?: string | null;
-  sort_order: number;
-}
-
-export interface ProductMainCategory {
-  id: string;
-  name: string;
-  emoji?: string | null;
-  arrow_color?: string | null;
-  sort_order: number;
-  subcategories_count?: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProductSubCategory {
-  id: string;
-  main_category_id: string;
-  name: string;
-  emoji?: string | null;
-  arrow_color?: string | null;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Order {
-  id: string;
-  store_id: string;
-  user_id: string;
-  total: string;
-  status: string;
-  notes: string | null;
-  created_at: string;
-  store_name?: string;
-  customer_name?: string;
-  customer_email?: string;
-  items: OrderItem[];
-}
-
-export interface OrderItem {
-  id: string;
-  order_id: string;
-  product_id: string;
-  product_name: string;
-  quantity: number;
-  unit_price: string;
-}
-
 export interface AdminStats {
   users: number;
   stores: number;
@@ -516,27 +446,6 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  getProductMainCategories: () =>
-    request<ApiResponse<ProductMainCategory[]>>('/api/product-categories'),
-
-  createProductMainCategory: (data: { name: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
-    request<ApiResponse<ProductMainCategory>>('/api/product-categories', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  updateProductMainCategory: (id: string, data: { name?: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
-    request<ApiResponse<ProductMainCategory>>(`/api/product-categories/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-
-  deleteProductMainCategory: (id: string) =>
-    request<ApiResponse<{ message: string }>>(`/api/product-categories/${id}`, { method: 'DELETE' }),
-
-  getProductSubCategories: (mainCategoryId: string) =>
-    request<ApiResponse<ProductSubCategory[]>>(`/api/product-categories/${mainCategoryId}/subcategories`),
-
   // =========================
   // Place categories (main/sub tree)
   // =========================
@@ -572,6 +481,9 @@ export const api = {
   getResidentialComplexChildPlaceIds: () =>
     request<ApiResponse<{ child_place_ids: string[] }>>('/api/complexes/residential/child-place-ids'),
 
+  getCommercialComplexChildPlaceIds: () =>
+    request<ApiResponse<{ child_place_ids: string[] }>>('/api/complexes/commercial/child-place-ids'),
+
   getComplex: (placeId: string) =>
     request<ApiResponse<{ complex: any; units: any[] }>>(`/api/complexes/${placeId}`),
 
@@ -586,21 +498,6 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ child_place_id: childPlaceId }),
     }),
-
-  createProductSubCategory: (mainCategoryId: string, data: { name: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
-    request<ApiResponse<ProductSubCategory>>(`/api/product-categories/${mainCategoryId}/subcategories`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  updateProductSubCategory: (id: string, data: { name?: string; sort_order?: number; emoji?: string | null; arrow_color?: string | null }) =>
-    request<ApiResponse<ProductSubCategory>>(`/api/product-subcategories/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-
-  deleteProductSubCategory: (id: string) =>
-    request<ApiResponse<{ message: string }>>(`/api/product-subcategories/${id}`, { method: 'DELETE' }),
 
   getPlaces: (params?: Record<string, string | number | undefined>) =>
     request<PaginatedResponse<PlaceData>>(`/api/places${qs(params)}`),
@@ -711,60 +608,6 @@ export const api = {
       `/api/places/${placeId}/ratings?page=${page}&limit=${limit}`
     ),
 
-  getStoreServices: (storeId: string) =>
-    request<ApiResponse<StoreService[]>>(`/api/stores/${storeId}/services`),
-
-  addStoreService: (storeId: string, data: { name: string; description?: string; price?: number }) =>
-    request<ApiResponse<StoreService>>(`/api/stores/${storeId}/services`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  updateStoreService: (storeId: string, serviceId: string, data: Record<string, any>) =>
-    request<ApiResponse<StoreService>>(`/api/stores/${storeId}/services/${serviceId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-
-  deleteStoreService: (storeId: string, serviceId: string) =>
-    request<ApiResponse<{ message: string }>>(`/api/stores/${storeId}/services/${serviceId}`, { method: 'DELETE' }),
-
-  getStoreProducts: (storeId: string) =>
-    request<ApiResponse<StoreProduct[]>>(`/api/stores/${storeId}/products`),
-
-  addStoreProduct: (storeId: string, data: { name: string; description?: string; price: number; image_url?: string; stock?: number; main_category?: string | null; sub_category?: string | null; company_name?: string | null }) =>
-    request<ApiResponse<StoreProduct>>(`/api/stores/${storeId}/products`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  updateStoreProduct: (storeId: string, productId: string, data: Record<string, any>) =>
-    request<ApiResponse<StoreProduct>>(`/api/stores/${storeId}/products/${productId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-
-  deleteStoreProduct: (storeId: string, productId: string) =>
-    request<ApiResponse<{ message: string }>>(`/api/stores/${storeId}/products/${productId}`, { method: 'DELETE' }),
-
-  createOrder: (data: { store_id: string; items: { product_id: string; quantity: number }[]; notes?: string }) =>
-    request<ApiResponse<Order>>('/api/orders', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  getMyOrders: () =>
-    request<ApiResponse<Order[]>>('/api/orders/my'),
-
-  getStoreOrders: (storeId: string) =>
-    request<ApiResponse<Order[]>>(`/api/orders/store/${storeId}`),
-
-  updateOrderStatus: (orderId: string, status: string) =>
-    request<ApiResponse<{ message: string }>>(`/api/orders/${orderId}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
-    }),
-
   getUsers: () =>
     request<ApiResponse<UserData[]>>('/api/users'),
 
@@ -806,16 +649,4 @@ export const api = {
 
   getAdminStats: () =>
     request<ApiResponse<AdminStats>>('/api/admin/stats'),
-
-  getStoreFull: (storeId: string) =>
-    request<ApiResponse<any>>(`/api/stores/${storeId}/full`),
-
-  assignStoreOwner: (storeId: string, ownerId: string | null) =>
-    request<ApiResponse<{ message: string }>>(`/api/stores/${storeId}/owner`, {
-      method: 'PATCH',
-      body: JSON.stringify({ owner_id: ownerId }),
-    }),
-
-  getMyStores: () =>
-    request<ApiResponse<any[]>>('/api/my-stores'),
 };
