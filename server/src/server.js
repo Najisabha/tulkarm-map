@@ -11,10 +11,18 @@ async function start() {
     process.exit(1);
   }
 
-  app.listen(env.PORT, () => {
+  const server = app.listen(env.PORT, () => {
     console.log(`Server running on http://localhost:${env.PORT}`);
     console.log(`API: /api/*`);
     console.log(`Health: http://localhost:${env.PORT}/api/health`);
+  });
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${env.PORT} is already in use. Stop the other process or set PORT in server/.env.`);
+    } else {
+      console.error(err);
+    }
+    process.exit(1);
   });
 }
 

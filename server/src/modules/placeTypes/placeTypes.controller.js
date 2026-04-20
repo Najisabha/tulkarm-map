@@ -87,4 +87,30 @@ export const placeTypesController = {
       next(err);
     }
   },
+
+  async updateAttributeDefinition(req, res, next) {
+    try {
+      const existingType = await placeTypesService.getById(req.params.id);
+      if (!existingType) throw ApiError.notFound('نوع المكان غير موجود');
+      const def = await placeTypesService.updateAttributeDefinition(
+        req.params.id,
+        req.params.defId,
+        req.validated
+      );
+      return success(res, def);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async removeAttributeDefinition(req, res, next) {
+    try {
+      const existingType = await placeTypesService.getById(req.params.id);
+      if (!existingType) throw ApiError.notFound('نوع المكان غير موجود');
+      await placeTypesService.removeAttributeDefinition(req.params.id, req.params.defId);
+      return success(res, { message: 'تم حذف تعريف الخاصية' });
+    } catch (err) {
+      next(err);
+    }
+  },
 };

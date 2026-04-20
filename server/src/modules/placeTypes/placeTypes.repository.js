@@ -68,4 +68,55 @@ export const placeTypesRepo = {
     );
     return rows[0];
   },
+
+  async findAttributeDefinitionById(defId) {
+    const { rows } = await pool.query(
+      'SELECT * FROM place_type_attribute_definitions WHERE id = $1',
+      [defId]
+    );
+    return rows[0] || null;
+  },
+
+  async updateAttributeDefinition(defId, placeTypeId, patch) {
+    const current = await this.findAttributeDefinitionById(defId);
+    if (!current || current.place_type_id !== placeTypeId) return null;
+
+    const nextKey = patch.key !== undefined ? patch.key : current.key;
+    const nextLabel = patch.label !== undefined ? patch.label : current.label;
+    const nextVt = patch.value_type !== undefined ? patch.value_type : current.value_type;
+    const nextReq = patch.is_required !== undefined ? patch.is_required : current.is_required;
+    const nextOptions = Object.prototype.hasOwnProperty.call(patch, 'options')
+      ? patch.options
+      : current.options;
+
+    if (nextKey !== current.key) {
+      const { rows: clash } = await pool.query(
+        `SELECT 1 FROM place_type_attribute_definitions WHERE place_type_id = $1 AND LOWER(key) = LOWER($2) AND id <> $3 LIMIT 1`,
+        [placeTypeId, nextKey, defId]
+      );
+      if (clash.length > 0) {
+        const err = new Error('duplicate attribute key');
+        err.code = 'ATTR_KEY_CONFLICT';
+        throw err;
+      }
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE place_type_attribute_definitions
+       SET key = $1, label = $2, value_type = $3, is_required = $4,
+           options = $5, updated_at = now()
+       WHERE id = $6 AND place_type_id = $7
+       RETURNING *`,
+      [nextKey, nextLabel, nextVt, nextReq, nextOptions ?? null, defId, placeTypeId]
+    );
+    return rows[0] || null;
+  },
+
+  async deleteAttributeDefinition(defId, placeTypeId) {
+    const { rows } = await pool.query(
+      `DELETE FROM place_type_attribute_definitions WHERE id = $1 AND place_type_id = $2 RETURNING *`,
+      [defId, placeTypeId]
+    );
+    return rows[0] || null;
+  },
 };

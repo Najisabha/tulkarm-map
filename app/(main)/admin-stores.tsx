@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -10,444 +10,40 @@ import {
   Modal,
   Platform,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { api, type PlaceData } from '../../api/client';
+import { adminStoresStyles as styles } from '../../components/admin/AdminStores.styles';
+import { AdminUnauthorized } from '../../components/admin/AdminUnauthorized';
+import { ComplexResidentialHousesModal } from '../../components/admin/stores/ComplexResidentialHousesModal';
+import { ComplexUnitsManager, type ComplexUnitsManagerHandle } from '../../components/admin/stores/ComplexUnitsManager';
 import { PlaceCard } from '../../components/places/PlaceCard';
 import { CategoryItem, CategorySelector } from '../../components/places/CategorySelector';
-import { ComplexBuildingViewer, ComplexUnit } from '../../components/places/ComplexBuildingViewer';
 import { LAYOUT } from '../../constants/layout';
 import { TULKARM_REGION } from '../../constants/tulkarmRegion';
 import { useAuth } from '../../context/AuthContext';
 import { useCategories } from '../../context/CategoryContext';
 import { Store, useStores } from '../../context/StoreContext';
-import { placeService } from '../../services/placeService';
-import { categoryService } from '../../services/categoryService';
-import { usePlacesStore } from '../../stores/usePlacesStore';
+import { useAdminStoresFilters } from '../../hooks/admin/useAdminStoresFilters';
+import { parseAttrUiOptions } from '../../utils/admin/categoryAdminHelpers';
 import {
-  getPlaceTypePluralLabel,
-  isDisallowedComplexUnitChildTypeName,
-  needsPlaceCategoryTree,
   normalizePlaceTypeKind,
+  needsPlaceCategoryTree,
   usesPlacePhoneAsStoreNumberField,
 } from '../../utils/placeTypeLabels';
+import { ensureAndFetchAttributeDefinitions } from '../../utils/admin/ensurePlaceTypeAttrDefs';
 import { getPlaceAttrDefsForType } from '../../utils/placeFormAttrDefs';
-import { shadow } from '../../utils/shadowStyles';
-
-function storeToDomainPlace(store: Store): any {
-  const phone = store.attributes?.find((a) => a.key === 'phone')?.value ?? store.phone ?? null;
-  return {
-    id: store.id,
-    name: store.name,
-    description: store.description || null,
-    phoneNumber: phone,
-    images: store.images?.map((img) => ({ id: img.id, url: img.image_url, sortOrder: img.sort_order })) ?? [],
-    location: { latitude: store.latitude, longitude: store.longitude },
-    typeId: store.type_id ?? '',
-    typeName: store.type_name ?? store.category,
-    kind: 'simple',
-    status: (store.status as any) ?? 'pending',
-    avgRating: parseFloat(store.avg_rating ?? '0'),
-    ratingCount: Number(store.rating_count ?? 0),
-    createdAt: store.createdAt,
-    attributes: store.attributes?.map((a) => ({ key: a.key, value: a.value, valueType: a.value_type })) ?? [],
-  };
-}
-
-function ComplexResidentialHousesModal({
-  visible,
-  complexStore,
-  allStores,
-  onClose,
-  onOpenHouse,
-}: {
-  visible: boolean;
-  complexStore: Store | null;
-  allStores: Store[];
-  onClose: () => void;
-  onOpenHouse: (houseStore: Store) => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [floorsCount, setFloorsCount] = useState<number>(1);
-  const [unitsPerFloor, setUnitsPerFloor] = useState<number>(1);
-
-  useEffect(() => {
-    if (!visible || !complexStore) return;
-    if (String(complexStore.category || '') !== 'مجمّع سكني') return;
-    setLoading(true);
-    setErr(null);
-    void (async () => {
-      try {
-        const res = await placeService.getComplex(complexStore.id);
-        const f = Number(res?.complex?.floors_count ?? 1);
-        const u = Number(res?.complex?.units_per_floor ?? 1);
-        setFloorsCount(Number.isFinite(f) && f >= 1 ? f : 1);
-        setUnitsPerFloor(Number.isFinite(u) && u >= 1 ? u : 1);
-      } catch (e: any) {
-        setErr(e?.message || 'فشل تحميل منازل المجمع');
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [visible, complexStore?.id]);
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <View style={styles.housesOverlay}>
-        <TouchableOpacity style={styles.housesBackdrop} onPress={onClose} activeOpacity={1} />
-        <View style={styles.housesSheet}>
-          <View style={styles.housesSheetHeader}>
-            <TouchableOpacity onPress={onClose} activeOpacity={0.85}>
-              <Text style={styles.housesCloseText}>✕</Text>
-            </TouchableOpacity>
-            <Text style={styles.housesSheetTitle} numberOfLines={1}>
-              منازل {complexStore?.name || 'المجمّع'}
-            </Text>
-            <View style={{ width: 28 }} />
-          </View>
-
-          {loading ? (
-            <View style={{ padding: 18 }}>
-              <ActivityIndicator />
-            </View>
-          ) : err ? (
-            <Text style={styles.housesErrorText}>{err}</Text>
-          ) : (
-            <View style={{ paddingHorizontal: 14, paddingBottom: 18 }}>
-              <ComplexBuildingViewer
-                placeId={complexStore?.id || ''}
-                complexType="residential"
-                floorsCount={floorsCount}
-                unitsPerFloor={unitsPerFloor}
-                onUnitPress={(unit: ComplexUnit) => {
-                  if (unit.child_place_id && unit.child_place_name) {
-                    const hit = allStores.find((s) => s.id === unit.child_place_id);
-                    if (hit) onOpenHouse(hit);
-                    else Alert.alert('تنبيه', 'تعذّر فتح بيانات المنزل. حدّث القائمة ثم حاول مجدداً.');
-                    return;
-                  }
-                  Alert.alert('تنبيه', 'هذه الوحدة غير مرتبطة بمنزل بعد.');
-                }}
-              />
-            </View>
-          )}
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-function ComplexUnitsManager({ placeId, complexLabel }: { placeId: string; complexLabel: string }) {
-  const { places, loadAll } = usePlacesStore();
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [units, setUnits] = useState<any[]>([]);
-  const [floorsCount, setFloorsCount] = useState('1');
-  const [unitsPerFloor, setUnitsPerFloor] = useState('1');
-  const [complexCoords, setComplexCoords] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [placeTypes, setPlaceTypes] = useState<{ id: string; name: string }[]>([]);
-  const [unitForTypePick, setUnitForTypePick] = useState<any | null>(null);
-
-  const isResidential = complexLabel === 'مجمّع سكني';
-
-  const refresh = async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const res = await placeService.getComplex(placeId);
-      setUnits(res.units || []);
-      if (res.complex?.floors_count) setFloorsCount(String(res.complex.floors_count));
-      if (res.complex?.units_per_floor) setUnitsPerFloor(String(res.complex.units_per_floor));
-    } catch (e: any) {
-      setErr(e?.message || 'فشل تحميل الوحدات');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadAll(true);
-    void refresh();
-  }, [placeId]);
-
-  useEffect(() => {
-    // Load the complex place itself (coords) + place types (for type_id selection)
-    void (async () => {
-      try {
-        const p = await placeService.getById(placeId);
-        setComplexCoords({ latitude: p.location.latitude, longitude: p.location.longitude });
-      } catch {
-        // ignore — user can still link existing places
-      }
-      try {
-        const res = await api.getPlaceTypes();
-        const list = Array.isArray(res?.data) ? res.data : [];
-        setPlaceTypes(list.map((t) => ({ id: t.id, name: t.name })));
-      } catch {
-        setPlaceTypes([]);
-      }
-    })();
-  }, [placeId]);
-
-  const linkablePlaceTypes = useMemo(
-    () => placeTypes.filter((t) => !isDisallowedComplexUnitChildTypeName(t.name)),
-    [placeTypes],
-  );
-
-  const createAndLinkChildPlace = async (unit: any, selectedType: { id: string; name: string }) => {
-    const floor = Number(unit.floor_number);
-    const uNo = String(unit.unit_number);
-    const label = `${floor}-${uNo}`;
-
-    if (!complexCoords) {
-      Alert.alert('تنبيه', 'تعذّر قراءة إحداثيات المجمع. افتح/أغلق الشاشة ثم حاول مجدداً.');
-      return;
-    }
-
-    setUnitForTypePick(null);
-
-    const kind = normalizePlaceTypeKind(selectedType.name);
-    const typeId = selectedType.id;
-
-    const baseAttrs: { key: string; value: string; value_type?: string }[] = [];
-    if (kind === 'house') {
-      baseAttrs.push({ key: 'house_number', value: label, value_type: 'text' });
-    } else {
-      baseAttrs.push({ key: 'unit_number', value: label, value_type: 'text' });
-    }
-
-    const defaultName = kind === 'house' ? `بيت ${label}` : `وحدة ${label}`;
-
-    setLoading(true);
-    try {
-      const created = await api.createPlaceFromAdmin({
-        name: defaultName,
-        description: '',
-        type_id: typeId,
-        latitude: complexCoords.latitude,
-        longitude: complexCoords.longitude,
-        attributes: baseAttrs,
-        image_urls: [],
-      });
-      const childPlaceId = created.data.id;
-      await placeService.linkUnitPlace(unit.id, childPlaceId);
-      await loadAll(true);
-      await refresh();
-      Alert.alert('✅ تم', `تم إنشاء مكان وربطه بالوحدة ${label}`);
-    } catch (e: any) {
-      Alert.alert('خطأ', e?.message || 'فشل إنشاء/ربط المكان');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const generate = async () => {
-    const f = parseInt(floorsCount);
-    const u = parseInt(unitsPerFloor);
-    if (!Number.isFinite(f) || f < 1) return Alert.alert('تنبيه', 'عدد الطوابق غير صالح');
-    if (!Number.isFinite(u) || u < 1) return Alert.alert('تنبيه', 'عدد الوحدات غير صالح');
-    setLoading(true);
-    try {
-      await placeService.generateUnits(placeId, f, u);
-      await refresh();
-      Alert.alert('✅ تم', 'تم توليد الوحدات');
-    } catch (e: any) {
-      Alert.alert('خطأ', e?.message || 'فشل توليد الوحدات');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const linkPlace = async (unitId: string, childPlaceId: string | null) => {
-    setLoading(true);
-    try {
-      await placeService.linkUnitPlace(unitId, childPlaceId);
-      await refresh();
-    } catch (e: any) {
-      Alert.alert('خطأ', e?.message || 'فشل الربط');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateUnitType = async (childPlaceId: string, unitType: string) => {
-    try {
-      const place = places.find((p) => p.id === childPlaceId);
-      const attrs = (place?.attributes || []).map((a) => ({ key: a.key, value: a.value, value_type: a.valueType }));
-      const filtered = attrs.filter((a) => a.key !== 'unit_type');
-      if (unitType.trim()) filtered.push({ key: 'unit_type', value: unitType.trim(), value_type: 'text' });
-      await placeService.update(childPlaceId, { attributes: filtered });
-      await loadAll(true);
-      Alert.alert('✅ تم', 'تم حفظ نوع الوحدة');
-    } catch (e: any) {
-      Alert.alert('خطأ', e?.message || 'فشل حفظ نوع الوحدة');
-    }
-  };
-
-  const placeOptions = useMemo(() => {
-    // Places that can be linked to units: simple/categorized/house (exclude complexes)
-    return places.filter((p) => p.kind !== 'complex');
-  }, [places]);
-
-  const pickLabel = unitForTypePick
-    ? `${unitForTypePick.floor_number}-${unitForTypePick.unit_number}`
-    : '';
-
-  return (
-    <>
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
-      <Text style={{ fontSize: 14, fontWeight: '800', color: '#111827', textAlign: 'right' }}>
-        توليد وحدات (idempotent)
-      </Text>
-      <View style={{ flexDirection: 'row-reverse', gap: 10, marginTop: 10 }}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textAlign: 'right' }}>عدد الطوابق</Text>
-          <TextInput value={floorsCount} onChangeText={setFloorsCount} style={styles.formInput} keyboardType="numeric" textAlign="center" />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textAlign: 'right' }}>وحدات/طابق</Text>
-          <TextInput value={unitsPerFloor} onChangeText={setUnitsPerFloor} style={styles.formInput} keyboardType="numeric" textAlign="center" />
-        </View>
-      </View>
-      <TouchableOpacity style={[styles.submitBtn, loading && styles.submitBtnDisabled]} onPress={() => void generate()} disabled={loading} activeOpacity={0.85}>
-        <Text style={styles.submitBtnText}>⚙️ توليد/تحديث الوحدات</Text>
-      </TouchableOpacity>
-
-      {err ? (
-        <Text style={{ marginTop: 10, color: '#EF4444', textAlign: 'right' }}>{err}</Text>
-      ) : null}
-
-      {loading ? (
-        <ActivityIndicator style={{ marginTop: 16 }} />
-      ) : (
-        <View style={{ marginTop: 16, gap: 10 }}>
-          {units.map((u) => {
-            const label = `${u.floor_number}-${u.unit_number}`;
-            const linked = u.child_place_id ? placeOptions.find((p) => p.id === u.child_place_id) : null;
-            const unitType = linked?.attributes?.find((a) => a.key === 'unit_type')?.value ?? '';
-            return (
-              <View key={u.id} style={styles.unitCard}>
-                <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 14, fontWeight: '900', color: '#111827' }}>
-                    {isResidential ? 'بيت' : 'وحدة'} {label}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: linked ? '#16A34A' : '#9CA3AF', fontWeight: '800' }}>
-                    {linked ? 'مرتبط' : 'غير مرتبط'}
-                  </Text>
-                </View>
-
-                <Text style={{ marginTop: 6, fontSize: 12, color: '#374151', textAlign: 'right' }}>
-                  المكان التابع: {linked ? linked.name : '—'}
-                </Text>
-
-                {!linked && (
-                  <TouchableOpacity
-                    style={[styles.storeActionBtn, styles.storeActionEdit, { marginTop: 10 }]}
-                    onPress={() => setUnitForTypePick(u)}
-                    activeOpacity={0.85}
-                    disabled={loading || linkablePlaceTypes.length === 0}
-                  >
-                    <Text style={styles.storeActionEditText}>➕ إنشاء مكان وربطه</Text>
-                  </TouchableOpacity>
-                )}
-
-                <View style={{ marginTop: 8 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textAlign: 'right' }}>
-                    اربط بمعرّف مكان
-                  </Text>
-                  <TextInput
-                    defaultValue={u.child_place_id ?? ''}
-                    placeholder="ضع placeId هنا (أو اتركه فارغ لفك الربط)"
-                    placeholderTextColor="#9CA3AF"
-                    style={styles.formInput}
-                    textAlign="left"
-                    onSubmitEditing={(e) => {
-                      const v = String(e.nativeEvent.text || '').trim();
-                      void linkPlace(u.id, v ? v : null);
-                    }}
-                  />
-                  <Text style={{ fontSize: 11, color: '#6B7280', textAlign: 'right', marginTop: 4 }}>
-                    Enter لحفظ الربط
-                  </Text>
-                </View>
-
-                {!isResidential && linked && (
-                  <View style={{ marginTop: 10 }}>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#374151', textAlign: 'right' }}>نوع الوحدة (unit_type)</Text>
-                    <TextInput
-                      defaultValue={unitType}
-                      placeholder="مثال: متجر / مطعم / صيدلية ..."
-                      placeholderTextColor="#9CA3AF"
-                      style={styles.formInput}
-                      textAlign="right"
-                      onSubmitEditing={(e) => void updateUnitType(linked.id, String(e.nativeEvent.text || ''))}
-                    />
-                    <Text style={{ fontSize: 11, color: '#6B7280', textAlign: 'right', marginTop: 4 }}>Enter لحفظ النوع</Text>
-                  </View>
-                )}
-
-                {u.child_place_id && (
-                  <TouchableOpacity
-                    style={[styles.storeActionBtn, styles.storeActionDelete, { marginTop: 10 }]}
-                    onPress={() => void linkPlace(u.id, null)}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.storeActionDeleteText}>🔗 فك الربط</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            );
-          })}
-        </View>
-      )}
-    </ScrollView>
-
-    <Modal visible={!!unitForTypePick} animationType="slide" transparent>
-      <View style={styles.housesOverlay}>
-        <TouchableOpacity style={styles.housesBackdrop} onPress={() => setUnitForTypePick(null)} activeOpacity={1} />
-        <View style={styles.housesSheet}>
-          <View style={styles.housesSheetHeader}>
-            <TouchableOpacity onPress={() => setUnitForTypePick(null)} activeOpacity={0.85}>
-              <Text style={styles.housesCloseText}>✕</Text>
-            </TouchableOpacity>
-            <Text style={styles.housesSheetTitle} numberOfLines={2}>
-              اختر نوع المكان — {isResidential ? 'بيت' : 'وحدة'} {pickLabel}
-            </Text>
-            <View style={{ width: 28 }} />
-          </View>
-          <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ padding: 14, paddingBottom: 24 }}>
-            {linkablePlaceTypes.length === 0 ? (
-              <Text style={{ textAlign: 'right', color: '#6B7280', fontSize: 13 }}>
-                لا توجد أنواع متاحة. تحقق من تحميل الأنواع أو الاتصال بالسيرفر.
-              </Text>
-            ) : (
-              linkablePlaceTypes.map((t) => (
-                <TouchableOpacity
-                  key={t.id}
-                  style={styles.unitTypePickRow}
-                  onPress={() => void createAndLinkChildPlace(unitForTypePick!, { id: t.id, name: t.name })}
-                  activeOpacity={0.85}
-                  disabled={loading}
-                >
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#111827', textAlign: 'right', flex: 1 }}>
-                    {getPlaceTypePluralLabel(t.name)}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: '#6B7280', marginLeft: 8 }}>←</Text>
-                </TouchableOpacity>
-              ))
-            )}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-    </>
-  );
-}
+import {
+  catColor,
+  catEmoji,
+  fetchPlaceCategoryTreeData,
+  findSubCategoryNameInMap,
+  storeToDomainPlace,
+} from '../../utils/admin/storesHelpers';
+import { isActiveStore } from '../../utils/map/storeStatus';
 
 interface AttrDef {
   id: string;
@@ -455,6 +51,7 @@ interface AttrDef {
   label: string;
   value_type: string;
   is_required: boolean;
+  options?: unknown;
 }
 
 interface EditableImage {
@@ -474,52 +71,6 @@ const ATTR_LABELS: Record<string, string> = {
   stores_per_floor: 'المتاجر بكل طابق',
   phone: 'رقم الهاتف',
 };
-
-function findSubCategoryNameInMap(
-  mainToSubs: Record<string, CategoryItem[]>,
-  subId: string
-): string | undefined {
-  for (const subs of Object.values(mainToSubs)) {
-    const hit = subs.find((s) => s.id === subId);
-    if (hit) return hit.name;
-  }
-  return undefined;
-}
-
-async function fetchPlaceCategoryTreeData(placeTypeId: string): Promise<{
-  mains: CategoryItem[];
-  map: Record<string, CategoryItem[]>;
-}> {
-  const tree = await categoryService.getPlaceCategoryTree(placeTypeId);
-  const mains: CategoryItem[] = tree.map((t) => ({
-    id: t.main.id,
-    name: t.main.name,
-    emoji: t.main.emoji ?? null,
-    color: t.main.color ?? null,
-  }));
-  const map: Record<string, CategoryItem[]> = {};
-  for (const t of tree) {
-    map[t.main.id] = (t.sub_categories || []).map((s) => ({
-      id: s.id,
-      name: s.name,
-      emoji: s.emoji ?? null,
-      color: s.color ?? null,
-    }));
-  }
-  return { mains, map };
-}
-
-function catEmoji(cats: { name: string; emoji: string }[], name: string) {
-  return cats.find((c) => c.name === name)?.emoji || '\u{1F4CD}';
-}
-
-function catColor(cats: { name: string; color: string }[], name: string) {
-  return cats.find((c) => c.name === name)?.color || '#2E86AB';
-}
-
-function isPublishedStore(s: Store) {
-  return String(s.status || '').toLowerCase() === 'active';
-}
 
 export default function AdminStoresScreen() {
   const router = useRouter();
@@ -546,78 +97,11 @@ export default function AdminStoresScreen() {
       ),
     [stores, residentialChildIds, commercialChildIds],
   );
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'visible' | 'hidden'>('all');
-  const kindFilter = useMemo(() => {
-    const k = String(params.kind || 'all');
-    if (k === 'house' || k === 'store' || k === 'residentialComplex' || k === 'commercialComplex' || k === 'other') return k;
-    return 'all';
-  }, [params.kind]);
-  const screenTitle = useMemo(() => {
-    if (kindFilter === 'house') return 'إدارة المنازل';
-    if (kindFilter === 'store') return 'إدارة المتاجر';
-    if (kindFilter === 'residentialComplex') return 'إدارة المجمعات السكنية';
-    if (kindFilter === 'commercialComplex') return 'إدارة المجمعات التجارية';
-    if (kindFilter === 'other') return 'إدارة الأماكن الأخرى';
-    return 'إدارة الأماكن';
-  }, [kindFilter]);
-  const listTitle = useMemo(() => {
-    if (kindFilter === 'house') return 'قائمة المنازل';
-    if (kindFilter === 'store') return 'قائمة المتاجر';
-    if (kindFilter === 'residentialComplex') return 'قائمة المجمعات السكنية';
-    if (kindFilter === 'commercialComplex') return 'قائمة المجمعات التجارية';
-    if (kindFilter === 'other') return 'قائمة الأماكن الأخرى';
-    return 'قائمة الأماكن';
-  }, [kindFilter]);
-  const filterSubjectLabel = useMemo(() => {
-    if (kindFilter === 'house') return 'المنازل';
-    if (kindFilter === 'store') return 'المتاجر';
-    if (kindFilter === 'residentialComplex') return 'المجمعات السكنية';
-    if (kindFilter === 'commercialComplex') return 'المجمعات التجارية';
-    if (kindFilter === 'other') return 'الأماكن الأخرى';
-    return 'الأماكن';
-  }, [kindFilter]);
-  const filteredStores = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    let list = managedStores.filter((s) => {
-      if (kindFilter === 'all') return true;
-      return normalizePlaceTypeKind(String(s.category || '')) === kindFilter;
-    });
-    if (statusFilter !== 'all') {
-      list = list.filter((s) => {
-        const active = String(s.status || '').toLowerCase() === 'active';
-        return statusFilter === 'visible' ? active : String(s.status || '').toLowerCase() === 'pending';
-      });
-    }
-    if (!q) return list;
-    return list.filter((s) => {
-      const name = String(s.name || '').toLowerCase();
-      const desc = String(s.description || '').toLowerCase();
-      const cat = String(s.category || '').toLowerCase();
-      return name.includes(q) || desc.includes(q) || cat.includes(q);
-    });
-  }, [managedStores, searchQuery, statusFilter, kindFilter]);
-  const visibleCount = useMemo(
-    () =>
-      managedStores.filter(
-        (s) =>
-          (kindFilter === 'all' || normalizePlaceTypeKind(String(s.category || '')) === kindFilter) &&
-          String(s.status || '').toLowerCase() === 'active'
-      ).length,
-    [managedStores, kindFilter]
-  );
-  const hiddenCount = useMemo(
-    () =>
-      managedStores.filter(
-        (s) =>
-          (kindFilter === 'all' || normalizePlaceTypeKind(String(s.category || '')) === kindFilter) &&
-          String(s.status || '').toLowerCase() === 'pending'
-      ).length,
-    [managedStores, kindFilter]
-  );
+  const filters = useAdminStoresFilters(managedStores, params.kind);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showUnitsModal, setShowUnitsModal] = useState(false);
+  const unitsManagerRef = useRef<ComplexUnitsManagerHandle>(null);
   const [showResidentialHousesModal, setShowResidentialHousesModal] = useState(false);
   const [selectedResidentialComplex, setSelectedResidentialComplex] = useState<Store | null>(null);
   const [saving, setSaving] = useState(false);
@@ -686,30 +170,21 @@ export default function AdminStoresScreen() {
     return cat === 'مجمّع سكني' || cat === 'مجمّع تجاري';
   }, [editingStore?.id, editingStore?.category]);
 
-  const loadAttrDefs = async (catName: string) => {
-    const cat = categories.find((c) => c.name === catName);
-    if (!cat) return [];
-    try {
-      const res = await api.getAttributeDefinitions(cat.id);
-      return res.data || [];
-    } catch {
-      return [];
-    }
-  };
-
   const handleCategoryChange = async (catName: string, isEdit: boolean) => {
     if (isEdit && editingIsComplex) return;
-    const fixedDefs = getPlaceAttrDefsForType(catName);
-    const hasFixedDefs = fixedDefs.length > 0 && fixedDefs[0].key !== 'location_text';
-    if (hasFixedDefs) {
-      if (isEdit) setEditAttrDefs(fixedDefs);
-      else setAttrDefs(fixedDefs);
-    } else {
-      const defs = await loadAttrDefs(catName);
-      if (isEdit) setEditAttrDefs(defs);
-      else setAttrDefs(defs);
-    }
     const cat = categories.find((c) => c.name === catName);
+    let defs: AttrDef[] = [];
+    if (cat?.id) {
+      try {
+        defs = await ensureAndFetchAttributeDefinitions(cat.id, catName);
+      } catch {
+        defs = getPlaceAttrDefsForType(catName);
+      }
+    } else {
+      defs = getPlaceAttrDefsForType(catName);
+    }
+    if (isEdit) setEditAttrDefs(defs);
+    else setAttrDefs(defs);
     if (needsPlaceCategoryTree(catName) && cat?.id) {
       setLoadingAddPcTree(!isEdit);
       setLoadingEditPcTree(!!isEdit);
@@ -762,14 +237,7 @@ export default function AdminStoresScreen() {
   };
 
   if (!user?.isAdmin) {
-    return (
-      <View style={styles.unauthorized}>
-        <Text style={styles.unauthorizedText}>{'\u26D4'} \u063A\u064A\u0631 \u0645\u0635\u0631\u062D \u0644\u0643 \u0628\u0627\u0644\u0648\u0635\u0648\u0644</Text>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backLink}>{'\u0627\u0644\u0639\u0648\u062F\u0629'}</Text>
-        </TouchableOpacity>
-      </View>
-    );
+    return <AdminUnauthorized onBackToMap={() => router.back()} />;
   }
 
   const defaultCategory = categories[0]?.name ?? '';
@@ -796,20 +264,23 @@ export default function AdminStoresScreen() {
   const handleOpenAdd = async () => {
     resetForm();
     if (defaultCategory) {
-      const fixedDefs = getPlaceAttrDefsForType(defaultCategory);
-      const hasFixedDefs = fixedDefs.length > 0 && fixedDefs[0].key !== 'location_text';
-      if (hasFixedDefs) {
-        setAttrDefs(fixedDefs);
+      const cat = categories.find((c) => c.name === defaultCategory);
+      if (cat?.id) {
+        try {
+          const defs = await ensureAndFetchAttributeDefinitions(cat.id, defaultCategory);
+          setAttrDefs(defs);
+        } catch {
+          setAttrDefs(getPlaceAttrDefsForType(defaultCategory));
+        }
       } else {
-        const defs = await loadAttrDefs(defaultCategory);
-        setAttrDefs(defs);
+        setAttrDefs(getPlaceAttrDefsForType(defaultCategory));
       }
       if (needsPlaceCategoryTree(defaultCategory)) {
-        const cat = categories.find((c) => c.name === defaultCategory);
-        if (cat?.id) {
+        const catForTree = categories.find((c) => c.name === defaultCategory);
+        if (catForTree?.id) {
           setLoadingAddPcTree(true);
           try {
-            const { mains, map } = await fetchPlaceCategoryTreeData(cat.id);
+            const { mains, map } = await fetchPlaceCategoryTreeData(catForTree.id);
             setAddPcMainCategories(mains);
             setAddPcMainToSubs(map);
             setAddPcSubCategories([]);
@@ -850,8 +321,14 @@ export default function AdminStoresScreen() {
     try {
       const unifiedPhone = usesPlacePhoneAsStoreNumberField(form.category);
       const treeMode = needsPlaceCategoryTree(form.category);
+      const reservedKeys = new Set(
+        attrDefs
+          .filter((d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') !== 'dynamic')
+          .map((d) => d.key),
+      );
       const attributes = Object.entries(form.dynamicAttrs)
         .filter(([key, v]) => {
+          if (reservedKeys.has(key)) return false;
           if (!v.trim()) return false;
           if (unifiedPhone && key === 'store_number') return false;
           return true;
@@ -974,24 +451,26 @@ export default function AdminStoresScreen() {
       dynamicAttrs: existingAttrs,
     });
 
-    const fixedDefs = getPlaceAttrDefsForType(store.category);
-    const hasFixedDefs = fixedDefs.length > 0 && fixedDefs[0].key !== 'location_text';
-    if (hasFixedDefs) {
-      setEditAttrDefs(fixedDefs);
-    } else {
-      const defs = await loadAttrDefs(store.category);
-      if (defs.length > 0) {
-        setEditAttrDefs(defs);
-      } else {
-        const inferredDefs: AttrDef[] = (store.attributes || []).map((a) => ({
-          id: `inferred-${a.key}`,
-          key: a.key,
-          label: ATTR_LABELS[a.key] || a.key.replaceAll('_', ' '),
-          value_type: a.value_type || 'string',
-          is_required: false,
-        }));
-        setEditAttrDefs(inferredDefs);
+    const catForAttrs = categories.find((c) => c.name === store.category);
+    let defsFromApi: AttrDef[] = [];
+    if (catForAttrs?.id) {
+      try {
+        defsFromApi = await ensureAndFetchAttributeDefinitions(catForAttrs.id, store.category);
+      } catch {
+        defsFromApi = [];
       }
+    }
+    if (defsFromApi.length > 0) {
+      setEditAttrDefs(defsFromApi);
+    } else {
+      const inferredDefs: AttrDef[] = (store.attributes || []).map((a) => ({
+        id: `inferred-${a.key}`,
+        key: a.key,
+        label: ATTR_LABELS[a.key] || a.key.replaceAll('_', ' '),
+        value_type: a.value_type || 'string',
+        is_required: false,
+      }));
+      setEditAttrDefs(inferredDefs.length > 0 ? inferredDefs : getPlaceAttrDefsForType(store.category));
     }
   };
 
@@ -1104,9 +583,15 @@ export default function AdminStoresScreen() {
     try {
       const cat = categories.find((c) => c.name === editForm.category);
       const unifiedPhone = usesPlacePhoneAsStoreNumberField(editForm.category);
+      const reservedKeys = new Set(
+        editAttrDefs
+          .filter((d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') !== 'dynamic')
+          .map((d) => d.key),
+      );
 
       const attributes = Object.entries(editForm.dynamicAttrs)
         .filter(([key, v]) => {
+          if (reservedKeys.has(key)) return false;
           if (!v.trim()) return false;
           if (unifiedPhone && key === 'store_number') return false;
           return true;
@@ -1235,6 +720,8 @@ export default function AdminStoresScreen() {
     return (
       <>
         {defs.map((def) => {
+          const uiRole = parseAttrUiOptions(def.options).uiRole ?? 'dynamic';
+          if (uiRole !== 'dynamic') return null;
           if (def.key === 'store_category' && useTree) {
             return null;
           }
@@ -1300,6 +787,9 @@ export default function AdminStoresScreen() {
     );
   };
 
+  const getUiFieldDef = (defs: AttrDef[], role: string) =>
+    defs.find((d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === role) ?? null;
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -1313,7 +803,7 @@ export default function AdminStoresScreen() {
         >
           <Text style={styles.backBtnText}>{'\u2192'}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{screenTitle}</Text>
+        <Text style={styles.headerTitle}>{filters.screenTitle}</Text>
         <View style={styles.headerBadge}>
           <Text style={styles.headerBadgeText}>{managedStores.length} {'\u0645\u0643\u0627\u0646'}</Text>
         </View>
@@ -1323,9 +813,9 @@ export default function AdminStoresScreen() {
         <View style={styles.sectionHeader}>
           <View style={styles.sectionTitleRow}>
             <View style={styles.sectionCountBadge}>
-              <Text style={styles.sectionCountBadgeText}>{filteredStores.length}</Text>
+              <Text style={styles.sectionCountBadgeText}>{filters.filteredStores.length}</Text>
             </View>
-            <Text style={styles.sectionTitle}>{listTitle}</Text>
+            <Text style={styles.sectionTitle}>{filters.listTitle}</Text>
           </View>
           <TouchableOpacity style={styles.addBtn} onPress={handleOpenAdd}>
             <Text style={styles.addBtnText}>+ {'\u0625\u0636\u0627\u0641\u0629 \u0645\u0643\u0627\u0646'}</Text>
@@ -1333,30 +823,30 @@ export default function AdminStoresScreen() {
         </View>
         <View style={styles.housesStatsRow}>
           <TouchableOpacity
-            style={[styles.housesStatChip, styles.housesVisibleChip, statusFilter === 'visible' && styles.housesStatChipActive]}
-            onPress={() => setStatusFilter((prev) => (prev === 'visible' ? 'all' : 'visible'))}
+            style={[styles.housesStatChip, styles.housesVisibleChip, filters.statusFilter === 'visible' && styles.housesStatChipActive]}
+            onPress={() => filters.setStatusFilter((prev) => (prev === 'visible' ? 'all' : 'visible'))}
             activeOpacity={0.85}
           >
-            <Text style={styles.housesVisibleText}>{filterSubjectLabel} الظاهرة: {visibleCount}</Text>
+            <Text style={styles.housesVisibleText}>{filters.filterSubjectLabel} الظاهرة: {filters.visibleCount}</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.housesStatChip, styles.housesHiddenChip, statusFilter === 'hidden' && styles.housesStatChipActive]}
-            onPress={() => setStatusFilter((prev) => (prev === 'hidden' ? 'all' : 'hidden'))}
+            style={[styles.housesStatChip, styles.housesHiddenChip, filters.statusFilter === 'hidden' && styles.housesStatChipActive]}
+            onPress={() => filters.setStatusFilter((prev) => (prev === 'hidden' ? 'all' : 'hidden'))}
             activeOpacity={0.85}
           >
-            <Text style={styles.housesHiddenText}>{filterSubjectLabel} المخفية: {hiddenCount}</Text>
+            <Text style={styles.housesHiddenText}>{filters.filterSubjectLabel} المخفية: {filters.hiddenCount}</Text>
           </TouchableOpacity>
         </View>
         <TextInput
           style={styles.searchInput}
           placeholder="بحث بالاسم أو الفئة..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
+          value={filters.searchQuery}
+          onChangeText={filters.setSearchQuery}
           textAlign="right"
           placeholderTextColor="#9CA3AF"
         />
 
-        {filteredStores.length === 0 ? (
+        {filters.filteredStores.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateEmoji}>{'\u{1F3EA}'}</Text>
             <Text style={styles.emptyStateText}>
@@ -1370,7 +860,7 @@ export default function AdminStoresScreen() {
           </View>
         ) : (
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-            {filteredStores.map((store) => {
+            {filters.filteredStores.map((store) => {
               const phone = store.attributes?.find((a) => a.key === 'phone')?.value;
               const typeColor = catColor(categories, store.category);
               const isResidentialComplex = String(store.category || '') === 'مجمّع سكني';
@@ -1404,7 +894,7 @@ export default function AdminStoresScreen() {
                   <TouchableOpacity
                     style={[
                       styles.storeActionBtn,
-                      String(store.status || '').toLowerCase() === 'active' ? styles.storeActionHide : styles.storeActionShow,
+                      isActiveStore(store) ? styles.storeActionHide : styles.storeActionShow,
                     ]}
                     onPress={(e: any) => {
                       e?.stopPropagation?.();
@@ -1413,8 +903,8 @@ export default function AdminStoresScreen() {
                     activeOpacity={0.85}
                     disabled={saving}
                   >
-                    <Text style={String(store.status || '').toLowerCase() === 'active' ? styles.storeActionHideText : styles.storeActionShowText}>
-                      {String(store.status || '').toLowerCase() === 'active' ? '🙈 إخفاء' : '👁️ إظهار'}
+                    <Text style={isActiveStore(store) ? styles.storeActionHideText : styles.storeActionShowText}>
+                      {isActiveStore(store) ? '🙈 إخفاء' : '👁️ إظهار'}
                     </Text>
                   </TouchableOpacity>
                     <TouchableOpacity
@@ -1459,11 +949,17 @@ export default function AdminStoresScreen() {
           </View>
           <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>{'\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646 *'}</Text>
+              <Text style={styles.formLabel}>
+                {getUiFieldDef(attrDefs, 'place_name')?.label || '\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646'}
+                {getUiFieldDef(attrDefs, 'place_name')?.is_required !== false ? ' *' : ''}
+              </Text>
               <TextInput style={styles.formInput} placeholder={'\u0645\u062B\u0627\u0644: \u0645\u0637\u0639\u0645 \u0627\u0644\u0632\u064A\u062A\u0648\u0646'} value={form.name} onChangeText={(t) => setForm((p) => ({ ...p, name: t }))} textAlign="right" />
             </View>
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>{'\u0627\u0644\u0648\u0635\u0641'}</Text>
+              <Text style={styles.formLabel}>
+                {getUiFieldDef(attrDefs, 'place_description')?.label || '\u0627\u0644\u0648\u0635\u0641'}
+                {getUiFieldDef(attrDefs, 'place_description')?.is_required ? ' *' : ''}
+              </Text>
               <TextInput style={[styles.formInput, styles.formTextarea]} placeholder={'\u0648\u0635\u0641 \u0645\u062E\u062A\u0635\u0631 (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)'} value={form.description} onChangeText={(t) => setForm((p) => ({ ...p, description: t }))} multiline textAlign="right" />
             </View>
             <View style={styles.formGroup}>
@@ -1500,7 +996,7 @@ export default function AdminStoresScreen() {
                 : null
             )}
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>{'\u0627\u0644\u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A'}</Text>
+              <Text style={styles.formLabel}>{getUiFieldDef(attrDefs, 'place_location')?.label || '\u0627\u0644\u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A'}</Text>
               <View style={styles.coordsRow}>
                 <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0639\u0631\u0636'} value={form.lat} onChangeText={(t) => setForm((p) => ({ ...p, lat: t }))} keyboardType="decimal-pad" textAlign="center" />
                 <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0637\u0648\u0644'} value={form.lng} onChangeText={(t) => setForm((p) => ({ ...p, lng: t }))} keyboardType="decimal-pad" textAlign="center" />
@@ -1525,11 +1021,17 @@ export default function AdminStoresScreen() {
           {editingStore && (
             <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
               <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>{'\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646 *'}</Text>
+                <Text style={styles.formLabel}>
+                  {getUiFieldDef(editAttrDefs, 'place_name')?.label || '\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646'}
+                  {getUiFieldDef(editAttrDefs, 'place_name')?.is_required !== false ? ' *' : ''}
+                </Text>
                 <TextInput style={styles.formInput} value={editForm.name} onChangeText={(t) => setEditForm((p) => ({ ...p, name: t }))} textAlign="right" />
               </View>
               <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>{'\u0627\u0644\u0648\u0635\u0641'}</Text>
+                <Text style={styles.formLabel}>
+                  {getUiFieldDef(editAttrDefs, 'place_description')?.label || '\u0627\u0644\u0648\u0635\u0641'}
+                  {getUiFieldDef(editAttrDefs, 'place_description')?.is_required ? ' *' : ''}
+                </Text>
                 <TextInput style={[styles.formInput, styles.formTextarea]} value={editForm.description} onChangeText={(t) => setEditForm((p) => ({ ...p, description: t }))} multiline textAlign="right" />
               </View>
               <View style={styles.formGroup}>
@@ -1614,7 +1116,7 @@ export default function AdminStoresScreen() {
                 </TouchableOpacity>
               </View>
               <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>{'\u0627\u0644\u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A'}</Text>
+                <Text style={styles.formLabel}>{getUiFieldDef(editAttrDefs, 'place_location')?.label || '\u0627\u0644\u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A'}</Text>
                 <View style={styles.coordsRow}>
                   <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0639\u0631\u0636'} value={editForm.lat} onChangeText={(t) => setEditForm((p) => ({ ...p, lat: t }))} keyboardType="decimal-pad" textAlign="center" />
                   <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0637\u0648\u0644'} value={editForm.lng} onChangeText={(t) => setEditForm((p) => ({ ...p, lng: t }))} keyboardType="decimal-pad" textAlign="center" />
@@ -1647,9 +1149,18 @@ export default function AdminStoresScreen() {
               <Text style={styles.modalCancelText}>إغلاق</Text>
             </TouchableOpacity>
             <Text style={styles.modalTitle}>وحدات المجمع</Text>
-            <View style={{ width: 52 }} />
+            <TouchableOpacity
+              onPress={() => void unitsManagerRef.current?.saveAllLinks()}
+              disabled={saving}
+            >
+              <Text style={styles.modalSaveText}>حفظ</Text>
+            </TouchableOpacity>
           </View>
-          <ComplexUnitsManager placeId={editingStore?.id || ''} complexLabel={editingStore?.category || ''} />
+          <ComplexUnitsManager
+            ref={unitsManagerRef}
+            placeId={editingStore?.id || ''}
+            complexLabel={editingStore?.category || ''}
+          />
         </View>
       </Modal>
 
@@ -1663,264 +1174,3 @@ export default function AdminStoresScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F0F4F8' },
-  unauthorized: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  unauthorizedText: { fontSize: 20, color: '#EF4444', marginBottom: 16 },
-  backLink: { color: '#2E86AB', fontSize: 16 },
-  header: { backgroundColor: '#1A3A5C', paddingTop: LAYOUT.headerTop, paddingBottom: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center' },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  backBtnText: { color: '#fff', fontSize: 20 },
-  headerTitle: { color: '#fff', fontSize: 20, fontWeight: '700', marginRight: 12 },
-  headerBadge: { backgroundColor: '#F59E0B', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
-  headerBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  content: { flex: 1, padding: 16 },
-  unitsBtn: {
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginTop: 10,
-    alignItems: 'center',
-  },
-  unitsBtnText: { color: '#1D4ED8', fontSize: 14, fontWeight: '800' },
-  unitCard: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 14,
-    padding: 12,
-  },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  sectionTitleRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#1A3A5C', textAlign: 'right' },
-  sectionCountBadge: {
-    minWidth: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#E0F2FE',
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-  },
-  sectionCountBadgeText: { color: '#0369A1', fontSize: 12, fontWeight: '800' },
-  addBtn: { backgroundColor: '#2E86AB', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14 },
-  addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  housesStatsRow: { flexDirection: 'row-reverse', gap: 8, marginBottom: 10 },
-  housesStatChip: {
-    flex: 1,
-    borderRadius: 12,
-    borderWidth: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  housesStatChipActive: { borderWidth: 2, borderColor: '#1A3A5C' },
-  housesVisibleChip: { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
-  housesHiddenChip: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
-  housesVisibleText: { color: '#065F46', fontSize: 13, fontWeight: '800' },
-  housesHiddenText: { color: '#991B1B', fontSize: 13, fontWeight: '800' },
-  searchInput: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    fontSize: 14,
-    color: '#1F2937',
-    marginBottom: 12,
-  },
-  list: { flex: 1 },
-  listContent: { paddingBottom: 40 },
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
-  emptyStateEmoji: { fontSize: 60, marginBottom: 16 },
-  emptyStateText: { color: '#9CA3AF', fontSize: 16, marginBottom: 16 },
-  emptyStateBtn: { backgroundColor: '#2E86AB', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 24 },
-  emptyStateBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  storeCard: {
-    backgroundColor: '#fff',
-    borderRadius: 18,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E8EDF2',
-    overflow: 'hidden',
-    ...shadow({ offset: { width: 0, height: 3 }, opacity: 0.07, radius: 10, elevation: 3 }),
-  },
-  storeCardBody: { padding: 16 },
-  storeCardTop: { flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 14 },
-  storeTypeIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  storeTypeIconEmoji: { fontSize: 26 },
-  storeCardMain: { flex: 1, minWidth: 0, alignItems: 'flex-end' },
-  storeCardName: { fontSize: 17, fontWeight: '800', color: '#111827', textAlign: 'right', lineHeight: 24 },
-  storeCardDesc: { fontSize: 14, color: '#6B7280', textAlign: 'right', marginTop: 6, lineHeight: 20 },
-  storeChipsRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  storeChip: {
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  storeChipText: { fontSize: 12, fontWeight: '700', textAlign: 'right' },
-  storeChipMuted: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  storeChipMutedText: { fontSize: 12, color: '#4B5563', fontWeight: '600', textAlign: 'right' },
-  storeChipPhone: {
-    backgroundColor: '#EBF5FB',
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  storeChipPhoneText: { fontSize: 12, color: '#1D4ED8', fontWeight: '800', textAlign: 'right' },
-  storeActionRow: {
-    flexDirection: 'row-reverse',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    position: 'relative',
-    zIndex: 10,
-  },
-  storeActionBtn: {
-    flex: 1,
-    minHeight: 46,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    zIndex: 11,
-    pointerEvents: 'auto',
-  },
-  storeActionEdit: { backgroundColor: '#EBF5FB', borderWidth: 1.5, borderColor: '#2E86AB' },
-  storeActionEditText: { fontSize: 14, fontWeight: '800', color: '#2E86AB' },
-  storeActionDelete: { backgroundColor: '#FEF2F2', borderWidth: 1.5, borderColor: '#FECACA' },
-  storeActionDeleteText: { fontSize: 14, fontWeight: '800', color: '#B91C1C' },
-  storeActionHide: { backgroundColor: '#FFF7ED', borderWidth: 1.5, borderColor: '#FDBA74' },
-  storeActionHideText: { fontSize: 14, fontWeight: '800', color: '#C2410C' },
-  storeActionShow: { backgroundColor: '#ECFDF5', borderWidth: 1.5, borderColor: '#86EFAC' },
-  storeActionShowText: { fontSize: 14, fontWeight: '800', color: '#166534' },
-  modalContainer: { flex: 1, backgroundColor: '#F0F4F8' },
-  modalHeader: { backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: LAYOUT.modalHeaderTop, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
-  modalCancelText: { color: '#EF4444', fontSize: 16, fontWeight: '600' },
-  modalTitle: { color: '#1A3A5C', fontSize: 17, fontWeight: '700' },
-  modalSaveText: { color: '#2E86AB', fontSize: 16, fontWeight: '700' },
-  modalBody: { flex: 1, padding: 16 },
-  formGroup: { marginBottom: 20 },
-  formLabel: { fontSize: 14, fontWeight: '600', color: '#374151', textAlign: 'right', marginBottom: 8 },
-  formInput: { backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: 15, color: '#1F2937', borderWidth: 1.5, borderColor: '#E5E7EB' },
-  formTextarea: { height: 90, paddingTop: 12 },
-  chipsWrap: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8 },
-  photosWrap: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8 },
-  photoItemWrap: { position: 'relative' },
-  photoThumb: { width: 74, height: 74, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB' },
-  photoDeleteBtn: {
-    position: 'absolute',
-    top: -6,
-    left: -6,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#EF4444',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  photoDeleteBtnText: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  addPhotoBtn: {
-    marginTop: 10,
-    alignSelf: 'flex-end',
-    backgroundColor: '#EBF5FB',
-    borderColor: '#BFDBFE',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  addPhotoBtnText: { color: '#1D4ED8', fontWeight: '700', fontSize: 13 },
-  noPhotosText: { color: '#9CA3AF', fontSize: 13, textAlign: 'right' },
-  categoryChip: { backgroundColor: '#E5E7EB', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 },
-  categoryChipActive: { backgroundColor: '#2E86AB' },
-  categoryChipText: { fontSize: 14, color: '#374151', fontWeight: '500' },
-  categoryChipTextActive: { color: '#fff', fontWeight: '700' },
-  categoryChipDisabled: { opacity: 0.55 },
-  categoryChipTextDisabled: { color: '#6B7280' },
-  categoryLockedHint: { marginTop: 6, color: '#6B7280', fontSize: 12, fontWeight: '700', textAlign: 'right' },
-  coordsRow: { flexDirection: 'row', gap: 10 },
-  coordInput: { flex: 1 },
-  deleteBtn: { backgroundColor: '#FEE2E2', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 24 },
-  deleteBtnText: { fontSize: 15, color: '#DC2626', fontWeight: '700' },
-  boolToggle: { backgroundColor: '#F3F4F6', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1.5, borderColor: '#E5E7EB' },
-  boolToggleActive: { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' },
-  boolToggleText: { fontSize: 15, fontWeight: '600', color: '#374151' },
-
-  housesOverlay: { flex: 1, justifyContent: 'flex-end' },
-  housesBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
-  housesSheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    maxHeight: '82%',
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  housesSheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  housesSheetTitle: { flex: 1, fontSize: 15, fontWeight: '900', color: '#111827', textAlign: 'center' },
-  housesCloseText: { fontSize: 18, fontWeight: '900', color: '#111827' },
-  housesErrorText: { padding: 14, color: '#B91C1C', fontWeight: '800', textAlign: 'right' },
-  housesEmptyText: { padding: 14, color: '#6B7280', fontWeight: '800', textAlign: 'right' },
-  housesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginBottom: 10,
-  },
-  housesRowIcon: { fontSize: 18 },
-  housesRowName: { flex: 1, fontSize: 14, fontWeight: '900', color: '#111827', textAlign: 'right' },
-  housesRowArrow: { width: 20, textAlign: 'left', color: '#64748B', fontWeight: '900' },
-  unitTypePickRow: {
-    flexDirection: 'row-reverse',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    marginBottom: 10,
-  },
-});

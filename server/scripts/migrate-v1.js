@@ -201,6 +201,17 @@ async function migrateV6() {
   console.log('✅ migrate-v6 completed');
 }
 
+async function migrateV7() {
+  await pool.query(`
+    ALTER TABLE place_type_attribute_definitions DROP CONSTRAINT IF EXISTS ptad_value_type_check;
+  `);
+  await pool.query(`
+    ALTER TABLE place_type_attribute_definitions ADD CONSTRAINT ptad_value_type_check
+      CHECK (value_type IN ('string','number','boolean','json','date','phone'));
+  `);
+  console.log('✅ migrate-v7 completed');
+}
+
 async function initDb() {
   const sql = `
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -252,7 +263,7 @@ CREATE TABLE IF NOT EXISTS place_type_attribute_definitions (
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now(),
   CONSTRAINT ptad_type_key_unique UNIQUE(place_type_id, key),
-  CONSTRAINT ptad_value_type_check CHECK (value_type IN ('string','number','boolean','json','date'))
+      CONSTRAINT ptad_value_type_check CHECK (value_type IN ('string','number','boolean','json','date','phone'))
 );
 
 CREATE TABLE IF NOT EXISTS places (
@@ -571,6 +582,8 @@ async function main() {
       await migrateV5();
     } else if (mode === 'v6') {
       await migrateV6();
+    } else if (mode === 'v7') {
+      await migrateV7();
     } else if (mode === 'all') {
       await initDb();
       await migrateV2();
@@ -578,6 +591,7 @@ async function main() {
       await migrateV4();
       await migrateV5();
       await migrateV6();
+      await migrateV7();
     } else {
       await initDb();
     }

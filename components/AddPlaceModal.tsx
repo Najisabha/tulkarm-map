@@ -13,6 +13,8 @@ import {
 import { api, PlaceType } from '../api/client';
 import { categoryService } from '../services/categoryService';
 import { PlaceKind } from '../types/place';
+import { ensureAndFetchAttributeDefinitions } from '../utils/admin/ensurePlaceTypeAttrDefs';
+import { parseAttrUiOptions } from '../utils/admin/categoryAdminHelpers';
 import { getPlaceAttrDefsForType } from '../utils/placeFormAttrDefs';
 import { validatePlaceForm } from '../utils/placeFormValidation';
 import {
@@ -22,6 +24,7 @@ import {
   getPlaceTypePluralLabel,
   getPlaceTypeProductCategoryFieldLabels,
   isDisallowedComplexUnitChildTypeName,
+  needsPlaceCategoryTree,
   normalizePlaceTypeKind,
   resolveCanonicalPlaceTypeKey,
   usesPlacePhoneAsStoreNumberField,
@@ -186,9 +189,6 @@ export function AddPlaceModal({
     }
   };
 
-  const getFixedAttrDefsForType = (typeName: string): AttributeDefinition[] =>
-    getPlaceAttrDefsForType(typeName);
-
   const reset = () => {
     setStep('type');
     setSelectedType(null);
@@ -222,11 +222,18 @@ export function AddPlaceModal({
               description: overrides.description ?? fs.description,
               phoneNumber: overrides.phoneNumber ?? fs.phoneNumber,
             }));
-            setAttrDefs(getFixedAttrDefsForType(match.name));
-            if (normalizePlaceTypeKind(match.name) === 'store' || usesProductCategoryFieldsForPlaceType(match.name)) {
-              void loadPlaceCategoriesTree(match.id);
-            }
-            setStep('form');
+            void (async () => {
+              try {
+                const defs = await ensureAndFetchAttributeDefinitions(match.id, match.name);
+                setAttrDefs(defs);
+              } catch {
+                setAttrDefs(getPlaceAttrDefsForType(match.name));
+              }
+              if (needsPlaceCategoryTree(match.name)) {
+                void loadPlaceCategoriesTree(match.id);
+              }
+              setStep('form');
+            })();
           }
           return prev;
         });
@@ -236,7 +243,7 @@ export function AddPlaceModal({
 
   const handleClose = () => { reset(); onClose(); };
 
-  const handleSelectType = (type: PlaceTypeUI) => {
+  const handleSelectType = async (type: PlaceTypeUI) => {
     setSelectedType(type);
     const unitLabel = (complexUnitLabel ?? '').trim();
     const kind = normalizePlaceTypeKind(type.name);
@@ -256,8 +263,13 @@ export function AddPlaceModal({
     setSubCategories([]);
     setShowMainCategoryList(false);
     setShowSubCategoryList(false);
-    setAttrDefs(getFixedAttrDefsForType(type.name));
-    if (normalizePlaceTypeKind(type.name) === 'store' || usesProductCategoryFieldsForPlaceType(type.name)) {
+    try {
+      const defs = await ensureAndFetchAttributeDefinitions(type.id, type.name);
+      setAttrDefs(defs);
+    } catch {
+      setAttrDefs(getPlaceAttrDefsForType(type.name));
+    }
+    if (needsPlaceCategoryTree(type.name)) {
       void loadPlaceCategoriesTree(type.id);
     }
     setStep('form');
@@ -317,18 +329,38 @@ export function AddPlaceModal({
 
     if (!selectedType) { setFormError('يرجى اختيار نوع المكان'); return; }
 
+    const dynamicRequired = attrDefs
+      .filter((d) => d.is_required && (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === 'dynamic')
+      .map((d) => ({ key: d.key, label: d.label }));
+    const requiredName = attrDefs.some(
+      (d) => d.is_required && (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === 'place_name',
+    );
+    const requiredDescription = attrDefs.some(
+      (d) => d.is_required && (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === 'place_description',
+    );
+    const requiredPhone = attrDefs.some(
+      (d) => d.is_required && (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === 'place_phone',
+    );
+    const requiredPhotos = attrDefs.some(
+      (d) => d.is_required && (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === 'place_photos',
+    );
+
     const unifiedPlacePhone = usesPlacePhoneAsStoreNumberField(selectedType.name);
     const isHouse = placeKind === 'house';
     const isComplex = placeKind === 'complex';
     const validation = validatePlaceForm({
       name: formState.name,
+      description: formState.description,
       typeId: selectedType.id,
       phoneNumber: unifiedPlacePhone || isHouse || isComplex ? '' : formState.phoneNumber,
       storeNumberIsPlacePhone: unifiedPlacePhone,
+      photosCount: formState.photos.length,
       dynamicValues: formState.dynamicValues,
-      requiredAttrKeys: attrDefs
-        .filter((d) => d.is_required)
-        .map((d) => ({ key: d.key, label: d.label })),
+      requiredAttrKeys: dynamicRequired,
+      requiredName,
+      requiredDescription,
+      requiredPhone: requiredPhone && !(unifiedPlacePhone || isHouse || isComplex),
+      requiredPhotos,
       floorsCount: formState.dynamicValues.floors_count,
       unitsPerFloor: formState.dynamicValues.units_per_floor,
     });
@@ -341,8 +373,14 @@ export function AddPlaceModal({
 
     setLoading(true);
     try {
+      const reservedKeys = new Set(
+        attrDefs
+          .filter((d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') !== 'dynamic')
+          .map((d) => d.key),
+      );
       const attrs = Object.entries(formState.dynamicValues)
         .filter(([key, v]) => {
+          if (reservedKeys.has(key)) return false;
           if (unifiedPlacePhone && key === 'store_number') return false;
           return v.trim();
         })

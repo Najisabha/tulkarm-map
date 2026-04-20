@@ -5,11 +5,17 @@
 
 export interface PlaceFormValidationInput {
   name: string;
+  description?: string;
   typeId?: string;
   latitude?: number;
   longitude?: number;
   dynamicValues?: Record<string, string>;
   requiredAttrKeys?: { key: string; label: string }[];
+  requiredName?: boolean;
+  requiredDescription?: boolean;
+  requiredPhone?: boolean;
+  requiredPhotos?: boolean;
+  photosCount?: number;
   phoneNumber?: string;
   floorsCount?: string;
   unitsPerFloor?: string;
@@ -28,8 +34,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 export function validatePlaceForm(input: PlaceFormValidationInput): ValidationResult {
   const fail = (error: string): ValidationResult => ({ valid: false, error });
 
-  if (!input.name?.trim()) return fail('يرجى إدخال اسم المكان');
+  if ((input.requiredName ?? true) && !input.name?.trim()) return fail('يرجى إدخال اسم المكان');
   if (input.name.trim().length > 255) return fail('اسم المكان طويل جداً (الحد 255 حرف)');
+  if (input.requiredDescription && !input.description?.trim()) return fail('يرجى إدخال وصف المكان');
+  if ((input.photosCount ?? 0) < 0) return fail('عدد الصور غير صالح');
+  if (input.requiredPhotos && (input.photosCount ?? 0) < 1) return fail('يرجى إضافة صورة واحدة على الأقل');
 
   if (input.typeId !== undefined) {
     if (!input.typeId || !UUID_RE.test(input.typeId.trim())) {
@@ -45,6 +54,9 @@ export function validatePlaceForm(input: PlaceFormValidationInput): ValidationRe
     }
   } else if (input.phoneNumber && !phoneOk(input.phoneNumber)) {
     return fail('رقم الهاتف غير صالح (أرقام، +، -، مسافات فقط، حد 30 رمز)');
+  }
+  if (input.requiredPhone && !input.phoneNumber?.trim()) {
+    return fail('يرجى إدخال رقم الهاتف');
   }
 
   if (input.requiredAttrKeys?.length && input.dynamicValues) {

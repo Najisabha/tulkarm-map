@@ -405,7 +405,6 @@ EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=مفتاحك_هنا
 | `/(main)/admin-reports` | `admin-reports.tsx` | الإبلاغات |
 | `/(main)/admin-settings` | `admin-settings.tsx` | إعدادات التطبيق |
 | `/(main)/admin-activity` | `admin-activity.tsx` | سجل النشاط |
-| `/(main)/admin-backup` | `admin-backup.tsx` | النسخ الاحتياطي |
 | `/(main)/owner-dashboard` | `owner-dashboard.tsx` | لوحة مالك المكان |
 
 ---
@@ -449,7 +448,6 @@ tulkarm-map/
 │       ├── admin-reports.tsx # إدارة البلاغات
 │       ├── admin-settings.tsx # إعدادات التطبيق
 │       ├── admin-activity.tsx # سجل نشاط الإدارة
-│       ├── admin-backup.tsx # واجهة نسخ/إداري
 │       ├── map.tsx # الخريطة (المكان/الفئات/الطلبات)
 │       └── owner-dashboard.tsx # لوحة صاحب المتجر
 ├── assets/
@@ -926,7 +924,6 @@ tulkarm-map/
 - `app/(main)/admin-reports.tsx`: إدارة البلاغات.
 - `app/(main)/admin-settings.tsx`: إعدادات التطبيق العامة.
 - `app/(main)/admin-activity.tsx`: سجل نشاط الإدارة.
-- `app/(main)/admin-backup.tsx`: واجهة النسخ الاحتياطي (إداري).
 - `app/(main)/owner-dashboard.tsx`: لوحة صاحب المتجر (الطلبات/الخدمات/المنتجات).
 
 #### 5) الواجهة الأمامية - المكونات (`components/`)

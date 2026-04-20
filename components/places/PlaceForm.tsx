@@ -18,6 +18,7 @@ import {
   View
 } from 'react-native';
 import { listComplexUnitNames, PlaceKind } from '../../types/place';
+import { parseAttrUiOptions } from '../../utils/admin/categoryAdminHelpers';
 import { CategoryItem, CategorySelector } from './CategorySelector';
 import { LocationPicker } from './LocationPicker';
 import { ReusableImagePicker } from './ReusableImagePicker';
@@ -28,6 +29,7 @@ interface AttributeDefinition {
   label: string;
   value_type: string;
   is_required: boolean;
+  options?: unknown;
 }
 
 export interface PlaceFormState {
@@ -161,13 +163,6 @@ export function PlaceForm({
     onChange({ dynamicValues: { ...formState.dynamicValues, [key]: value } });
   };
 
-  const nameLabel =
-    typeLabel === 'منزل' ? 'اسم صاحب المنزل'
-    : typeLabel === 'متجر تجاري' ? 'اسم المتجر'
-    : typeLabel === 'مجمّع سكني' ? 'اسم المجمّع'
-    : typeLabel === 'مجمّع تجاري' ? 'اسم المجمّع التجاري'
-    : 'اسم المكان';
-
   const complexPreview = React.useMemo(() => {
     if (kind !== 'complex') return null;
     const floors = parseInt(formState.dynamicValues.floors_count || '');
@@ -184,94 +179,97 @@ export function PlaceForm({
 
   return (
     <>
-      {/* إحداثيات */}
-      <LocationPicker latitude={latitude} longitude={longitude} />
-
-      {/* اسم المكان */}
-      <View style={styles.labelRow}>
-        <Text style={styles.label}>{nameLabel}</Text>
-        <Text style={styles.asterisk}> *</Text>
-      </View>
-      <TextInput
-        style={styles.input}
-        placeholder={nameLabel}
-        placeholderTextColor="#9CA3AF"
-        value={formState.name}
-        onChangeText={(v) => onChange({ name: v })}
-        textAlign="right"
-      />
-
-      {/* الوصف */}
-      <View style={styles.labelRow}>
-        <Text style={styles.label}>الوصف</Text>
-      </View>
-      <TextInput
-        style={[styles.input, styles.textarea]}
-        placeholder="وصف مختصر (اختياري)"
-        placeholderTextColor="#9CA3AF"
-        value={formState.description}
-        onChangeText={(v) => onChange({ description: v })}
-        multiline
-        textAlign="right"
-      />
-
-      {/* رقم الهاتف المنفصل — يُخفى عندما يكون رقم المكان هو رقم الهاتف */}
-      {!hidePhoneField && (
-        <>
-          <View style={styles.labelRow}>
-            <Text style={styles.label}>رقم الهاتف</Text>
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="رقم الهاتف (اختياري)"
-            placeholderTextColor="#9CA3AF"
-            value={formState.phoneNumber}
-            onChangeText={(v) => onChange({ phoneNumber: v })}
-            keyboardType="phone-pad"
-            textAlign="right"
-          />
-        </>
-      )}
-
-      {/* حقول خاصة بالمجمعات */}
-      {kind === 'complex' && (
-        <>
-          <View style={styles.complexRow}>
-            <NumberStepper
-              label="عدد الطوابق"
-              value={parseIntOr(formState.dynamicValues.floors_count, 1)}
-              min={1}
-              max={200}
-              onChangeValue={(n) => setDynamic('floors_count', String(n))}
-            />
-            <NumberStepper
-              label="وحدات في كل طابق"
-              value={parseIntOr(formState.dynamicValues.units_per_floor, 1)}
-              min={1}
-              max={500}
-              onChangeValue={(n) => setDynamic('units_per_floor', String(n))}
-            />
-          </View>
-
-          {complexPreview && (
-            <View style={styles.previewBox}>
-              <Text style={styles.previewTitle}>
-                سيُنشأ {complexPreview.total} {complexPreview.complexType === 'residential' ? 'بيت' : 'وحدة'}
-              </Text>
-              <Text style={styles.previewText} numberOfLines={3}>
-                {complexPreview.sample.join('، ')}
-                {complexPreview.total > complexPreview.sample.length ? '…' : ''}
-              </Text>
-              {complexPreview.complexType === 'commercial' && (
-                <Text style={styles.previewHint}>ملاحظة: لكل وحدة حقل unit_type (فارغ بالبداية) ويمكن تعديله لاحقاً.</Text>
-              )}
+      {attrDefs.map((def) => {
+        const ui = parseAttrUiOptions(def.options);
+        const uiRole = ui.uiRole ?? 'dynamic';
+        if (uiRole === 'place_location') {
+          return (
+            <View key={def.id} style={styles.fieldBlock}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>{def.label || 'الموقع على الخريطة'}</Text>
+                {def.is_required && <Text style={styles.asterisk}> *</Text>}
+              </View>
+              <LocationPicker latitude={latitude} longitude={longitude} />
             </View>
-          )}
-        </>
-      )}
-
-      {/* حقول ديناميكية (من attrDefs) */}
-      {attrDefs.map((def) => (
+          );
+        }
+        if (uiRole === 'place_name') {
+          return (
+            <View key={def.id} style={styles.fieldBlock}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>{def.label}</Text>
+                {def.is_required && <Text style={styles.asterisk}> *</Text>}
+              </View>
+              <TextInput
+                style={styles.input}
+                placeholder={def.label}
+                placeholderTextColor="#9CA3AF"
+                value={formState.name}
+                onChangeText={(v) => onChange({ name: v })}
+                textAlign="right"
+              />
+            </View>
+          );
+        }
+        if (uiRole === 'place_description') {
+          return (
+            <View key={def.id} style={styles.fieldBlock}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>{def.label}</Text>
+                {def.is_required && <Text style={styles.asterisk}> *</Text>}
+              </View>
+              <TextInput
+                style={[styles.input, styles.textarea]}
+                placeholder={def.label}
+                placeholderTextColor="#9CA3AF"
+                value={formState.description}
+                onChangeText={(v) => onChange({ description: v })}
+                multiline
+                textAlign="right"
+              />
+            </View>
+          );
+        }
+        if (uiRole === 'place_phone') {
+          if (hidePhoneField) return null;
+          return (
+            <View key={def.id} style={styles.fieldBlock}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>{def.label}</Text>
+                {def.is_required && <Text style={styles.asterisk}> *</Text>}
+              </View>
+              <TextInput
+                style={styles.input}
+                placeholder={def.label}
+                placeholderTextColor="#9CA3AF"
+                value={formState.phoneNumber}
+                onChangeText={(v) => onChange({ phoneNumber: v })}
+                keyboardType="phone-pad"
+                textAlign="right"
+              />
+            </View>
+          );
+        }
+        if (uiRole === 'place_photos') {
+          const limit = ui.maxPhotos ?? maxPhotos;
+          return (
+            <View key={def.id} style={styles.fieldBlock}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>
+                  {def.label} ({formState.photos.length}/{limit})
+                </Text>
+                {def.is_required && <Text style={styles.asterisk}> *</Text>}
+              </View>
+              <ReusableImagePicker
+                photos={formState.photos}
+                maxPhotos={limit}
+                label={`إضافة ${def.label || photoLabel}`}
+                onPhotosChange={(photos) => onChange({ photos })}
+              />
+            </View>
+          );
+        }
+        return (
         <View key={def.id} style={styles.fieldBlock}>
           <View style={styles.labelRow}>
             <Text style={styles.label}>{def.label}</Text>
@@ -334,24 +332,79 @@ export function PlaceForm({
             />
           )}
         </View>
-      ))}
+      );
+      })}
 
-      {/* صندوق الصور */}
-      {showPhotos && (
+      {/* fallback: لو غابت خصائص أساسية من الإدارة */}
+      {!attrDefs.some((def) => (parseAttrUiOptions(def.options).uiRole ?? 'dynamic') === 'place_location') && (
+        <LocationPicker latitude={latitude} longitude={longitude} />
+      )}
+      {!attrDefs.some((def) => (parseAttrUiOptions(def.options).uiRole ?? 'dynamic') === 'place_name') && (
         <>
           <View style={styles.labelRow}>
-            <Text style={styles.label}>
-              {photoLabel} ({formState.photos.length}/{maxPhotos})
-            </Text>
+            <Text style={styles.label}>{typeLabel === 'منزل' ? 'اسم صاحب المنزل' : `اسم ${typeLabel}`}</Text>
+            <Text style={styles.asterisk}> *</Text>
           </View>
-          <ReusableImagePicker
-            photos={formState.photos}
-            maxPhotos={maxPhotos}
-            label={`إضافة ${photoLabel}`}
-            onPhotosChange={(photos) => onChange({ photos })}
+          <TextInput
+            style={styles.input}
+            placeholder={typeLabel === 'منزل' ? 'اسم صاحب المنزل' : `اسم ${typeLabel}`}
+            placeholderTextColor="#9CA3AF"
+            value={formState.name}
+            onChangeText={(v) => onChange({ name: v })}
+            textAlign="right"
           />
         </>
       )}
+      {kind === 'complex' && (
+        <>
+          <View style={styles.complexRow}>
+            <NumberStepper
+              label="عدد الطوابق"
+              value={parseIntOr(formState.dynamicValues.floors_count, 1)}
+              min={1}
+              max={200}
+              onChangeValue={(n) => setDynamic('floors_count', String(n))}
+            />
+            <NumberStepper
+              label="وحدات في كل طابق"
+              value={parseIntOr(formState.dynamicValues.units_per_floor, 1)}
+              min={1}
+              max={500}
+              onChangeValue={(n) => setDynamic('units_per_floor', String(n))}
+            />
+          </View>
+          {complexPreview && (
+            <View style={styles.previewBox}>
+              <Text style={styles.previewTitle}>
+                سيُنشأ {complexPreview.total} {complexPreview.complexType === 'residential' ? 'بيت' : 'وحدة'}
+              </Text>
+              <Text style={styles.previewText} numberOfLines={3}>
+                {complexPreview.sample.join('، ')}
+                {complexPreview.total > complexPreview.sample.length ? '…' : ''}
+              </Text>
+              {complexPreview.complexType === 'commercial' && (
+                <Text style={styles.previewHint}>ملاحظة: لكل وحدة حقل unit_type (فارغ بالبداية) ويمكن تعديله لاحقاً.</Text>
+              )}
+            </View>
+          )}
+        </>
+      )}
+      {showPhotos &&
+        !attrDefs.some((def) => (parseAttrUiOptions(def.options).uiRole ?? 'dynamic') === 'place_photos') && (
+          <>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>
+                {photoLabel} ({formState.photos.length}/{maxPhotos})
+              </Text>
+            </View>
+            <ReusableImagePicker
+              photos={formState.photos}
+              maxPhotos={maxPhotos}
+              label={`إضافة ${photoLabel}`}
+              onPhotosChange={(photos) => onChange({ photos })}
+            />
+          </>
+        )}
     </>
   );
 }

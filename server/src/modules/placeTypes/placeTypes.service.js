@@ -59,4 +59,27 @@ export const placeTypesService = {
     if (!type) throw ApiError.notFound('نوع المكان غير موجود');
     return placeTypesRepo.createAttributeDefinition(typeId, data);
   },
+
+  async updateAttributeDefinition(typeId, defId, data) {
+    const type = await placeTypesRepo.findById(typeId);
+    if (!type) throw ApiError.notFound('نوع المكان غير موجود');
+    try {
+      const row = await placeTypesRepo.updateAttributeDefinition(defId, typeId, data);
+      if (!row) throw ApiError.notFound('تعريف الخاصية غير موجود');
+      return row;
+    } catch (err) {
+      if (err?.code === 'ATTR_KEY_CONFLICT') {
+        throw ApiError.conflict('يوجد حقل بنفس المفتاح لهذا النوع');
+      }
+      throw err;
+    }
+  },
+
+  async removeAttributeDefinition(typeId, defId) {
+    const type = await placeTypesRepo.findById(typeId);
+    if (!type) throw ApiError.notFound('نوع المكان غير موجود');
+    const row = await placeTypesRepo.deleteAttributeDefinition(defId, typeId);
+    if (!row) throw ApiError.notFound('تعريف الخاصية غير موجود');
+    return row;
+  },
 };

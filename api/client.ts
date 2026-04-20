@@ -446,6 +446,21 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  updateAttributeDefinition: (
+    typeId: string,
+    defId: string,
+    data: { key?: string; label?: string; value_type?: string; is_required?: boolean; options?: unknown | null }
+  ) =>
+    request<ApiResponse<any>>(`/api/place-types/${typeId}/attribute-definitions/${defId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  deleteAttributeDefinition: (typeId: string, defId: string) =>
+    request<ApiResponse<{ message: string }>>(`/api/place-types/${typeId}/attribute-definitions/${defId}`, {
+      method: 'DELETE',
+    }),
+
   // =========================
   // Place categories (main/sub tree)
   // =========================
@@ -502,7 +517,7 @@ export const api = {
   getPlaces: (params?: Record<string, string | number | undefined>) =>
     request<PaginatedResponse<PlaceData>>(`/api/places${qs(params)}`),
 
-  /** يجمع كل الصفحات (حد السيرفر 500/صفحة) — للخريطة والنسخ الاحتياطي. */
+  /** يجمع كل الصفحات (حد السيرفر 500/صفحة) — للخريطة والتصدير الشامل. */
   getPlacesAll: async (params?: Record<string, string | number | undefined>): Promise<PlaceData[]> => {
     const PAGE_LIMIT = 500;
     const collected: PlaceData[] = [];
