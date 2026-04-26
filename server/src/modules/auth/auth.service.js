@@ -90,4 +90,38 @@ export const authService = {
     if (!user) throw ApiError.notFound('المستخدم غير موجود');
     return user;
   },
+
+  async updateProfile(userId, data) {
+    const user = await authRepo.findUserById(userId);
+    if (!user) throw ApiError.notFound('المستخدم غير موجود');
+
+    const normalized = {
+      name: data.name.trim(),
+      phone_number: data.phone_number?.trim() || null,
+      date_of_birth: data.date_of_birth?.trim() || null,
+      profile_image_url: data.profile_image_url?.trim() || null,
+      id_card_image_url: data.id_card_image_url?.trim() || null,
+    };
+
+    const updated = await authRepo.updateProfile(userId, normalized);
+    if (!updated) throw ApiError.notFound('المستخدم غير موجود');
+    return { user: updated };
+  },
+
+  async changePassword(userId, { currentPassword, newPassword }) {
+    const user = await authRepo.findAuthUserById(userId);
+    if (!user) throw ApiError.notFound('المستخدم غير موجود');
+
+    const currentMatches = await verifyPassword(currentPassword, user.password_hash);
+    if (!currentMatches) throw ApiError.badRequest('كلمة المرور الحالية غير صحيحة');
+    if (currentPassword === newPassword) {
+      throw ApiError.badRequest('كلمة المرور الجديدة يجب أن تختلف عن الحالية');
+    }
+
+    const newHash = await hashPassword(newPassword);
+    const updated = await authRepo.updatePasswordHash(userId, newHash);
+    if (!updated) throw ApiError.notFound('المستخدم غير موجود');
+
+    return { message: 'تم تغيير كلمة المرور بنجاح' };
+  },
 };

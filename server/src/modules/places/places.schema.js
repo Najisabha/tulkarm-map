@@ -56,3 +56,8 @@ export const placesQuerySchema = z.object({
   radius: z.coerce.number().min(0).optional(),
   sort: z.enum(['newest', 'rating', 'distance']).default('newest'),
 });
+
+export const minePlacesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(500).default(20),
+});

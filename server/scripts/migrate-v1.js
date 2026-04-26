@@ -1,5 +1,6 @@
 /**
- * مصدر واحد لمخطط قاعدة البيانات — شغّل: npm run migrate:v1 --prefix server
+ * مصدر واحد لمخطط قاعدة البيانات النهائي (idempotent).
+ * شغّل: npm run migrate --prefix server
  */
 import bcrypt from 'bcryptjs';
 import 'dotenv/config';
@@ -9,7 +10,7 @@ const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-async function migrateV2() {
+async function ensureComplexesAndPhoneSchema() {
   // 1) رقم الهاتف مباشرة على places (كان في attributes فقط)
   await pool.query(`
     ALTER TABLE places ADD COLUMN IF NOT EXISTS phone_number VARCHAR(30);
@@ -86,10 +87,10 @@ async function migrateV2() {
     END $$;
   `);
 
-  console.log('✅ migrate-v2 completed');
+  console.log('✅ ensureComplexesAndPhoneSchema completed');
 }
 
-async function migrateV3() {
+async function ensurePlaceCategorySchema() {
   await pool.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`);
 
   // شجرة تصنيفات الأماكن (main/sub/…)
@@ -127,10 +128,10 @@ async function migrateV3() {
     CREATE INDEX IF NOT EXISTS idx_place_category_links_sub ON place_category_links(sub_category_id);
   `);
 
-  console.log('✅ migrate-v3 completed');
+  console.log('✅ ensurePlaceCategorySchema completed');
 }
 
-async function migrateV4() {
+async function ensurePlaceCategoryTypeBinding() {
   // ربط كل تصنيف مكان بنوع محدد من place_types
   await pool.query(`
     ALTER TABLE place_categories
@@ -170,10 +171,10 @@ async function migrateV4() {
     CREATE INDEX IF NOT EXISTS idx_place_categories_type ON place_categories(place_type_id, sort_order);
   `);
 
-  console.log('✅ migrate-v4 completed');
+  console.log('✅ ensurePlaceCategoryTypeBinding completed');
 }
 
-async function migrateV5() {
+async function ensureStoreDetailsPhoneLength() {
   // store_details.phone كان VARCHAR(20) بينما places.phone_number VARCHAR(30) —
   // مزامنة syncStoreDetailsFromPlace تفشل برسالة "value too long" → 500.
   await pool.query(`
@@ -189,19 +190,19 @@ async function migrateV5() {
       END IF;
     END $$;
   `);
-  console.log('✅ migrate-v5 completed');
+  console.log('✅ ensureStoreDetailsPhoneLength completed');
 }
 
-async function migrateV6() {
+async function ensureStoreDetailsPhoneColumn() {
   // قواعد قديمة: وجود جدول store_details من مخطط سابق بلا عمود phone —
   // CREATE TABLE IF NOT EXISTS لا يضيف أعمدة، فيفشل syncStoreDetailsFromPlace بـ 42703.
   await pool.query(`
     ALTER TABLE store_details ADD COLUMN IF NOT EXISTS phone VARCHAR(30);
   `);
-  console.log('✅ migrate-v6 completed');
+  console.log('✅ ensureStoreDetailsPhoneColumn completed');
 }
 
-async function migrateV7() {
+async function ensurePlaceTypeAttributeValueTypes() {
   await pool.query(`
     ALTER TABLE place_type_attribute_definitions DROP CONSTRAINT IF EXISTS ptad_value_type_check;
   `);
@@ -209,10 +210,369 @@ async function migrateV7() {
     ALTER TABLE place_type_attribute_definitions ADD CONSTRAINT ptad_value_type_check
       CHECK (value_type IN ('string','number','boolean','json','date','phone'));
   `);
-  console.log('✅ migrate-v7 completed');
+  console.log('✅ ensurePlaceTypeAttributeValueTypes completed');
 }
 
-async function initDb() {
+async function enrichPlaceTypesSchemaAndLabels() {
+  await pool.query(`
+    ALTER TABLE place_types DROP CONSTRAINT IF EXISTS place_types_kind_check;
+  `);
+  await pool.query(`
+    ALTER TABLE place_types
+      ADD COLUMN IF NOT EXISTS kind VARCHAR(32) NOT NULL DEFAULT 'other',
+      ADD COLUMN IF NOT EXISTS singular_label VARCHAR(150),
+      ADD COLUMN IF NOT EXISTS plural_label VARCHAR(150),
+      ADD COLUMN IF NOT EXISTS ui_labels JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS flags JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS aliases JSONB NOT NULL DEFAULT '[]'::jsonb;
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      ALTER TABLE place_types ADD CONSTRAINT place_types_kind_check
+        CHECK (kind IN ('house','store','residentialComplex','commercialComplex','other'));
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+
+  // Backfill: تسميات وقواعد كانت في الواجهة (placeTypeLabels) — idempotent
+  const placeTypeEnrichment = [
+    {
+      name: 'منزل',
+      kind: 'house',
+      singular_label: 'منزل',
+      plural_label: 'المنازل',
+      ui_labels: {
+        nameFieldLabel: 'اسم صاحب المنزل',
+        photosLabel: 'صور المنزل',
+        attrLabels: { house_number: 'رقم المنزل' },
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: false,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: false,
+      },
+      aliases: [],
+    },
+    {
+      name: 'متجر تجاري',
+      kind: 'store',
+      singular_label: 'متجر تجاري',
+      plural_label: 'المتاجر',
+      ui_labels: {
+        nameFieldLabel: 'اسم المتجر التجاري',
+        mainCategoryLabel: 'التصنيف الرئيسي\u200c للمتجر',
+        subCategoryLabel: 'التصنيف الفرعي\u200c للمتجر',
+        phoneFieldLabel: 'رقم هاتف المتجر',
+        photosLabel: 'صور المتجر',
+        attrLabels: {
+          store_type: 'التصنيف الرئيسي\u200c للمتجر',
+          store_category: 'التصنيف الفرعي\u200c للمتجر',
+          store_number: 'رقم هاتف المتجر',
+        },
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: true,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: true,
+      },
+      aliases: ['متجر'],
+    },
+    {
+      name: 'مجمّع تجاري',
+      kind: 'commercialComplex',
+      singular_label: 'مجمّع تجاري',
+      plural_label: 'المجمعات التجارية',
+      ui_labels: {
+        nameFieldLabel: 'اسم المجمّع التجاري',
+        attrLabels: { complex_number: 'رقم المجمع التجاري' },
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: false,
+        disallowComplexUnitChild: true,
+        needsCategoryTree: false,
+      },
+      aliases: ['مجمع تجاري', 'commercial complex', 'commercialcomplex'],
+    },
+    {
+      name: 'مجمّع سكني',
+      kind: 'residentialComplex',
+      singular_label: 'مجمّع سكني',
+      plural_label: 'المجمعات السكنية',
+      ui_labels: {
+        nameFieldLabel: 'اسم المجمّع السكني',
+        attrLabels: { complex_number: 'رقم المجمع' },
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: false,
+        disallowComplexUnitChild: true,
+        needsCategoryTree: false,
+      },
+      aliases: ['مجمع سكني', 'residential complex', 'residentialcomplex'],
+    },
+    {
+      name: 'مطعم',
+      kind: 'store',
+      singular_label: 'مطعم',
+      plural_label: 'المطاعم',
+      ui_labels: {
+        nameFieldLabel: 'اسم المطعم',
+        mainCategoryLabel: 'التصنيف الرئيسي للمطعم',
+        subCategoryLabel: 'التصنيف الفرعي للمطعم',
+        phoneFieldLabel: 'رقم هاتف المطعم',
+        photosLabel: 'صور المطعم',
+      },
+      flags: {
+        productCategoryForm: true,
+        phoneAsStoreNumber: true,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: true,
+      },
+      aliases: ['مطاعم'],
+    },
+    {
+      name: 'مسجد',
+      kind: 'other',
+      singular_label: 'مسجد',
+      plural_label: 'المساجد',
+      ui_labels: {
+        nameFieldLabel: 'اسم المسجد',
+        photosLabel: 'صور المسجد',
+        attrLabels: { location_text: 'وصف الموقع' },
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: false,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: false,
+      },
+      aliases: [],
+    },
+    {
+      name: 'كنيسة',
+      kind: 'other',
+      singular_label: 'كنيسة',
+      plural_label: 'الكنائس',
+      ui_labels: {
+        nameFieldLabel: 'اسم الكنيسة',
+        photosLabel: 'صور الكنيسة',
+        attrLabels: { location_text: 'وصف الموقع' },
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: false,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: false,
+      },
+      aliases: [],
+    },
+    {
+      name: 'موقف سيارات',
+      kind: 'other',
+      singular_label: 'موقف سيارات',
+      plural_label: 'مواقف السيارات',
+      ui_labels: {
+        nameFieldLabel: 'اسم موقف السيارات',
+        photosLabel: 'صور موقف السيارات',
+        attrLabels: { location_text: 'وصف الموقع' },
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: false,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: false,
+      },
+      aliases: ['موقف سيارات بالأجرة', 'parking', 'carpark', 'car park'],
+    },
+    {
+      name: 'مكتب',
+      kind: 'store',
+      singular_label: 'مكتب',
+      plural_label: 'المكاتب',
+      ui_labels: {
+        nameFieldLabel: 'اسم المكتب',
+        mainCategoryLabel: 'التصنيف الرئيسي للمكتب',
+        subCategoryLabel: 'التصنيف الفرعي للمكتب',
+        phoneFieldLabel: 'رقم هاتف المكتب',
+        photosLabel: 'صور المكتب',
+      },
+      flags: {
+        productCategoryForm: true,
+        phoneAsStoreNumber: true,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: true,
+      },
+      aliases: ['مكاتب'],
+    },
+    {
+      name: 'مستشفى',
+      kind: 'store',
+      singular_label: 'مستشفى',
+      plural_label: 'المستشفيات',
+      ui_labels: {
+        nameFieldLabel: 'اسم المستشفى',
+        mainCategoryLabel: 'التصنيف الرئيسي للمستشفى',
+        subCategoryLabel: 'التصنيف الفرعي للمستشفى',
+        phoneFieldLabel: 'رقم هاتف المستشفى',
+        photosLabel: 'صور المستشفى',
+      },
+      flags: {
+        productCategoryForm: true,
+        phoneAsStoreNumber: true,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: true,
+      },
+      aliases: ['مستشفيات'],
+    },
+    {
+      name: 'عيادة',
+      kind: 'store',
+      singular_label: 'عيادة',
+      plural_label: 'العيادات',
+      ui_labels: {
+        nameFieldLabel: 'اسم العيادة',
+        mainCategoryLabel: 'التصنيف الرئيسي للعيادة',
+        subCategoryLabel: 'التصنيف الفرعي للعيادة',
+        phoneFieldLabel: 'رقم هاتف العيادة',
+        photosLabel: 'صور العيادة',
+      },
+      flags: {
+        productCategoryForm: true,
+        phoneAsStoreNumber: true,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: true,
+      },
+      aliases: ['عيادات'],
+    },
+    {
+      name: 'صالون',
+      kind: 'store',
+      singular_label: 'صالون',
+      plural_label: 'الصالونات',
+      ui_labels: {
+        nameFieldLabel: 'اسم الصالون',
+        mainCategoryLabel: 'التصنيف الرئيسي للصالون',
+        subCategoryLabel: 'التصنيف الفرعي للصالون',
+        phoneFieldLabel: 'رقم هاتف الصالون',
+        photosLabel: 'صور الصالون',
+      },
+      flags: {
+        productCategoryForm: true,
+        phoneAsStoreNumber: true,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: true,
+      },
+      aliases: ['صالونات'],
+    },
+    {
+      name: 'مؤسسة تعليمية',
+      kind: 'store',
+      singular_label: 'مؤسسة تعليمية',
+      plural_label: 'المؤسسات التعليمية',
+      ui_labels: {
+        nameFieldLabel: 'اسم المؤسسة التعليمية',
+        mainCategoryLabel: 'التصنيف الرئيسي للمؤسسة التعليمية',
+        subCategoryLabel: 'التصنيف الفرعي للمؤسسة التعليمية',
+        phoneFieldLabel: 'رقم هاتف المؤسسة التعليمية',
+        photosLabel: 'صور المؤسسة التعليمية',
+      },
+      flags: {
+        productCategoryForm: true,
+        phoneAsStoreNumber: true,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: true,
+      },
+      aliases: ['تعليمية', 'تعليمي'],
+    },
+    {
+      name: 'مؤسسة حكومية',
+      kind: 'other',
+      singular_label: 'مؤسسة حكومية',
+      plural_label: 'المؤسسات الحكومية',
+      ui_labels: {
+        nameFieldLabel: 'اسم المؤسسة الحكومية',
+        mainCategoryLabel: 'التصنيف الرئيسي للمؤسسة الحكومية',
+        subCategoryLabel: 'التصنيف الفرعي للمؤسسة الحكومية',
+        phoneFieldLabel: 'رقم هاتف المؤسسة الحكومية',
+        photosLabel: 'صور المؤسسة الحكومية',
+        locationFieldLabel: 'وصف الموقع',
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: true,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: true,
+      },
+      aliases: ['حكومية', 'حكومي'],
+    },
+    {
+      name: 'أخرى',
+      kind: 'other',
+      singular_label: 'أخرى',
+      plural_label: 'أخرى',
+      ui_labels: {
+        nameFieldLabel: 'اسم المكان',
+        attrLabels: { location_text: 'وصف الموقع' },
+      },
+      flags: {
+        productCategoryForm: false,
+        phoneAsStoreNumber: false,
+        disallowComplexUnitChild: false,
+        needsCategoryTree: false,
+      },
+      aliases: ['اخرى'],
+    },
+  ];
+
+  for (const u of placeTypeEnrichment) {
+    const uiMerged = {
+      descriptionFieldLabel: 'الوصف',
+      mapLocationFieldLabel: 'الموقع على الخريطة',
+      phoneFieldFallbackLabel: 'رقم الهاتف',
+      ...u.ui_labels,
+    };
+    await pool.query(
+      `UPDATE place_types SET
+         kind = $2,
+         singular_label = COALESCE(NULLIF(TRIM(singular_label), ''), $3),
+         plural_label = COALESCE(NULLIF(TRIM(plural_label), ''), $4),
+         ui_labels = $5::jsonb,
+         flags = $6::jsonb,
+         aliases = $7::jsonb,
+         updated_at = now()
+       WHERE name = $1`,
+      [u.name, u.kind, u.singular_label, u.plural_label, JSON.stringify(uiMerged), JSON.stringify(u.flags), JSON.stringify(u.aliases)]
+    );
+  }
+
+  await pool.query(`
+    UPDATE place_types SET
+      ui_labels = COALESCE(ui_labels, '{}'::jsonb) || jsonb_build_object(
+        'descriptionFieldLabel', COALESCE(ui_labels->>'descriptionFieldLabel', 'الوصف'),
+        'mapLocationFieldLabel', COALESCE(ui_labels->>'mapLocationFieldLabel', 'الموقع على الخريطة'),
+        'phoneFieldFallbackLabel', COALESCE(ui_labels->>'phoneFieldFallbackLabel', 'رقم الهاتف')
+      ),
+      updated_at = now();
+  `);
+
+  // أي صفوف لم تُحدَّد أعلاه: املأ التسميات من الاسم إن كانت فارغة
+  await pool.query(`
+    UPDATE place_types SET
+      singular_label = COALESCE(NULLIF(TRIM(singular_label), ''), name),
+      plural_label = COALESCE(NULLIF(TRIM(plural_label), ''), name),
+      updated_at = now()
+    WHERE singular_label IS NULL OR singular_label = '' OR plural_label IS NULL OR plural_label = '';
+  `);
+
+  console.log('✅ enrichPlaceTypesSchemaAndLabels completed');
+}
+
+async function ensureBaseSchema() {
   const sql = `
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
@@ -497,6 +857,10 @@ CREATE INDEX IF NOT EXISTS idx_product_sub_main ON product_sub_categories(main_c
 
   await pool.query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(30);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_image_url TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS id_card_image_url TEXT;
     ALTER TABLE place_types ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 100;
     ALTER TABLE places ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id) ON DELETE SET NULL;
     ALTER TABLE places ADD COLUMN IF NOT EXISTS attributes JSONB NOT NULL DEFAULT '{}'::jsonb;
@@ -559,7 +923,23 @@ ON CONFLICT (name) DO UPDATE SET
   updated_at = now();
 `);
 
-  console.log('✅ migrate-v1 completed');
+  console.log('✅ ensureBaseSchema completed');
+}
+
+async function applyUnifiedSchema() {
+  // --- Core schema ---
+  await ensureBaseSchema();
+
+  // --- Legacy-compatible alignments and new capabilities ---
+  await ensureComplexesAndPhoneSchema();
+  await ensurePlaceCategorySchema();
+  await ensurePlaceCategoryTypeBinding();
+  await ensureStoreDetailsPhoneLength();
+  await ensureStoreDetailsPhoneColumn();
+  await ensurePlaceTypeAttributeValueTypes();
+  await enrichPlaceTypesSchemaAndLabels();
+
+  console.log('✅ Unified migration completed');
 }
 
 async function main() {
@@ -569,32 +949,7 @@ async function main() {
       process.exit(1);
     }
 
-    const modeRaw = process.argv[2]?.trim().toLowerCase();
-    const mode = modeRaw && modeRaw.length ? modeRaw : 'all';
-
-    if (mode === 'v2') {
-      await migrateV2();
-    } else if (mode === 'v3') {
-      await migrateV3();
-    } else if (mode === 'v4') {
-      await migrateV4();
-    } else if (mode === 'v5') {
-      await migrateV5();
-    } else if (mode === 'v6') {
-      await migrateV6();
-    } else if (mode === 'v7') {
-      await migrateV7();
-    } else if (mode === 'all') {
-      await initDb();
-      await migrateV2();
-      await migrateV3();
-      await migrateV4();
-      await migrateV5();
-      await migrateV6();
-      await migrateV7();
-    } else {
-      await initDb();
-    }
+    await applyUnifiedSchema();
   } catch (err) {
     console.error(err);
     process.exit(1);

@@ -61,6 +61,20 @@ export const placesController = {
     } catch (err) { next(err); }
   },
 
+  async getMine(req, res, next) {
+    try {
+      const v = req.validatedQuery;
+      const result = await placesService.getMany({
+        page: v.page,
+        limit: v.limit,
+        status: 'all',
+        sort: 'newest',
+        createdBy: req.user.id,
+      });
+      return paginated(res, result);
+    } catch (err) { next(err); }
+  },
+
   async getById(req, res, next) {
     try {
       const place = await placesService.getById(req.params.id, req.user);

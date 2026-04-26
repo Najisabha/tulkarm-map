@@ -3,7 +3,12 @@ import { placesController } from './places.controller.js';
 import { authenticate, optionalAuth } from '../../middleware/auth.middleware.js';
 import { requireRole } from '../../middleware/role.middleware.js';
 import { validate, validateQuery } from '../../middleware/validate.middleware.js';
-import { createPlaceSchema, updatePlaceSchema, placesQuerySchema } from './places.schema.js';
+import {
+  createPlaceSchema,
+  updatePlaceSchema,
+  placesQuerySchema,
+  minePlacesQuerySchema,
+} from './places.schema.js';
 
 const router = Router();
 
@@ -15,6 +20,7 @@ router.post(
   validate(createPlaceSchema),
   placesController.createFromAdmin
 );
+router.get('/mine', authenticate, validateQuery(minePlacesQuerySchema), placesController.getMine);
 router.get('/:id', optionalAuth, placesController.getById);
 /** الزائر يضيف طلباً (pending) بدون JWT — يطابق create(..., req.user ?? guest) */
 router.post('/', optionalAuth, validate(createPlaceSchema), placesController.create);

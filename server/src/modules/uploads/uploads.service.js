@@ -10,9 +10,20 @@ cloudinary.config({
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const isCloudinaryConfigured = Boolean(
+  env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET
+);
+
+function ensureCloudinaryConfigured() {
+  if (isCloudinaryConfigured) return;
+  throw ApiError.internal(
+    'خدمة رفع الصور غير مهيأة. أضف CLOUDINARY_CLOUD_NAME و CLOUDINARY_API_KEY و CLOUDINARY_API_SECRET في server/.env ثم أعد تشغيل الخادم.'
+  );
+}
 
 export const uploadsService = {
   async uploadImage(file) {
+    ensureCloudinaryConfigured();
     if (!file) throw ApiError.badRequest('لم يتم اختيار صورة');
     if (!ALLOWED_TYPES.includes(file.mimetype)) {
       throw ApiError.badRequest('نوع الملف غير مدعوم. استخدم JPEG, PNG, WebP, أو GIF');
@@ -43,11 +54,16 @@ export const uploadsService = {
         height: result.height,
       };
     } catch (err) {
-      throw ApiError.internal('فشل رفع الصورة: ' + err.message);
+      throw ApiError.internal(
+        err?.message?.includes('Must supply api_key')
+          ? 'فشل رفع الصورة: إعدادات Cloudinary غير مكتملة في server/.env'
+          : 'فشل رفع الصورة: ' + err.message
+      );
     }
   },
 
   async uploadBase64(base64Data) {
+    ensureCloudinaryConfigured();
     if (!base64Data) throw ApiError.badRequest('لم يتم إرسال بيانات الصورة');
 
     try {
@@ -63,7 +79,11 @@ export const uploadsService = {
         height: result.height,
       };
     } catch (err) {
-      throw ApiError.internal('فشل رفع الصورة: ' + err.message);
+      throw ApiError.internal(
+        err?.message?.includes('Must supply api_key')
+          ? 'فشل رفع الصورة: إعدادات Cloudinary غير مكتملة في server/.env'
+          : 'فشل رفع الصورة: ' + err.message
+      );
     }
   },
 

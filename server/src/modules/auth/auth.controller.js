@@ -36,4 +36,18 @@ export const authController = {
       return success(res, { user });
     } catch (err) { next(err); }
   },
+
+  async updateProfile(req, res, next) {
+    try {
+      const result = await authService.updateProfile(req.user.id, req.validated);
+      return success(res, result);
+    } catch (err) { next(err); }
+  },
+
+  async changePassword(req, res, next) {
+    try {
+      const result = await authService.changePassword(req.user.id, req.validated);
+      return success(res, result);
+    } catch (err) { next(err); }
+  },
 };

@@ -17,7 +17,15 @@ export const placeTypesService = {
     const sortOrder = data.sort_order ?? null;
     const existing = await placeTypesRepo.findByName(name);
     if (existing) throw ApiError.conflict('نوع المكان موجود مسبقاً');
-    return placeTypesRepo.create(name, emoji, color, sortOrder);
+    const meta = {
+      kind: data.kind,
+      singular_label: data.singular_label ?? name,
+      plural_label: data.plural_label ?? name,
+      ui_labels: data.ui_labels ?? {},
+      flags: data.flags ?? {},
+      aliases: data.aliases ?? [],
+    };
+    return placeTypesRepo.create(name, emoji, color, sortOrder, meta);
   },
 
   async update(id, payload) {
@@ -33,6 +41,12 @@ export const placeTypesService = {
       emoji: payload.emoji,
       color: payload.color,
       sort_order: payload.sort_order,
+      kind: payload.kind,
+      singular_label: payload.singular_label,
+      plural_label: payload.plural_label,
+      ui_labels: payload.ui_labels,
+      flags: payload.flags,
+      aliases: payload.aliases,
     });
   },
 

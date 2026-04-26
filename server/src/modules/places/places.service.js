@@ -246,7 +246,8 @@ export const placesService = {
     const place = await placesRepo.findById(id);
     if (!place) throw ApiError.notFound('المكان غير موجود');
     const admin = viewer?.role === 'admin';
-    if (place.status !== 'active' && !admin) {
+    const owner = Boolean(viewer?.id && place.created_by && String(place.created_by) === String(viewer.id));
+    if (place.status !== 'active' && !admin && !owner) {
       throw ApiError.notFound('المكان غير موجود');
     }
     return place;

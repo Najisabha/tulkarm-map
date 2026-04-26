@@ -2,24 +2,6 @@ import { placeTypesService } from './placeTypes.service.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { success } from '../../utils/response.js';
 
-const PROTECTED_FROM_DELETE = new Set([
-  'منزل',
-  'متجر تجاري',
-  'مجمّع سكني',
-  'مجمّع تجاري',
-  'مطعم',
-  'مسجد',
-  'كنيسة',
-  'موقف سيارات',
-  'مكتب',
-  'مستشفى',
-  'عيادة',
-  'صالون',
-  'مؤسسة تعليمية',
-  'مؤسسة حكومية',
-  'أخرى',
-]);
-
 export const placeTypesController = {
   async getAll(_req, res, next) {
     try {
@@ -56,9 +38,6 @@ export const placeTypesController = {
     try {
       const existing = await placeTypesService.getById(req.params.id);
       if (!existing) throw ApiError.notFound('نوع المكان غير موجود');
-      if (PROTECTED_FROM_DELETE.has(existing.name)) {
-        throw ApiError.forbidden('لا يمكن حذف هذا النوع لأنه من الأنواع الأساسية للتطبيق');
-      }
       await placeTypesService.remove(req.params.id);
       return success(res, { message: 'تم حذف نوع المكان' });
     } catch (err) {

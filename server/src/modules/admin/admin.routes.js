@@ -7,6 +7,23 @@ import { ApiError } from '../../utils/ApiError.js';
 import { success } from '../../utils/response.js';
 
 const router = Router();
+let ensureUserAdminColumnsPromise = null;
+
+function ensureUserAdminColumns() {
+  if (!ensureUserAdminColumnsPromise) {
+    ensureUserAdminColumnsPromise = pool.query(`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS phone_number VARCHAR(30),
+        ADD COLUMN IF NOT EXISTS date_of_birth DATE,
+        ADD COLUMN IF NOT EXISTS profile_image_url TEXT,
+        ADD COLUMN IF NOT EXISTS id_card_image_url TEXT,
+        ADD COLUMN IF NOT EXISTS verification_status VARCHAR(20) DEFAULT 'pending';
+      ALTER TABLE users
+        ALTER COLUMN date_of_birth TYPE DATE USING date_of_birth::date;
+    `);
+  }
+  return ensureUserAdminColumnsPromise;
+}
 
 async function logActivity(action, entityType, entityId, details = {}) {
   try {
@@ -23,8 +40,14 @@ async function logActivity(action, entityType, entityId, details = {}) {
 
 router.get('/users', authenticate, requireRole('admin'), async (_req, res, next) => {
   try {
+    await ensureUserAdminColumns();
     const { rows } = await pool.query(
-      'SELECT id, name, email, role, created_at FROM users WHERE deleted_at IS NULL ORDER BY created_at DESC'
+      `SELECT id, name, email, role, created_at, phone_number,
+              to_char(date_of_birth::date, 'YYYY-MM-DD') AS date_of_birth,
+              profile_image_url, id_card_image_url, verification_status
+       FROM users
+       WHERE deleted_at IS NULL
+       ORDER BY created_at DESC`
     );
     return success(res, rows);
   } catch (err) { next(err); }
@@ -32,11 +55,27 @@ router.get('/users', authenticate, requireRole('admin'), async (_req, res, next)
 
 router.patch('/users/:id', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
+    await ensureUserAdminColumns();
     const { id } = req.params;
     const body = req.body || {};
     const name = typeof body.name === 'string' ? body.name : undefined;
     const email = typeof body.email === 'string' ? body.email : undefined;
     const role = typeof body.role === 'string' ? body.role : undefined;
+    const phoneNumber = body.phone_number === null || typeof body.phone_number === 'string'
+      ? body.phone_number
+      : undefined;
+    const dateOfBirth = body.date_of_birth === null || typeof body.date_of_birth === 'string'
+      ? body.date_of_birth
+      : undefined;
+    const profileImageUrl = body.profile_image_url === null || typeof body.profile_image_url === 'string'
+      ? body.profile_image_url
+      : undefined;
+    const idCardImageUrl = body.id_card_image_url === null || typeof body.id_card_image_url === 'string'
+      ? body.id_card_image_url
+      : undefined;
+    const verificationStatus = typeof body.verification_status === 'string'
+      ? body.verification_status
+      : undefined;
 
     const { rows: curRows } = await pool.query(
       'SELECT id, email, role FROM users WHERE id = $1 AND deleted_at IS NULL',
@@ -68,6 +107,31 @@ router.patch('/users/:id', authenticate, requireRole('admin'), async (req, res, 
     if (role !== undefined && !['admin', 'user'].includes(role)) {
       throw ApiError.badRequest('الدور غير صالح');
     }
+    if (phoneNumber !== undefined && phoneNumber !== null) {
+      const pn = String(phoneNumber).trim();
+      if (pn.length > 30) throw ApiError.badRequest('رقم الهاتف طويل جداً');
+      if (!/^[0-9+\-\s()]*$/.test(pn)) throw ApiError.badRequest('صيغة رقم الهاتف غير صحيحة');
+    }
+    if (dateOfBirth !== undefined && dateOfBirth !== null) {
+      const dob = String(dateOfBirth).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+        throw ApiError.badRequest('صيغة تاريخ الميلاد يجب أن تكون YYYY-MM-DD');
+      }
+    }
+    if (profileImageUrl !== undefined && profileImageUrl !== null) {
+      try { new URL(String(profileImageUrl)); } catch { throw ApiError.badRequest('رابط صورة الملف الشخصي غير صحيح'); }
+    }
+    if (idCardImageUrl !== undefined && idCardImageUrl !== null) {
+      try { new URL(String(idCardImageUrl)); } catch { throw ApiError.badRequest('رابط صورة الهوية غير صحيح'); }
+    }
+    const normalizedVerificationStatus =
+      verificationStatus === 'unverified' ? 'pending' : verificationStatus;
+    if (
+      normalizedVerificationStatus !== undefined &&
+      !['verified', 'pending', 'rejected'].includes(normalizedVerificationStatus)
+    ) {
+      throw ApiError.badRequest('حالة التوثيق غير صالحة');
+    }
 
     const sets = [];
     const vals = [];
@@ -87,6 +151,26 @@ router.patch('/users/:id', authenticate, requireRole('admin'), async (req, res, 
       sets.push(`role = $${vals.length + 1}`);
       vals.push(role);
     }
+    if (phoneNumber !== undefined) {
+      sets.push(`phone_number = $${vals.length + 1}`);
+      vals.push(phoneNumber === null ? null : String(phoneNumber).trim() || null);
+    }
+    if (dateOfBirth !== undefined) {
+      sets.push(`date_of_birth = $${vals.length + 1}::date`);
+      vals.push(dateOfBirth === null ? null : String(dateOfBirth).trim() || null);
+    }
+    if (profileImageUrl !== undefined) {
+      sets.push(`profile_image_url = $${vals.length + 1}`);
+      vals.push(profileImageUrl === null ? null : String(profileImageUrl).trim() || null);
+    }
+    if (idCardImageUrl !== undefined) {
+      sets.push(`id_card_image_url = $${vals.length + 1}`);
+      vals.push(idCardImageUrl === null ? null : String(idCardImageUrl).trim() || null);
+    }
+    if (normalizedVerificationStatus !== undefined) {
+      sets.push(`verification_status = $${vals.length + 1}`);
+      vals.push(normalizedVerificationStatus);
+    }
 
     if (sets.length === 0) throw ApiError.badRequest('لا يوجد شيء للتحديث');
 
@@ -102,6 +186,30 @@ router.patch('/users/:id', authenticate, requireRole('admin'), async (req, res, 
 
     logActivity('update', 'user', id, { name: name !== undefined, email: email !== undefined, role: role !== undefined });
     return success(res, { message: 'تم تحديث المستخدم' });
+  } catch (err) { next(err); }
+});
+
+router.patch('/users/:id/password', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const newPassword = typeof req.body?.new_password === 'string' ? req.body.new_password.trim() : '';
+    if (newPassword.length < 6) {
+      throw ApiError.badRequest('كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل');
+    }
+    if (newPassword.length > 128) {
+      throw ApiError.badRequest('كلمة المرور الجديدة طويلة جداً');
+    }
+
+    const { rows } = await pool.query('SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL', [id]);
+    if (!rows[0]) throw ApiError.notFound('المستخدم غير موجود');
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL',
+      [id, passwordHash]
+    );
+    logActivity('update_password', 'user', id, {});
+    return success(res, { message: 'تم تغيير كلمة المرور بنجاح' });
   } catch (err) { next(err); }
 });
 

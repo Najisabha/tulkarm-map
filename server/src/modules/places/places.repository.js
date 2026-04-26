@@ -185,7 +185,13 @@ export const placesRepo = {
   async findById(id) {
     const placeDelClause = (await placesHasDeletedAtColumn()) ? 'AND p.deleted_at IS NULL' : '';
     const { rows } = await pool.query(
-      `SELECT p.*, pt.name as type_name, pl.latitude, pl.longitude,
+      `SELECT p.*, pt.name as type_name,
+              pt.kind as type_kind,
+              pt.singular_label as type_singular_label,
+              pt.plural_label as type_plural_label,
+              pt.ui_labels as type_ui_labels,
+              pt.flags as type_flags,
+              pl.latitude, pl.longitude,
               u.name as creator_name
        FROM places p
        LEFT JOIN place_types pt ON pt.id = p.type_id
@@ -260,7 +266,7 @@ export const placesRepo = {
     return place;
   },
 
-  async findMany({ page, limit, type, q, status, lat, lng, radius, sort }) {
+  async findMany({ page, limit, type, q, status, lat, lng, radius, sort, createdBy }) {
     const placeDelCond = (await placesHasDeletedAtColumn()) ? 'p.deleted_at IS NULL' : 'TRUE';
     const conditions = [placeDelCond];
     const params = [];
@@ -274,6 +280,11 @@ export const placesRepo = {
     if (type) {
       conditions.push(`pt.name = $${paramIdx++}`);
       params.push(type);
+    }
+
+    if (createdBy) {
+      conditions.push(`p.created_by = $${paramIdx++}`);
+      params.push(createdBy);
     }
 
     if (q) {
@@ -330,6 +341,11 @@ export const placesRepo = {
       SELECT p.id, p.name, p.description, p.status, p.created_at, p.attributes,
              p.phone_number,
              pt.name as type_name, pt.id as type_id,
+             pt.kind as type_kind,
+             pt.singular_label as type_singular_label,
+             pt.plural_label as type_plural_label,
+             pt.ui_labels as type_ui_labels,
+             pt.flags as type_flags,
              pl.latitude, pl.longitude,
              COALESCE(r.avg_rating, 0) as avg_rating,
              COALESCE(r.rating_count, 0) as rating_count

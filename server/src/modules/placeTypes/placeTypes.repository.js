@@ -16,11 +16,29 @@ export const placeTypesRepo = {
     return rows[0] || null;
   },
 
-  async create(name, emoji = null, color = null, sortOrder = null) {
+  async create(
+    name,
+    emoji = null,
+    color = null,
+    sortOrder = null,
+    meta = {}
+  ) {
+    const kind = meta.kind ?? 'other';
+    const singularLabel = meta.singular_label ?? name;
+    const pluralLabel = meta.plural_label ?? name;
+    const uiLabels = meta.ui_labels != null ? JSON.stringify(meta.ui_labels) : '{}';
+    const flags = meta.flags != null ? JSON.stringify(meta.flags) : '{}';
+    const aliases = meta.aliases != null ? JSON.stringify(meta.aliases) : '[]';
     const { rows } = await pool.query(
-      `INSERT INTO place_types (name, emoji, color, sort_order)
-       VALUES ($1, $2, $3, COALESCE($4, 100)) RETURNING *`,
-      [name, emoji, color, sortOrder]
+      `INSERT INTO place_types (
+         name, emoji, color, sort_order,
+         kind, singular_label, plural_label, ui_labels, flags, aliases
+       )
+       VALUES (
+         $1, $2, $3, COALESCE($4, 100),
+         $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb
+       ) RETURNING *`,
+      [name, emoji, color, sortOrder, kind, singularLabel, pluralLabel, uiLabels, flags, aliases]
     );
     return rows[0];
   },
@@ -32,10 +50,37 @@ export const placeTypesRepo = {
     const emoji = patch.emoji !== undefined ? patch.emoji : current.emoji;
     const color = patch.color !== undefined ? patch.color : current.color;
     const sortOrder = patch.sort_order !== undefined ? patch.sort_order : current.sort_order;
+    const kind = patch.kind !== undefined ? patch.kind : current.kind ?? 'other';
+    const singularLabel =
+      patch.singular_label !== undefined ? patch.singular_label : current.singular_label ?? current.name;
+    const pluralLabel =
+      patch.plural_label !== undefined ? patch.plural_label : current.plural_label ?? current.name;
+    const uiLabels =
+      patch.ui_labels !== undefined
+        ? JSON.stringify(patch.ui_labels ?? {})
+        : typeof current.ui_labels === 'object' && current.ui_labels !== null
+          ? JSON.stringify(current.ui_labels)
+          : '{}';
+    const flags =
+      patch.flags !== undefined
+        ? JSON.stringify(patch.flags ?? {})
+        : typeof current.flags === 'object' && current.flags !== null
+          ? JSON.stringify(current.flags)
+          : '{}';
+    const aliases =
+      patch.aliases !== undefined
+        ? JSON.stringify(patch.aliases ?? [])
+        : Array.isArray(current.aliases)
+          ? JSON.stringify(current.aliases)
+          : '[]';
     const { rows } = await pool.query(
-      `UPDATE place_types SET name = $1, emoji = $2, color = $3, sort_order = $4, updated_at = now()
-       WHERE id = $5 RETURNING *`,
-      [name, emoji, color, sortOrder, id]
+      `UPDATE place_types SET
+         name = $1, emoji = $2, color = $3, sort_order = $4,
+         kind = $5, singular_label = $6, plural_label = $7,
+         ui_labels = $8::jsonb, flags = $9::jsonb, aliases = $10::jsonb,
+         updated_at = now()
+       WHERE id = $11 RETURNING *`,
+      [name, emoji, color, sortOrder, kind, singularLabel, pluralLabel, uiLabels, flags, aliases, id]
     );
     return rows[0] || null;
   },
