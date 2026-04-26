@@ -5,6 +5,7 @@ export default function MainLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="map" />
       <Stack.Screen name="admin" />
+      <Stack.Screen name="user-modifications" />
       <Stack.Screen name="admin-categories" />
       <Stack.Screen name="admin-stores" />
       <Stack.Screen name="admin-place-requests" />

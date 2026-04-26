@@ -2,7 +2,7 @@
  * شاشة الخريطة الرئيسية: تجميع الخطافات (موقع، فئات، مسار/سفر) ثم طبقة العرض فقط.
  */
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Alert, Linking, View } from 'react-native';
 import { AddPlaceModal } from '../../components/AddPlaceModal';
 import { Circle, MapView, Polyline, PROVIDER_GOOGLE } from '../../components/MapWrapper';
@@ -269,6 +269,8 @@ export default function MapScreen() {
         <MapTopBar
           inTulkarm={location.inTulkarm}
           isAdmin={!!user?.isAdmin}
+          userName={user?.name}
+          userImageUrl={user?.profileImageUrl}
           onOpenSidebar={() => setShowSidebar(true)}
           onOpenAdmin={() => router.push('/(main)/admin')}
         />
@@ -376,6 +378,10 @@ export default function MapScreen() {
           onOpenAdmin={() => {
             setShowSidebar(false);
             router.push('/(main)/admin');
+          }}
+          onOpenUserModifications={() => {
+            setShowSidebar(false);
+            router.push('/(main)/user-modifications');
           }}
           onLogout={handleLogout}
         />

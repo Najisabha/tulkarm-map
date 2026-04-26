@@ -59,7 +59,7 @@
 4. شغّل الهجرة:
    ```bash
    cd server
-   npm run migrate:v1
+   npm run migrate
    ```
 5. شغّل النظام:
    - الخادم:
@@ -152,14 +152,13 @@ CLOUDINARY_API_SECRET=سر_cloudinary
 ```bash
 cd server
 
-# إنشاء الجداول الأساسية للمرة الأولى
-# إنشاء الجداول الأساسية + تشغيل الهجرات كلها (سكربت v1 موحّد)
-npm run migrate:v1
+# تطبيق المخطط النهائي لقاعدة البيانات (idempotent)
+npm run migrate
 ```
 
 > يمكن تشغيل الهجرات من جذر المشروع أيضاً:
 > ```bash
-> npm run migrate:v1
+> npm run migrate
 > ```
 
 ### 4. تشغيل الخادم
@@ -194,7 +193,7 @@ EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=مفتاحك_هنا
 
 | الهجرة | ما تضيفه |
 |--------|----------|
-| `migrate:v1` | إنشاء الجداول الأساسية + ترحيلات `v2..v8` + seed لأنواع الأماكن الأساسية (`place_types`) + (اختياري) حذف `place_requests` عبر `--drop-unused-tables` |
+| `migrate` | تطبيق المخطط النهائي الحالي لقاعدة البيانات + مواءمة القواعد القديمة + seed لأنواع الأماكن الأساسية (`place_types`) |
 
 > السكربت موحّد وآمن للتشغيل أكثر من مرة (معظم DDL تستخدم `IF NOT EXISTS`). الحذف تدميري ويظل اختياري.
 
@@ -219,7 +218,7 @@ EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=مفتاحك_هنا
 5. شغّل الهجرات على قاعدة بيانات الإنتاج (Neon):
    ```bash
    # من جهازك المحلي مع DATABASE_URL تشير لـ Neon
-   npm run migrate:v1
+   npm run migrate
    ```
 
 > **ملاحظة:** Vercel يشغّل `npm start` الذي يُشغّل `node src/server.js` — وهو نفس ما يُشغّله `node index.js` الآن.
@@ -571,7 +570,7 @@ tulkarm-map/
 │   ├── package-lock.json # قفل نسخ الخادم
 │   ├── package.json # سكربتات وتبعيات الخادم
 │   ├── scripts/
-│   │   └── migrate-v1.js # سكربت موحّد شامل (init-db + v2..v8 + seed + حذف اختياري)
+│   │   └── migrate-v1.js # سكربت موحّد لتطبيق المخطط النهائي + مواءمة legacy + seed
 │   └── src/
 │       ├── app.js # Express + ربط routes
 │       ├── legacy-bridge.js # جسر توافق بين النسخ
@@ -636,7 +635,7 @@ tulkarm-map/
 
 ## هيكل قاعدة البيانات
 
-> هذه الشجرة تمثل الجداول الفعلية في PostgreSQL (بعد تشغيل `npm run migrate:v1`).
+> هذه الشجرة تمثل الجداول الفعلية في PostgreSQL (بعد تشغيل `npm run migrate`).
 
 ### Extensions
 
@@ -1064,7 +1063,7 @@ tulkarm-map/
 
 #### 12) الخادم - سكربتات قاعدة البيانات
 
-- `server/scripts/migrate-v1.js`: سكربت موحّد شامل (init-db + v2..v8 + seed + دعم حذف اختياري لـ `place_requests`).
+- `server/scripts/migrate-v1.js`: سكربت موحّد لتطبيق المخطط النهائي (idempotent) + مواءمة قواعد legacy + seed.
 
 #### 13) الخادم - النواة (`server/src/`)
 

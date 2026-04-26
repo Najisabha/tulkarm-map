@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { api, PlaceType } from '../api/client';
+import { ingestPlaceTypesFromApi, mergePlaceTypeIntoRegistry, removePlaceTypeFromRegistry } from '../utils/placeTypesRegistry';
 
 export interface Category {
   id: string;
@@ -43,6 +44,7 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
       const res = await api.getPlaceTypes();
       const raw = (res as any)?.data ?? res;
       const list = Array.isArray(raw) ? raw : [];
+      ingestPlaceTypesFromApi(list);
       setCategories(list.map((row: PlaceType) => typeToCategory(row)));
     } catch {
       setCategories([]);
@@ -54,6 +56,7 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
   const addCategory = async (cat: Omit<Category, 'id'>) => {
     const res = await api.createPlaceType(cat.name, { emoji: cat.emoji, color: cat.color });
     if (res?.data) {
+      mergePlaceTypeIntoRegistry(res.data as PlaceType);
       setCategories((prev) => [...prev, typeToCategory(res.data)]);
     }
   };
@@ -80,6 +83,7 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await api.updatePlaceType(id, patch);
       if (res?.data) {
+        mergePlaceTypeIntoRegistry(res.data as PlaceType);
         setCategories((prevList) =>
           prevList.map((c) => (c.id === id ? typeToCategory(res.data as PlaceType) : c))
         );
@@ -101,6 +105,7 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       await api.deletePlaceType(id);
+      removePlaceTypeFromRegistry(id);
       setCategories((prev) => prev.filter((c) => c.id !== id));
       return { success: true };
     } catch (e: any) {

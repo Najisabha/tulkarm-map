@@ -1,5 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { ingestPlaceTypesFromApi } from '../utils/placeTypesRegistry';
 import { getApiUrl } from './config';
+
+function syncPlaceTypesRegistry(data: PlaceType[] | undefined | null) {
+  if (Array.isArray(data) && data.length > 0) ingestPlaceTypesFromApi(data);
+}
 
 const TOKEN_KEY = 'accessToken';
 const REFRESH_KEY = 'refreshToken';
@@ -167,6 +172,11 @@ export interface UserData {
   email: string;
   role: string;
   created_at: string;
+  phone_number?: string | null;
+  date_of_birth?: string | null;
+  profile_image_url?: string | null;
+  id_card_image_url?: string | null;
+  verification_status?: 'verified' | 'pending' | 'rejected' | 'unverified' | null;
 }
 
 export interface PlaceData {
@@ -175,6 +185,12 @@ export interface PlaceData {
   description: string | null;
   type_name: string;
   type_id: string;
+  /** من join place_types — بعد migrate-v8 */
+  type_kind?: string | null;
+  type_singular_label?: string | null;
+  type_plural_label?: string | null;
+  type_ui_labels?: Record<string, unknown> | null;
+  type_flags?: Record<string, unknown> | null;
   latitude: number;
   longitude: number;
   status: string;
@@ -211,6 +227,13 @@ export interface PlaceType {
   created_at: string;
   emoji?: string | null;
   color?: string | null;
+  sort_order?: number | null;
+  kind?: string | null;
+  singular_label?: string | null;
+  plural_label?: string | null;
+  ui_labels?: Record<string, unknown> | null;
+  flags?: Record<string, unknown> | null;
+  aliases?: string[] | null;
 }
 
 export interface RatingData {
@@ -287,6 +310,24 @@ export const api = {
   getMe: () =>
     request<ApiResponse<{ user: UserData }>>('/api/auth/me'),
 
+  updateProfile: (data: {
+    name: string;
+    phone_number?: string | null;
+    date_of_birth?: string | null;
+    profile_image_url?: string | null;
+    id_card_image_url?: string | null;
+  }) =>
+    request<ApiResponse<{ user: UserData }>>('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  changePassword: (data: { currentPassword: string; newPassword: string }) =>
+    request<ApiResponse<{ message: string }>>('/api/auth/change-password', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   health: () =>
     request<{ ok: boolean; message?: string }>('/api/health'),
 
@@ -305,6 +346,7 @@ export const api = {
         const list = Array.isArray(res?.data) ? res.data : [];
         lastRes = res;
         if (list.length >= 15) {
+          syncPlaceTypesRegistry(res.data);
           return res;
         }
         if (list.length === 0 && i < sparseWaitsMs.length - 1) {
@@ -313,6 +355,7 @@ export const api = {
         if (list.length > 0 && list.length < 15 && i < sparseWaitsMs.length - 1) {
           continue;
         }
+        syncPlaceTypesRegistry(res.data);
         return res;
       } catch (e) {
         lastError = e;
@@ -333,6 +376,7 @@ export const api = {
             const list = Array.isArray(res?.data) ? res.data : [];
             lastRes = res;
             if (list.length >= 15) {
+              syncPlaceTypesRegistry(res.data);
               return res;
             }
           } catch (e) {
@@ -355,9 +399,11 @@ export const api = {
         emoji: c.emoji ?? null,
         color: c.color ?? null,
       }));
+      syncPlaceTypesRegistry(normalized);
       return { success: true, data: normalized };
     } catch {
       if (lastRes && Array.isArray(lastRes.data) && lastRes.data.length > 0) {
+        syncPlaceTypesRegistry(lastRes.data);
         return lastRes;
       }
       throw lastError instanceof Error
@@ -517,6 +563,9 @@ export const api = {
   getPlaces: (params?: Record<string, string | number | undefined>) =>
     request<PaginatedResponse<PlaceData>>(`/api/places${qs(params)}`),
 
+  getMyPlaces: (params?: { page?: number; limit?: number }) =>
+    request<PaginatedResponse<PlaceData>>(`/api/places/mine${qs(params)}`),
+
   /** يجمع كل الصفحات (حد السيرفر 500/صفحة) — للخريطة والتصدير الشامل. */
   getPlacesAll: async (params?: Record<string, string | number | undefined>): Promise<PlaceData[]> => {
     const PAGE_LIMIT = 500;
@@ -626,10 +675,25 @@ export const api = {
   getUsers: () =>
     request<ApiResponse<UserData[]>>('/api/users'),
 
-  updateUser: (id: string, updates: { role?: string; name?: string; email?: string }) =>
+  updateUser: (id: string, updates: {
+    role?: string;
+    name?: string;
+    email?: string;
+    phone_number?: string | null;
+    date_of_birth?: string | null;
+    profile_image_url?: string | null;
+    id_card_image_url?: string | null;
+    verification_status?: 'verified' | 'pending' | 'rejected' | 'unverified';
+  }) =>
     request<ApiResponse<{ message: string }>>(`/api/users/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
+    }),
+
+  updateUserPassword: (id: string, newPassword: string) =>
+    request<ApiResponse<{ message: string }>>(`/api/users/${id}/password`, {
+      method: 'PATCH',
+      body: JSON.stringify({ new_password: newPassword }),
     }),
 
   deleteUser: (id: string) =>

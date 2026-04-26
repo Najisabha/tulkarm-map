@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import type { AuthUser } from '../../stores/useAuthStore';
 import { getCategoryStyle, type Store } from '../../utils/map/storeModel';
 import { mapStyles as styles } from './styles';
@@ -12,6 +12,7 @@ interface MapSidebarProps {
   onClose: () => void;
   onPickCategory: (category: string) => void;
   onOpenAdmin: () => void;
+  onOpenUserModifications: () => void;
   onLogout: () => void;
 }
 
@@ -23,6 +24,7 @@ export function MapSidebar({
   onClose,
   onPickCategory,
   onOpenAdmin,
+  onOpenUserModifications,
   onLogout,
 }: MapSidebarProps) {
   return (
@@ -31,7 +33,11 @@ export function MapSidebar({
       <View style={styles.sidebar}>
         <View style={styles.sidebarHeader}>
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>{user?.name?.charAt(0) || 'م'}</Text>
+            {user?.profileImageUrl ? (
+              <Image source={{ uri: user.profileImageUrl }} style={styles.avatarImage} />
+            ) : (
+              <Text style={styles.avatarText}>{user?.name?.charAt(0) || 'م'}</Text>
+            )}
           </View>
           <Text style={styles.sidebarName}>{user?.name}</Text>
           <Text style={styles.sidebarEmail}>
@@ -46,30 +52,38 @@ export function MapSidebar({
 
         <ScrollView style={styles.sidebarList}>
           <Text style={styles.sidebarSectionTitle}>الفئات ({categories.length})</Text>
-          {categories.map((cat) => {
-            const catCount = stores.filter((s) => s.category === cat).length;
-            const { color, emoji } = getCategoryStyle(categoryList, cat);
-            return (
-              <TouchableOpacity
-                key={cat}
-                style={styles.sidebarCatItem}
-                onPress={() => onPickCategory(cat)}
-              >
-                <View style={[styles.sidebarCatCount, { backgroundColor: color + '22' }]}>
-                  <Text style={[styles.sidebarCatCountText, { color }]}>{catCount}</Text>
-                </View>
-                <View style={styles.sidebarCatInfo}>
-                  <Text style={styles.sidebarCatName}>{cat}</Text>
-                </View>
-                <Text style={styles.sidebarCatEmoji}>{emoji}</Text>
-              </TouchableOpacity>
-            );
-          })}
+          <View style={styles.sidebarCatGrid}>
+            {categories.map((cat) => {
+              const catCount = stores.filter((s) => s.category === cat).length;
+              const { color, emoji } = getCategoryStyle(categoryList, cat);
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  style={styles.sidebarCatItem}
+                  onPress={() => onPickCategory(cat)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.sidebarCatEmoji}>{emoji}</Text>
+                  <Text style={styles.sidebarCatName} numberOfLines={1}>
+                    {cat}
+                  </Text>
+                  <View style={[styles.sidebarCatCount, { backgroundColor: color + '22' }]}>
+                    <Text style={[styles.sidebarCatCountText, { color }]}>{catCount}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </ScrollView>
 
         {user?.isAdmin && (
           <TouchableOpacity style={styles.sidebarAdminBtn} onPress={onOpenAdmin}>
             <Text style={styles.sidebarAdminBtnText}>⚙️ لوحة الإدارة</Text>
+          </TouchableOpacity>
+        )}
+        {user && user.id !== 'guest' && (
+          <TouchableOpacity style={styles.sidebarUserModBtn} onPress={onOpenUserModifications}>
+            <Text style={styles.sidebarUserModBtnText}>🛠️ تعديلات</Text>
           </TouchableOpacity>
         )}
         <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>

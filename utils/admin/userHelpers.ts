@@ -5,6 +5,11 @@ export interface ApiUser {
   role: string;
   isAdmin: boolean;
   created_at: string;
+  phoneNumber?: string | null;
+  dateOfBirth?: string | null;
+  profileImageUrl?: string | null;
+  idCardImageUrl?: string | null;
+  verificationStatus?: 'verified' | 'pending' | 'rejected' | null;
 }
 
 export const DEFAULT_ADMIN_EMAIL = 'admin@tulkarm.com';
@@ -19,6 +24,8 @@ export function normalizeApiUser(u: Partial<ApiUser>): ApiUser {
   const role = String(u.role || 'user');
   const email = String(u.email || '').trim().toLowerCase();
   const isAdmin = role === 'admin' || isDefaultAdminEmail(email) || u.isAdmin === true;
+  const rawDob = String((u as any).date_of_birth ?? (u as any).dateOfBirth ?? '').trim();
+  const dobMatch = rawDob.match(/^(\d{4})-(\d{2})-(\d{2})/);
   return {
     id: String(u.id || ''),
     name: String(u.name || ''),
@@ -26,6 +33,14 @@ export function normalizeApiUser(u: Partial<ApiUser>): ApiUser {
     role,
     isAdmin,
     created_at: String(u.created_at || ''),
+    phoneNumber: (u as any).phone_number ?? (u as any).phoneNumber ?? null,
+    dateOfBirth: dobMatch ? `${dobMatch[1]}-${dobMatch[2]}-${dobMatch[3]}` : null,
+    profileImageUrl: (u as any).profile_image_url ?? (u as any).profileImageUrl ?? null,
+    idCardImageUrl: (u as any).id_card_image_url ?? (u as any).idCardImageUrl ?? null,
+    verificationStatus:
+      ((u as any).verification_status ?? (u as any).verificationStatus ?? 'pending') === 'unverified'
+        ? 'pending'
+        : ((u as any).verification_status ?? (u as any).verificationStatus ?? 'pending'),
   };
 }
 

@@ -29,11 +29,7 @@ import { useCategories } from '../../context/CategoryContext';
 import { Store, useStores } from '../../context/StoreContext';
 import { useAdminStoresFilters } from '../../hooks/admin/useAdminStoresFilters';
 import { parseAttrUiOptions } from '../../utils/admin/categoryAdminHelpers';
-import {
-  normalizePlaceTypeKind,
-  needsPlaceCategoryTree,
-  usesPlacePhoneAsStoreNumberField,
-} from '../../utils/placeTypeLabels';
+import { needsPlaceCategoryTree, usesPlacePhoneAsStoreNumberField } from '../../utils/placeTypeLabels';
 import { ensureAndFetchAttributeDefinitions } from '../../utils/admin/ensurePlaceTypeAttrDefs';
 import { getPlaceAttrDefsForType } from '../../utils/placeFormAttrDefs';
 import {
@@ -426,6 +422,34 @@ export default function AdminStoresScreen() {
           if (s) subIdResolved = s.id;
         }
 
+        // استنتاج التصنيف الرئيسي تلقائياً من التصنيف الفرعي عند غياب الرئيسي.
+        if (!mainIdResolved && (subIdResolved || existingAttrs['store_category'])) {
+          let resolvedMain: CategoryItem | null = null;
+          let resolvedSub: CategoryItem | null = null;
+          for (const main of mains) {
+            const subs = map[main.id] ?? [];
+            const subMatch = subIdResolved
+              ? subs.find((x) => x.id === subIdResolved)
+              : subs.find((x) => x.name === existingAttrs['store_category']);
+            if (subMatch) {
+              resolvedMain = main;
+              resolvedSub = subMatch;
+              break;
+            }
+          }
+
+          if (resolvedMain) {
+            mainIdResolved = resolvedMain.id;
+            existingAttrs['store_type'] = resolvedMain.name;
+            setEditPcMainColor(resolvedMain.color || '#2E86AB');
+            setEditPcSubCategories(map[resolvedMain.id] ?? []);
+          }
+          if (resolvedSub) {
+            subIdResolved = resolvedSub.id;
+            existingAttrs['store_category'] = resolvedSub.name;
+          }
+        }
+
         setEditPcCategoryIds({ mainId: mainIdResolved, subId: subIdResolved });
       } catch {
         setEditPcMainCategories([]);
@@ -716,9 +740,35 @@ export default function AdminStoresScreen() {
     const useTree = Boolean(treeCtx && needsPlaceCategoryTree(treeCtx.categoryName));
     const mainLab = defs.find((d) => d.key === 'store_type')?.label ?? 'التصنيف الرئيسي';
     const subLab = defs.find((d) => d.key === 'store_category')?.label ?? 'التصنيف الفرعي';
+    const hasStoreTypeField = defs.some((d) => d.key === 'store_type');
 
     return (
       <>
+        {useTree && treeCtx && !hasStoreTypeField ? (
+          <View style={styles.formGroup}>
+            <Text style={styles.formLabel}>
+              {mainLab} *
+            </Text>
+            <CategorySelector
+              mainCategories={treeCtx.mainCategories}
+              subCategories={treeCtx.subCategories}
+              selectedMain={values.store_type || ''}
+              selectedSub={values.store_category || ''}
+              selectedMainColor={treeCtx.selectedMainColor}
+              loading={treeCtx.loading}
+              mainLabel={mainLab}
+              subLabel={subLab}
+              showMainList={treeCtx.showMain}
+              showSubList={treeCtx.showSub}
+              onOpenMainList={treeCtx.onOpenMain}
+              onCloseMainList={treeCtx.onCloseMain}
+              onMainSelect={treeCtx.onMainSelect}
+              onOpenSubList={treeCtx.onOpenSub}
+              onCloseSubList={treeCtx.onCloseSub}
+              onSubSelect={treeCtx.onSubSelect}
+            />
+          </View>
+        ) : null}
         {defs.map((def) => {
           const uiRole = parseAttrUiOptions(def.options).uiRole ?? 'dynamic';
           if (uiRole !== 'dynamic') return null;

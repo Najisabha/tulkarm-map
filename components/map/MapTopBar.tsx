@@ -1,17 +1,33 @@
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Image, Text, TouchableOpacity, View } from 'react-native';
 import { mapStyles as styles } from './styles';
 
 interface MapTopBarProps {
   inTulkarm: boolean | null;
   isAdmin: boolean;
+  userName?: string;
+  userImageUrl?: string | null;
   onOpenSidebar: () => void;
   onOpenAdmin: () => void;
 }
 
-export function MapTopBar({ inTulkarm, isAdmin, onOpenSidebar, onOpenAdmin }: MapTopBarProps) {
+export function MapTopBar({
+  inTulkarm,
+  isAdmin,
+  userName,
+  userImageUrl,
+  onOpenSidebar,
+  onOpenAdmin,
+}: MapTopBarProps) {
   const statusText =
     inTulkarm === null ? 'جارٍ التحديد...' : inTulkarm ? 'داخل المنطقة' : 'خارج المنطقة';
+  const initials = (userName || '')
+    .trim()
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <View style={styles.topBar}>
@@ -34,7 +50,13 @@ export function MapTopBar({ inTulkarm, isAdmin, onOpenSidebar, onOpenAdmin }: Ma
           <Text style={styles.menuIcon}>⚙️</Text>
         </TouchableOpacity>
       ) : (
-        <View style={styles.iconBtn} />
+        <View style={styles.iconBtn}>
+          {userImageUrl ? (
+            <Image source={{ uri: userImageUrl }} style={styles.topBarAvatarImage} />
+          ) : (
+            <Text style={styles.topBarAvatarText}>{initials || '👤'}</Text>
+          )}
+        </View>
       )}
     </View>
   );

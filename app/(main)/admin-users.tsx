@@ -77,9 +77,27 @@ export default function AdminUsersScreen() {
         user={usersState.editUser}
         name={usersState.editName}
         email={usersState.editEmail}
+        phone={usersState.editPhone}
+        dateOfBirth={usersState.editDateOfBirth}
+        profileImageUrl={usersState.editProfileImageUrl}
+        idCardImageUrl={usersState.editIdCardImageUrl}
+        verificationStatus={usersState.editVerificationStatus}
+        newPassword={usersState.editNewPassword}
+        confirmPassword={usersState.editConfirmPassword}
+        uploadingProfileImage={usersState.uploadingProfileImage}
+        uploadingIdCardImage={usersState.uploadingIdCardImage}
         saving={usersState.savingEdit}
         onChangeName={usersState.setEditName}
         onChangeEmail={usersState.setEditEmail}
+        onChangePhone={usersState.setEditPhone}
+        onChangeDateOfBirth={usersState.setEditDateOfBirth}
+        onChangeVerificationStatus={usersState.changeVerificationStatus}
+        onChangeNewPassword={usersState.setEditNewPassword}
+        onChangeConfirmPassword={usersState.setEditConfirmPassword}
+        onUploadProfileImage={usersState.uploadEditProfileImage}
+        onUploadIdCardImage={usersState.uploadEditIdCardImage}
+        onRemoveProfileImage={() => usersState.setEditProfileImageUrl(null)}
+        onRemoveIdCardImage={() => usersState.setEditIdCardImageUrl(null)}
         onClose={usersState.closeEdit}
         onSave={usersState.saveEdit}
       />

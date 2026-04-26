@@ -17,6 +17,11 @@ export interface AuthUser {
   role: UserRole;
   isAdmin: boolean;
   createdAt: string;
+  phoneNumber?: string | null;
+  dateOfBirth?: string | null;
+  profileImageUrl?: string | null;
+  idCardImageUrl?: string | null;
+  verificationStatus?: 'verified' | 'pending' | 'rejected' | null;
 }
 
 const GUEST_USER: AuthUser = {
@@ -28,11 +33,29 @@ const GUEST_USER: AuthUser = {
   createdAt: new Date().toISOString(),
 };
 
+function normalizeDateOnly(value: unknown): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+
+  const direct = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (direct) return `${direct[1]}-${direct[2]}-${direct[3]}`;
+
+  const dmy = raw.match(/(\d{2})-(\d{2})-(\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
 function toUser(raw: any): AuthUser {
   const email = String(raw?.email || '').toLowerCase();
   const role: UserRole =
     raw.role || (raw.isAdmin ? 'admin' : email === 'admin@tulkarm.com' ? 'admin' : 'user');
   const isAdmin = role === 'admin' || raw.isAdmin === true || email === 'admin@tulkarm.com';
+  const normalizedDob = normalizeDateOnly(raw?.date_of_birth ?? raw?.dateOfBirth);
   return {
     id: raw.id,
     name: raw.name,
@@ -40,6 +63,14 @@ function toUser(raw: any): AuthUser {
     role,
     isAdmin,
     createdAt: raw.created_at || raw.createdAt || new Date().toISOString(),
+    phoneNumber: raw.phone_number ?? raw.phoneNumber ?? null,
+    dateOfBirth: normalizedDob,
+    profileImageUrl: raw.profile_image_url ?? raw.profileImageUrl ?? null,
+    idCardImageUrl: raw.id_card_image_url ?? raw.idCardImageUrl ?? null,
+    verificationStatus:
+      (raw.verification_status ?? raw.verificationStatus ?? 'pending') === 'unverified'
+        ? 'pending'
+        : (raw.verification_status ?? raw.verificationStatus ?? 'pending'),
   };
 }
 
@@ -51,6 +82,13 @@ interface AuthState {
   init: () => Promise<void>;
   login: (email: string, password: string) => Promise<{ success: boolean; message: string }>;
   register: (name: string, email: string, password: string) => Promise<{ success: boolean; message: string }>;
+  updateProfile: (data: {
+    name: string;
+    phone_number?: string | null;
+    date_of_birth?: string | null;
+    profile_image_url?: string | null;
+    id_card_image_url?: string | null;
+  }) => Promise<{ success: boolean; message: string }>;
   loginAsGuest: () => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
@@ -78,7 +116,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           await AsyncStorage.removeItem('currentUser');
           set({ user: null, isLoading: false });
         } else {
-          set({ user: toUser(u), isLoading: false });
+          const localUser = toUser(u);
+          set({ user: localUser, isLoading: false });
+          try {
+            const me: any = await api.getMe();
+            const raw = me?.data?.user;
+            if (me?.success && raw) {
+              const freshUser = toUser(raw);
+              await AsyncStorage.setItem('currentUser', JSON.stringify(freshUser));
+              set({ user: freshUser });
+            }
+          } catch {
+            // نبقي المستخدم المحلي عندما يفشل /me (مثلاً انقطاع مؤقت)
+          }
         }
       } else {
         set({ isLoading: false });
@@ -99,7 +149,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         } else {
           await clearTokens();
         }
-        const savedUser = toUser(rawUser);
+        let savedUser = toUser(rawUser);
+        try {
+          const me: any = await api.getMe();
+          const rawMe = me?.data?.user;
+          if (me?.success && rawMe) {
+            savedUser = toUser(rawMe);
+          }
+        } catch {
+          // fallback to login payload only
+        }
         await AsyncStorage.setItem('currentUser', JSON.stringify(savedUser));
         set({ user: savedUser });
         return { success: true, message: 'تم تسجيل الدخول بنجاح' };
@@ -133,7 +192,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         } else {
           await clearTokens();
         }
-        const savedUser = toUser(rawUser);
+        let savedUser = toUser(rawUser);
+        try {
+          const me: any = await api.getMe();
+          const rawMe = me?.data?.user;
+          if (me?.success && rawMe) {
+            savedUser = toUser(rawMe);
+          }
+        } catch {
+          // fallback to register payload only
+        }
         await AsyncStorage.setItem('currentUser', JSON.stringify(savedUser));
         set({ user: savedUser });
         return { success: true, message: 'تم إنشاء الحساب بنجاح' };
@@ -141,6 +209,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return { success: false, message: 'فشل إنشاء الحساب' };
     } catch (err: any) {
       const msg = err?.message || 'حدث خطأ، يرجى المحاولة مرة أخرى';
+      set({ error: msg });
+      return { success: false, message: msg };
+    }
+  },
+
+  updateProfile: async (data) => {
+    set({ error: null });
+    try {
+      const res: any = await api.updateProfile(data);
+      const rawUser = res?.data?.user;
+      if (!res?.success || !rawUser) {
+        return { success: false, message: 'فشل تحديث البيانات الشخصية' };
+      }
+      const savedUser = toUser(rawUser);
+      await AsyncStorage.setItem('currentUser', JSON.stringify(savedUser));
+      set({ user: savedUser });
+      return { success: true, message: 'تم تحديث البيانات الشخصية بنجاح' };
+    } catch (err: any) {
+      const msg = err?.message || 'فشل تحديث البيانات الشخصية';
       set({ error: msg });
       return { success: false, message: msg };
     }

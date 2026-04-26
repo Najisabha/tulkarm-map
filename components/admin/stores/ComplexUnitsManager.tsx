@@ -5,6 +5,7 @@ import { usePlacesStore } from '../../../stores/usePlacesStore';
 import { placeService } from '../../../services/placeService';
 import { adminStoresStyles as styles } from '../AdminStores.styles';
 import { getPlaceTypePluralLabel, isDisallowedComplexUnitChildTypeName, normalizePlaceTypeKind } from '../../../utils/placeTypeLabels';
+import { resolvePlaceTypeRowByName } from '../../../utils/placeTypesRegistry';
 
 export interface ComplexUnitsManagerProps {
   placeId: string;
@@ -30,7 +31,8 @@ export const ComplexUnitsManager = forwardRef<ComplexUnitsManagerHandle, Complex
   const [unitForTypePick, setUnitForTypePick] = useState<any | null>(null);
   const [linkDrafts, setLinkDrafts] = useState<Record<string, string>>({});
 
-  const isResidential = complexLabel === 'مجمّع سكني';
+  const complexRow = resolvePlaceTypeRowByName(complexLabel);
+  const isResidential = complexRow?.kind === 'residentialComplex';
 
   const refresh = async () => {
     setLoading(true);

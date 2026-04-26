@@ -1,6 +1,6 @@
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import React from 'react';
-import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { AdminAttributeModal } from '../../components/admin/AdminAttributeModal';
 import { adminCategoriesStyles as styles } from '../../components/admin/AdminCategories.styles';
@@ -36,6 +36,24 @@ export default function AdminCategoriesScreen() {
     updateCategory,
     deleteCategory,
   });
+
+  const confirmDeleteCategory = (cat: { name: string; id: string }) => {
+    const title = 'حذف الفئة';
+    const message = `حذف "${cat.name}"؟`;
+
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined' ? window.confirm(message) : false;
+      if (confirmed) {
+        void state.handleDeleteCategory(cat);
+      }
+      return;
+    }
+
+    Alert.alert(title, message, [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'حذف', style: 'destructive', onPress: () => state.handleDeleteCategory(cat) },
+    ]);
+  };
 
   useFocusEffect(
     React.useCallback(() => {
@@ -98,12 +116,7 @@ export default function AdminCategoriesScreen() {
                     placesCount={placesCount}
                     onAttrs={() => state.openAttrDefs(cat)}
                     onEdit={() => state.openEditCategory(cat)}
-                    onDelete={() =>
-                      Alert.alert('حذف الفئة', `حذف "${cat.name}"؟`, [
-                        { text: 'إلغاء', style: 'cancel' },
-                        { text: 'حذف', style: 'destructive', onPress: () => state.handleDeleteCategory(cat) },
-                      ])
-                    }
+                    onDelete={() => confirmDeleteCategory(cat)}
                   />
                 );
               })}

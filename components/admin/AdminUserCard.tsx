@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Image, Text, TouchableOpacity, View } from 'react-native';
 import type { ApiUser } from '../../utils/admin/userHelpers';
 import { avatarLetter } from '../../utils/admin/userHelpers';
 import { adminUsersStyles as styles } from './AdminUsers.styles';
@@ -23,7 +23,11 @@ export function AdminUserCard({
     <View style={styles.userCard}>
       <View style={styles.cardTop}>
         <View style={[styles.avatar, u.isAdmin && styles.avatarAdmin]}>
-          <Text style={styles.avatarText}>{avatarLetter(u.name)}</Text>
+          {u.profileImageUrl ? (
+            <Image source={{ uri: u.profileImageUrl }} style={styles.avatarImg} />
+          ) : (
+            <Text style={styles.avatarText}>{avatarLetter(u.name)}</Text>
+          )}
         </View>
         <View style={styles.cardMain}>
           <View style={styles.nameRow}>

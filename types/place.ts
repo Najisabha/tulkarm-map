@@ -133,8 +133,15 @@ function getAttrValue(
   return null;
 }
 
-function deriveKind(typeName: string, attrs: PlaceData['attributes']): PlaceKind {
-  const serverKind = normalizePlaceTypeKind(typeName);
+function deriveKind(p: PlaceData, attrs: PlaceData['attributes']): PlaceKind {
+  const tk = String(p.type_kind ?? '').trim();
+  if (tk === 'house') return 'house';
+  if (tk === 'store') return 'categorized';
+  if (tk === 'residentialComplex' || tk === 'commercialComplex') return 'complex';
+  const flags = p.type_flags && typeof p.type_flags === 'object' ? (p.type_flags as Record<string, unknown>) : null;
+  if (flags?.needsCategoryTree === true || flags?.productCategoryForm === true) return 'categorized';
+
+  const serverKind = normalizePlaceTypeKind(p.type_name ?? '');
   switch (serverKind) {
     case 'house': return 'house';
     case 'store': return 'categorized';
@@ -142,7 +149,6 @@ function deriveKind(typeName: string, attrs: PlaceData['attributes']): PlaceKind
     case 'commercialComplex': return 'complex';
     case 'other':
     default: {
-      // Fallback: check if attributes carry a kind hint
       const attrKind = getAttrValue(attrs, 'place_kind', 'kind');
       if (attrKind === 'categorized') return 'categorized';
       if (attrKind === 'house') return 'house';
@@ -157,7 +163,7 @@ function deriveKind(typeName: string, attrs: PlaceData['attributes']): PlaceKind
 /** Converts a raw API PlaceData object into a strongly-typed Domain Place. */
 export function mapApiToPlace(p: PlaceData): Place {
   const attrs = p.attributes ?? [];
-  const kind = deriveKind(p.type_name ?? '', attrs);
+  const kind = deriveKind(p, attrs);
 
   // phone_number: new column first, then attributes (keys: phone, phone_number, raqm)
   const phoneNumber =
@@ -232,11 +238,14 @@ export function mapApiToPlace(p: PlaceData): Place {
     if (rawComplexKind === 'residential' || rawComplexKind === 'commercial') {
       complexType = rawComplexKind;
     } else {
-      const tn = p.type_name ?? '';
-      complexType =
-        normalizePlaceTypeKind(tn) === 'residentialComplex'
-          ? 'residential'
-          : 'commercial';
+      const tk = String(p.type_kind ?? '').trim();
+      if (tk === 'residentialComplex') complexType = 'residential';
+      else if (tk === 'commercialComplex') complexType = 'commercial';
+      else {
+        const tn = p.type_name ?? '';
+        complexType =
+          normalizePlaceTypeKind(tn) === 'residentialComplex' ? 'residential' : 'commercial';
+      }
     }
 
     // floorsCount / unitsPerFloor: new columns → attributes
