@@ -57,6 +57,12 @@ export async function submitMapTapNewPlace(
     }
   }
 
+  const complexKind = resolveComplexKind(data.type_name);
+  const floorsCount = complexKind ? readIntAttr(attributes, 'floors_count', 'floor_count') : null;
+  const unitsPerFloor = complexKind
+    ? readIntAttr(attributes, 'units_per_floor', 'houses_per_floor', 'stores_per_floor', 'units')
+    : null;
+
   await api.createPlace({
     name: data.name.trim(),
     description: data.description?.trim() || undefined,
@@ -66,9 +72,43 @@ export async function submitMapTapNewPlace(
     phone_number: data.phoneNumber?.trim() || undefined,
     attributes: attributes.length ? attributes : undefined,
     image_urls: imageUrls.length ? imageUrls : undefined,
+    complex_kind: complexKind ?? undefined,
+    floors_count: floorsCount ?? undefined,
+    units_per_floor: unitsPerFloor ?? undefined,
   });
 
   await refresh();
+}
+
+function resolveComplexKind(typeName?: string): 'residential' | 'commercial' | null {
+  const kind = normalizePlaceTypeKind(typeName);
+  if (kind === 'residentialComplex') return 'residential';
+  if (kind === 'commercialComplex') return 'commercial';
+  return null;
+}
+
+function readIntAttr(
+  attrs: { key: string; value: string }[],
+  ...keys: string[]
+): number | null {
+  for (const key of keys) {
+    const hit = attrs.find((a) => a.key === key);
+    if (!hit) continue;
+    let raw: unknown = hit.value;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          raw = (parsed as any).v ?? (parsed as any).value ?? (parsed as any).val ?? raw;
+        }
+      } catch {
+        // plain string
+      }
+    }
+    const n = parseInt(String(raw ?? '').trim(), 10);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
 }
 
 /** حالة نافذة «إضافة وحدة» داخل مجمّع (إحداثيات من الأب). */

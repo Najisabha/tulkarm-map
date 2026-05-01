@@ -139,6 +139,34 @@ function isComplexType(typeName) {
          n === 'مجمّع تجاري' || n === 'مجمع تجاري';
 }
 
+function readNumberFromAttributes(attributes, ...keys) {
+  if (!Array.isArray(attributes)) return null;
+  for (const key of keys) {
+    const hit = attributes.find((a) => a && a.key === key);
+    if (!hit) continue;
+    let raw = hit.value;
+    if (raw == null) continue;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          raw = parsed.v ?? parsed.value ?? parsed.val ?? raw;
+        }
+      } catch {
+        // plain string
+      }
+    }
+    const n = parseInt(String(raw).trim(), 10);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function clampInt(n, min, max, fallback) {
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
 export const placesService = {
   /**
    * @param {object} options
@@ -199,16 +227,35 @@ export const placesService = {
       (isComplexType(typeRow.name) ? (typeRow.name.includes('سكني') ? 'residential' : 'commercial') : null);
 
     if (complexKind) {
+      const floorsFromAttrs = readNumberFromAttributes(data.attributes, 'floors_count', 'floor_count');
+      const unitsFromAttrs = readNumberFromAttributes(
+        data.attributes,
+        'units_per_floor',
+        'houses_per_floor',
+        'stores_per_floor',
+        'units'
+      );
+      const floorsCount = clampInt(
+        Number.isFinite(data.floors_count) ? data.floors_count : floorsFromAttrs,
+        1,
+        200,
+        1
+      );
+      const unitsPerFloor = clampInt(
+        Number.isFinite(data.units_per_floor) ? data.units_per_floor : unitsFromAttrs,
+        1,
+        500,
+        1
+      );
+
       const complex = await placesRepo.upsertComplex({
         placeId: place.id,
         complexType: complexKind,
-        floorsCount: data.floors_count || 1,
-        unitsPerFloor: data.units_per_floor || 1,
+        floorsCount,
+        unitsPerFloor,
       });
 
       // إنشاء وحدات المجمع تلقائياً (idempotent)
-      const floorsCount = data.floors_count || 1;
-      const unitsPerFloor = data.units_per_floor || 1;
       const insertValues = [];
       const params = [complex.id];
       let i = 2;

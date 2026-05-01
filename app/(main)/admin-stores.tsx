@@ -101,6 +101,7 @@ export default function AdminStoresScreen() {
   const [showResidentialHousesModal, setShowResidentialHousesModal] = useState(false);
   const [selectedResidentialComplex, setSelectedResidentialComplex] = useState<Store | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingUnits, setSavingUnits] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [editImages, setEditImages] = useState<EditableImage[]>([]);
   const [editForm, setEditForm] = useState({ name: '', description: '', category: '', lat: '', lng: '', dynamicAttrs: {} as Record<string, string> });
@@ -715,6 +716,19 @@ export default function AdminStoresScreen() {
     await Linking.openURL(url);
   };
 
+  const handleSaveUnits = async () => {
+    if (!editingStore) return;
+    setSavingUnits(true);
+    try {
+      const ok = await unitsManagerRef.current?.saveAllLinks();
+      if (!ok) return;
+      setShowUnitsModal(false);
+      await openEdit(editingStore);
+    } finally {
+      setSavingUnits(false);
+    }
+  };
+
   const renderAttrFields = (
     defs: AttrDef[],
     values: Record<string, string>,
@@ -1200,10 +1214,10 @@ export default function AdminStoresScreen() {
             </TouchableOpacity>
             <Text style={styles.modalTitle}>وحدات المجمع</Text>
             <TouchableOpacity
-              onPress={() => void unitsManagerRef.current?.saveAllLinks()}
-              disabled={saving}
+              onPress={() => void handleSaveUnits()}
+              disabled={saving || savingUnits}
             >
-              <Text style={styles.modalSaveText}>حفظ</Text>
+              {savingUnits ? <ActivityIndicator color="#2E86AB" /> : <Text style={styles.modalSaveText}>حفظ</Text>}
             </TouchableOpacity>
           </View>
           <ComplexUnitsManager

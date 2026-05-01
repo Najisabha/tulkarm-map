@@ -13,7 +13,7 @@ export interface ComplexUnitsManagerProps {
 }
 
 export interface ComplexUnitsManagerHandle {
-  saveAllLinks: () => Promise<void>;
+  saveAllLinks: () => Promise<boolean>;
 }
 
 export const ComplexUnitsManager = forwardRef<ComplexUnitsManagerHandle, ComplexUnitsManagerProps>(function ComplexUnitsManager(
@@ -161,6 +161,17 @@ export const ComplexUnitsManager = forwardRef<ComplexUnitsManagerHandle, Complex
 
   useImperativeHandle(ref, () => ({
     saveAllLinks: async () => {
+      const f = parseInt(floorsCount, 10);
+      const u = parseInt(unitsPerFloor, 10);
+      if (!Number.isFinite(f) || f < 1) {
+        Alert.alert('تنبيه', 'عدد الطوابق غير صالح');
+        return false;
+      }
+      if (!Number.isFinite(u) || u < 1) {
+        Alert.alert('تنبيه', 'عدد الوحدات غير صالح');
+        return false;
+      }
+
       const pending = units
         .map((u) => {
           const next = String(getLinkDraft(u.id, u.child_place_id ?? null) || '').trim();
@@ -169,26 +180,30 @@ export const ComplexUnitsManager = forwardRef<ComplexUnitsManagerHandle, Complex
         })
         .filter((x) => x.next !== x.current);
 
-      if (pending.length === 0) {
-        Alert.alert('تنبيه', 'لا توجد تغييرات للحفظ');
-        return;
-      }
-
       setLoading(true);
       try {
+        await placeService.generateUnits(placeId, f, u);
+
         for (const item of pending) {
           await placeService.linkUnitPlace(item.unitId, item.next);
         }
         await loadAll(true);
         await refresh();
-        Alert.alert('✅ تم', `تم حفظ ${pending.length} تغيير`);
+        Alert.alert(
+          '✅ تم',
+          pending.length > 0
+            ? `تم حفظ إعدادات الوحدات و${pending.length} تغيير في الربط`
+            : 'تم حفظ إعدادات الوحدات بنجاح'
+        );
+        return true;
       } catch (e: any) {
         Alert.alert('خطأ', e?.message || 'فشل حفظ التغييرات');
+        return false;
       } finally {
         setLoading(false);
       }
     },
-  }), [units, linkDrafts, loadAll]);
+  }), [units, linkDrafts, loadAll, floorsCount, unitsPerFloor, placeId]);
 
   const updateUnitType = async (childPlaceId: string, unitType: string) => {
     try {

@@ -5,7 +5,7 @@ import { PlaceDetails } from '../places/PlaceDetails';
 import type { AuthUser } from '../../stores/useAuthStore';
 import { formatDistance, haversineDistance } from '../../utils/map/geo';
 import { getCategoryStyle, storeToPlaceViewModel, type Store } from '../../utils/map/storeModel';
-import { getPlaceTypeDisplayName } from '../../utils/placeTypeLabels';
+import { getPlaceTypeDisplayName, normalizePlaceTypeKind } from '../../utils/placeTypeLabels';
 import { BottomSheetFrame } from './BottomSheetFrame';
 import { mapStyles as styles } from './styles';
 
@@ -69,11 +69,12 @@ export function StoreDetailSheet({
   };
 
   const typeName = store.category;
-  const isHouse = typeName === 'منزل';
-  const isStoreLike = typeName === 'متجر تجاري' || typeName === 'مجمّع تجاري';
-  const isResidentialComplex = typeName === 'مجمّع سكني';
-  const isCommercialComplex = typeName === 'مجمّع تجاري';
+  const typeKind = normalizePlaceTypeKind(typeName);
+  const isHouse = typeKind === 'house';
+  const isResidentialComplex = typeKind === 'residentialComplex';
+  const isCommercialComplex = typeKind === 'commercialComplex';
   const isComplex = isResidentialComplex || isCommercialComplex;
+  const isStoreLike = typeKind === 'store' || isCommercialComplex;
 
   const houseNumber = attr('house_number');
   const floorsCount = store.floorsCount ?? attr('floors_count');
