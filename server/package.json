@@ -8,9 +8,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "init-db": "node scripts/migrate-v1.js",
-    "migrate": "node scripts/migrate-v1.js",
-    "migrate:v1": "node scripts/migrate-v1.js",
-    "migrate:all": "node scripts/migrate-v1.js"
+    "migrate": "node scripts/migrate-v1.js"  
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
