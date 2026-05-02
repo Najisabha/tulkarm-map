@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, Linking, Pressable, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Pressable, Text, TouchableOpacity, View } from 'react-native';
 import { ComplexBuildingViewer, ComplexUnit } from '../places/ComplexBuildingViewer';
 import { PlaceDetails } from '../places/PlaceDetails';
 import type { AuthUser } from '../../stores/useAuthStore';
@@ -18,7 +18,6 @@ export interface StoreDetailSheetProps {
   onNavigate: () => void;
   onReport: () => void;
   onEdit: () => void;
-  onDelete: () => Promise<void>;
   onOpenChildPlace: (childPlaceId: string) => void;
   onAddUnit: (unit: ComplexUnit, store: Store) => void;
 }
@@ -32,7 +31,6 @@ export function StoreDetailSheet({
   onNavigate,
   onReport,
   onEdit,
-  onDelete,
   onOpenChildPlace,
   onAddUnit,
 }: StoreDetailSheetProps) {
@@ -102,13 +100,6 @@ export function StoreDetailSheet({
       <Text style={styles.storeModalCallBtnText}>{number}</Text>
     </TouchableOpacity>
   );
-
-  const confirmDelete = () => {
-    Alert.alert('حذف المتجر', `هل أنت متأكد من حذف "${store.name}"؟`, [
-      { text: 'إلغاء', style: 'cancel' },
-      { text: 'حذف', style: 'destructive', onPress: onDelete },
-    ]);
-  };
 
   return (
     <BottomSheetFrame
@@ -192,9 +183,6 @@ export function StoreDetailSheet({
           <View style={styles.storeModalAdminRow}>
             <TouchableOpacity style={styles.storeModalEditBtn} onPress={onEdit}>
               <Text style={styles.storeModalEditBtnText}>✏️ تعديل</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.storeModalDeleteBtn} onPress={confirmDelete}>
-              <Text style={styles.storeModalDeleteBtnText}>🗑️ حذف</Text>
             </TouchableOpacity>
           </View>
         )}

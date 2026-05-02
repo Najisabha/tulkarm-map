@@ -6,7 +6,6 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
-  Linking,
   Modal,
   Platform,
   ScrollView,
@@ -74,25 +73,7 @@ export default function AdminStoresScreen() {
   const { user } = useAuth();
   const { categories } = useCategories();
   const { stores, deleteStore, refreshStores } = useStores();
-  const [residentialChildIds, setResidentialChildIds] = useState<Set<string>>(new Set());
-  const [commercialChildIds, setCommercialChildIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    void api.getResidentialComplexChildPlaceIds()
-      .then((res) => setResidentialChildIds(new Set(res?.data?.child_place_ids ?? [])))
-      .catch(() => setResidentialChildIds(new Set()));
-    void api.getCommercialComplexChildPlaceIds()
-      .then((res) => setCommercialChildIds(new Set(res?.data?.child_place_ids ?? [])))
-      .catch(() => setCommercialChildIds(new Set()));
-  }, [stores]);
-
-  const managedStores = useMemo(
-    () =>
-      stores.filter(
-        (s) => !residentialChildIds.has(s.id) && !commercialChildIds.has(s.id),
-      ),
-    [stores, residentialChildIds, commercialChildIds],
-  );
+  const managedStores = stores;
   const filters = useAdminStoresFilters(managedStores, params.kind);
 
   const [showAddModal, setShowAddModal] = useState(false);
@@ -100,6 +81,7 @@ export default function AdminStoresScreen() {
   const unitsManagerRef = useRef<ComplexUnitsManagerHandle>(null);
   const [showResidentialHousesModal, setShowResidentialHousesModal] = useState(false);
   const [selectedResidentialComplex, setSelectedResidentialComplex] = useState<Store | null>(null);
+  const [showCategoryFilterModal, setShowCategoryFilterModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingUnits, setSavingUnits] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
@@ -704,18 +686,6 @@ export default function AdminStoresScreen() {
     }
   };
 
-  const handleCallPhone = async (phone: string) => {
-    const normalized = String(phone || '').replace(/[^\d+]/g, '');
-    if (!normalized) return;
-    const url = `tel:${normalized}`;
-    const supported = await Linking.canOpenURL(url);
-    if (!supported) {
-      Alert.alert('تنبيه', 'لا يمكن فتح الاتصال على هذا الجهاز');
-      return;
-    }
-    await Linking.openURL(url);
-  };
-
   const handleSaveUnits = async () => {
     if (!editingStore) return;
     setSavingUnits(true);
@@ -881,9 +851,29 @@ export default function AdminStoresScreen() {
             </View>
             <Text style={styles.sectionTitle}>{filters.listTitle}</Text>
           </View>
-          <TouchableOpacity style={styles.addBtn} onPress={handleOpenAdd}>
-            <Text style={styles.addBtnText}>+ {'\u0625\u0636\u0627\u0641\u0629 \u0645\u0643\u0627\u0646'}</Text>
-          </TouchableOpacity>
+          <View style={styles.sectionActionsRow}>
+            <TouchableOpacity
+              style={[
+                styles.filterBtn,
+                filters.categoryFilter !== 'all' && styles.filterBtnActive,
+              ]}
+              onPress={() => setShowCategoryFilterModal(true)}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.filterBtnText,
+                  filters.categoryFilter !== 'all' && styles.filterBtnTextActive,
+                ]}
+                numberOfLines={1}
+              >
+                🧩 {filters.categoryFilter === 'all' ? 'فلترة الفئات' : filters.categoryFilter}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.addBtn} onPress={handleOpenAdd}>
+              <Text style={styles.addBtnText}>+ {'\u0625\u0636\u0627\u0641\u0629 \u0645\u0643\u0627\u0646'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         <View style={styles.housesStatsRow}>
           <TouchableOpacity
@@ -925,7 +915,6 @@ export default function AdminStoresScreen() {
         ) : (
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {filters.filteredStores.map((store) => {
-              const phone = store.attributes?.find((a) => a.key === 'phone')?.value;
               const typeColor = catColor(categories, store.category);
               const isResidentialComplex = String(store.category || '') === 'مجمّع سكني';
               return (
@@ -1235,6 +1224,71 @@ export default function AdminStoresScreen() {
         onClose={() => setShowResidentialHousesModal(false)}
         onOpenHouse={(houseStore) => openEdit(houseStore)}
       />
+
+      <Modal
+        visible={showCategoryFilterModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCategoryFilterModal(false)}
+      >
+        <View style={styles.filterModalOverlay}>
+          <View style={styles.filterModalCard}>
+            <Text style={styles.filterModalTitle}>فلترة حسب الفئة</Text>
+            <ScrollView style={styles.filterModalList}>
+              <TouchableOpacity
+                style={[
+                  styles.filterModalOption,
+                  filters.categoryFilter === 'all' && styles.filterModalOptionActive,
+                ]}
+                onPress={() => {
+                  filters.setCategoryFilter('all');
+                  setShowCategoryFilterModal(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.filterModalOptionText,
+                    filters.categoryFilter === 'all' && styles.filterModalOptionTextActive,
+                  ]}
+                >
+                  جميع الفئات
+                </Text>
+              </TouchableOpacity>
+              {categories
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
+                .map((cat) => (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={[
+                      styles.filterModalOption,
+                      filters.categoryFilter === cat.name && styles.filterModalOptionActive,
+                    ]}
+                    onPress={() => {
+                      filters.setCategoryFilter(cat.name);
+                      setShowCategoryFilterModal(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.filterModalOptionText,
+                        filters.categoryFilter === cat.name && styles.filterModalOptionTextActive,
+                      ]}
+                    >
+                      {cat.emoji} {cat.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.filterModalCloseBtn}
+              onPress={() => setShowCategoryFilterModal(false)}
+            >
+              <Text style={styles.filterModalCloseBtnText}>إغلاق</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

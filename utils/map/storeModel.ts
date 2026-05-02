@@ -144,10 +144,23 @@ export async function uriToBase64(uri: string): Promise<string> {
   });
 }
 
+/**
+ * يحسم أيقونة/لون الفئة بحسب اسم النوع الموجود على المكان.
+ *
+ * يتعامل مع فروقات نصية بسيطة (مسافات/حالة أحرف) قبل السقوط إلى الأيقونة الافتراضية،
+ * لمنع «تبديل» الأيقونة لنفس المكان عند تحديث القائمة بسبب اختلاف غير مهم في الاسم.
+ */
 export function getCategoryStyle(
   categories: { name: string; emoji: string; color: string }[],
   name: string,
 ) {
-  const c = categories.find((x) => x.name === name);
+  const trimmed = (name ?? '').trim();
+  if (!trimmed) return { emoji: '📍', color: '#2E86AB' };
+
+  let c = categories.find((x) => x.name === trimmed);
+  if (!c) {
+    const lower = trimmed.toLowerCase();
+    c = categories.find((x) => (x.name ?? '').trim().toLowerCase() === lower);
+  }
   return { emoji: c?.emoji ?? '📍', color: c?.color ?? '#2E86AB' };
 }

@@ -27,6 +27,7 @@ function matchKind(store: StoreLike, kindFilter: KindFilter): boolean {
 export function useAdminStoresFilters<T extends StoreLike>(stores: T[], rawKind?: string | string[]) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   const kindFilter = useMemo(() => parseKindFilter(rawKind), [rawKind]);
 
@@ -60,6 +61,9 @@ export function useAdminStoresFilters<T extends StoreLike>(stores: T[], rawKind?
   const filteredStores = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     let list: T[] = stores.filter((s) => matchKind(s, kindFilter));
+    if (categoryFilter !== 'all') {
+      list = list.filter((s) => String(s.category || '') === categoryFilter);
+    }
     if (statusFilter !== 'all') {
       list = list.filter((s) => (statusFilter === 'visible' ? isActiveStore(s) : isPendingStore(s)));
     }
@@ -70,7 +74,7 @@ export function useAdminStoresFilters<T extends StoreLike>(stores: T[], rawKind?
       const cat = String(s.category || '').toLowerCase();
       return name.includes(q) || desc.includes(q) || cat.includes(q);
     });
-  }, [stores, searchQuery, statusFilter, kindFilter]);
+  }, [stores, searchQuery, statusFilter, kindFilter, categoryFilter]);
 
   const visibleCount = useMemo(
     () => stores.filter((s) => matchKind(s, kindFilter) && isActiveStore(s)).length,
@@ -82,11 +86,25 @@ export function useAdminStoresFilters<T extends StoreLike>(stores: T[], rawKind?
     [stores, kindFilter],
   );
 
+  const categoryOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          stores
+            .map((s) => String(s.category || '').trim())
+            .filter((name) => name.length > 0),
+        ),
+      ).sort((a, b) => a.localeCompare(b, 'ar')),
+    [stores],
+  );
+
   return {
     searchQuery,
     setSearchQuery,
     statusFilter,
     setStatusFilter,
+    categoryFilter,
+    setCategoryFilter,
     kindFilter,
     screenTitle,
     listTitle,
@@ -94,6 +112,7 @@ export function useAdminStoresFilters<T extends StoreLike>(stores: T[], rawKind?
     filteredStores,
     visibleCount,
     hiddenCount,
+    categoryOptions,
   };
 }
 

@@ -386,6 +386,9 @@ interface MarkerProps {
   onPress?: () => void;
   children?: React.ReactNode;
   icon?: MarkerIcon;
+  // متوافقة مع `react-native-maps` على الموبايل؛ على الويب نتجاهلها بأمان.
+  identifier?: string;
+  tracksViewChanges?: boolean;
 }
 
 export function Marker({ coordinate, onPress, icon }: MarkerProps) {

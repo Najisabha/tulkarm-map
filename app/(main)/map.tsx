@@ -46,7 +46,7 @@ import { matchesQuery, placeToStore, type Store } from '../../utils/map/storeMod
 export default function MapScreen() {
   const { user, logout, init } = useAuthStore();
   const { categories: categoryList } = useCategories();
-  const { places, deletePlace, refresh, loadAll } = usePlacesStore();
+  const { places, refresh, loadAll } = usePlacesStore();
 
   /** أماكن نشطة فقط، بصيغة موحّدة للخريطة */
   const stores = useMemo(
@@ -193,16 +193,6 @@ export default function MapScreen() {
     travel.setTravelPreviewLoading(false);
     travel.clearRoute();
     router.push({ pathname: '/(main)/admin-stores', params: { editStoreId: id } });
-  };
-
-  const handleDeleteStore = async () => {
-    if (!selectedStore) return;
-    await deletePlace(selectedStore.id);
-    setSelectedStore(null);
-    travel.setTravelStep(1);
-    travel.setTravelChoice(null);
-    travel.setTravelPreviewLoading(false);
-    travel.clearRoute();
   };
 
   /** عرض الواجهة: خريطة، طبقات، ثم النوافذ والأوراق حسب الحالة */
@@ -397,7 +387,6 @@ export default function MapScreen() {
           onNavigate={travel.handleOpenTravelModePicker}
           onReport={() => setShowReportModal(true)}
           onEdit={handleEditStore}
-          onDelete={handleDeleteStore}
           onOpenChildPlace={handleOpenChildPlace}
           onAddUnit={handleAddUnit}
         />

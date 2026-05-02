@@ -473,11 +473,20 @@ export const placesRepo = {
   },
 
   async softDelete(id) {
-    const { rows } = await pool.query(
-      'UPDATE places SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
-      [id]
-    );
-    return rows[0] || null;
+    try {
+      const { rows } = await pool.query(
+        'UPDATE places SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
+        [id]
+      );
+      return rows[0] || null;
+    } catch (e) {
+      const msg = String(e?.message || '');
+      // قواعد قديمة بدون عمود deleted_at: fallback إلى حذف فعلي بدل فشل زر الحذف.
+      if (e?.code === '42703' && /deleted_at/i.test(msg)) {
+        return this.hardDelete(id);
+      }
+      throw e;
+    }
   },
 
   async hardDelete(id) {

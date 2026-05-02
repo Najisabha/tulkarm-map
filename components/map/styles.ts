@@ -287,11 +287,14 @@ export const mapStyles = StyleSheet.create({
   sidebarCatGrid: {
     flexDirection: 'row-reverse',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 10,
+    justifyContent: 'flex-start',
+    columnGap: 8,
+    rowGap: 10,
   },
   sidebarCatItem: {
-    width: '31%',
+    width: '31.33%',
+    flexBasis: '31.33%',
+    maxWidth: '31.33%',
     minHeight: 88,
     backgroundColor: '#F8FAFC',
     borderRadius: 14,
@@ -617,11 +620,6 @@ export const mapStyles = StyleSheet.create({
     paddingVertical: 10, alignItems: 'center',
   },
   storeModalEditBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  storeModalDeleteBtn: {
-    flex: 1, backgroundColor: '#FEE2E2', borderRadius: 12,
-    paddingVertical: 10, alignItems: 'center',
-  },
-  storeModalDeleteBtnText: { color: '#DC2626', fontSize: 13, fontWeight: '700' },
 
   placeSearchWrap: {
     position: 'absolute',
