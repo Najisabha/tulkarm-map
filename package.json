@@ -5,8 +5,8 @@
   "scripts": {
     "start": "expo start",
     "migrate": "npm run migrate --prefix server",
+    "backup:db": "npm run backup --prefix server",
     "migrate:v1": "npm run migrate --prefix server",
-    "migrate:all": "npm run migrate:all --prefix server",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",

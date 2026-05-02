@@ -36,6 +36,9 @@ yarn-error.*
 server/.env
 server/.env.backup
 
+# SQL dumps may contain sensitive data
+server/backups/*.sql
+
 # typescript
 *.tsbuildinfo
 
