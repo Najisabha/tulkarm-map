@@ -106,7 +106,7 @@ function parseNumber(value: unknown, fallback = 0): number {
  * searching the raw attributes array.
  * Handles both plain string values and `{v,t}` / `{value}` encoded objects.
  */
-function getAttrValue(
+export function getAttrValue(
   attrs: PlaceData['attributes'],
   ...keys: string[]
 ): string | null {
@@ -165,10 +165,10 @@ export function mapApiToPlace(p: PlaceData): Place {
   const attrs = p.attributes ?? [];
   const kind = deriveKind(p, attrs);
 
-  // phone_number: new column first, then attributes (keys: phone, phone_number, raqm)
+  // phone_number: new column first، ثم attributes (ومنها place_phone من إدارة الخصائص)
   const phoneNumber =
     p.phone_number ??
-    getAttrValue(attrs, 'phone', 'phone_number', 'raqm') ??
+    getAttrValue(attrs, 'phone', 'phone_number', 'place_phone', 'raqm') ??
     null;
 
   const base: PlaceBase = {

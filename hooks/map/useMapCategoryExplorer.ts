@@ -14,9 +14,6 @@ import {
 import { haversineDistance, regionForBoundingBox } from '../../utils/map/geo';
 import type { Store } from '../../utils/map/storeModel';
 import { isValidPlaceTypeId } from '../../utils/map/storeModel';
-import {
-  needsPlaceCategoryTree,
-} from '../../utils/placeTypeLabels';
 import type { UserLocation, StoreWithDistance } from './types';
 
 type MapViewRef = RefObject<MapView | null>;
@@ -144,7 +141,8 @@ export function useMapCategoryExplorer(params: {
       setSelectedCategory(cat);
       const pt = categoryList.find((c) => c.name === cat);
       const placeTypeId = pt?.id ?? '';
-      if (needsPlaceCategoryTree(cat) && isValidPlaceTypeId(placeTypeId)) {
+      // أي نوع مكان بمعرّف صالح: نجرّب شجرة التصنيفات من الخادم؛ إن كانت فارغة يُصفّرها الـ effect.
+      if (isValidPlaceTypeId(placeTypeId)) {
         setCategoryBrowse({ step: 'main', placeTypeId });
         setPlaceCategoryTree([]);
         setTreeLoading(true);

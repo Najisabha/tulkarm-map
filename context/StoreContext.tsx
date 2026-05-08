@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { api, PlaceData } from '../api/client';
+import { getAttrValue } from '../types/place';
 import { usePlacesStore } from '../stores/usePlacesStore';
 import { useAuth } from './AuthContext';
 
@@ -34,11 +35,10 @@ function parseCoord(value: unknown): number {
 }
 
 function placeToStore(p: PlaceData): Store {
-  const phone = p.phone_number
-    || p.attributes?.find(a => a.key === 'phone')?.value
-    || p.attributes?.find(a => a.key === 'phone_number')?.value
-    || p.attributes?.find(a => a.key === 'store_number')?.value
-    || p.attributes?.find(a => a.key === 'raqm')?.value;
+  const col = p.phone_number != null && String(p.phone_number).trim() !== '' ? String(p.phone_number).trim() : '';
+  const fromAttrs =
+    getAttrValue(p.attributes ?? [], 'phone', 'phone_number', 'place_phone', 'store_number', 'raqm') ?? '';
+  const phone = (col || fromAttrs).trim() || undefined;
   return {
     id: p.id,
     name: p.name,

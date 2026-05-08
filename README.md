@@ -791,9 +791,7 @@ tulkarm-map/
 ├── eslint.config.js, tsconfig.json
 ├── package.json, package-lock.json
 ├── .env.example                     # متغيرات Expo
-├── README.md
-└── scripts/
-    └── reset-project.js             # إعادة ضبط مشروع Expo
+└── README.md
 ```
 
 ### الواجهة (`app/`, `api/`, `components/`, …)
@@ -819,16 +817,13 @@ components/
 ├── admin/                           # مكوّنات لوحة الإدارة
 ├── map/                             # شريط الفئات، البحث، المسارات، أوراق التفاصيل
 ├── places/                          # نموذج المكان، اختيار الموقع، التفاصيل، عارض المجمع
-├── profile/                         # نوافذ تعديل الملف الشخصي وكلمة المرور
-├── ui/                              # أزرار/أيقونات/Collapsible
-├── themed-text.tsx, themed-view.tsx, …
+└── profile/                         # نوافذ تعديل الملف الشخصي وكلمة المرور
 
 constants/                           # ثيم + ألوان + نطاق طولكرم + نمط الخريطة
 context/                             # Auth, Categories, Stores, GoogleMapsLoader (web/native)
 hooks/
 ├── map/                             # خطافات الخريطة (موقع، مسار، تصفّح فئات)
-├── admin/                           # خطافات لوحة الإدارة
-└── use-color-scheme.* , use-theme-color.ts
+└── admin/                           # خطافات لوحة الإدارة
 
 utils/
 ├── map/                             # routing, geo, storeModel, locationWatch, …
@@ -845,9 +840,7 @@ server/
 ├── .env.example
 ├── scripts/
 │   ├── migrate-v1.js               # المخطط الكامل + Seed
-│   ├── backup-db.js                # pg_dump إلى server/backups/
-│   ├── sanitize-pg-dump.js         # تنقية ملفات pg_dump
-│   └── prune-dump-production.js    # تقليم نسخ الإنتاج
+│   └── backup-db.js                # pg_dump إلى server/backups/
 └── src/
     ├── server.js                   # listen + فحص اتصال DB
     ├── app.js                      # Express + ربط الوحدات

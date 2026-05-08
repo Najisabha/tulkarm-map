@@ -17,7 +17,7 @@ import {
   filterVisibleCategories,
   parseAttrUiOptions,
 } from '../../utils/admin/categoryAdminHelpers';
-import { ensureAndFetchAttributeDefinitions } from '../../utils/admin/ensurePlaceTypeAttrDefs';
+import { fetchPlaceTypeAttributeDefinitions } from '../../utils/admin/ensurePlaceTypeAttrDefs';
 
 export function useAdminCategories(params: {
   categories: Category[];
@@ -116,7 +116,7 @@ export function useAdminCategories(params: {
     setLoadingAttrs(true);
     setCheckingClassificationLinked(true);
     try {
-      const list = await ensureAndFetchAttributeDefinitions(cat.id, cat.name);
+      const list = await fetchPlaceTypeAttributeDefinitions(cat.id);
       setAttrDefs(list);
       const tree = await categoryService.getPlaceCategoryTree(cat.id);
       const linked = Array.isArray(tree) && tree.some((n) => Boolean(n?.main?.id) || (n?.sub_categories?.length ?? 0) > 0);
@@ -151,7 +151,7 @@ export function useAdminCategories(params: {
       label: '',
       value_type: 'string',
       is_required: false,
-      uiRole: 'dynamic',
+      uiRole: 'place_name',
       sortOrder: '100',
       maxPhotos: '',
     });
@@ -192,14 +192,18 @@ export function useAdminCategories(params: {
 
   const saveAttrDef = async () => {
     if (!selectedCatForAttrs) return;
-    if (!attrForm.key.trim() || !attrForm.label.trim()) {
-      Alert.alert('تنبيه', 'أدخل المفتاح والعنوان');
-      return;
-    }
     const roleDefaults = deriveRoleDefaults(attrForm.uiRole);
     const nextKey = roleDefaults?.key ?? attrForm.key.trim();
-    const nextLabel = roleDefaults?.label ?? attrForm.label.trim();
+    const nextLabel = (attrForm.label.trim() || roleDefaults?.label || '').trim();
     const nextType = roleDefaults?.value_type ?? attrForm.value_type;
+    if (!nextKey) {
+      Alert.alert('تنبيه', 'أدخل المفتاح');
+      return;
+    }
+    if (!nextLabel) {
+      Alert.alert('تنبيه', 'أدخل العنوان');
+      return;
+    }
     if (attrForm.uiRole !== 'dynamic') {
       const roleTaken = attrDefs.some((d) => {
         if (editingAttrDef && d.id === editingAttrDef.id) return false;

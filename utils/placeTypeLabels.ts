@@ -117,6 +117,20 @@ export function needsPlaceCategoryTree(typeName: string): boolean {
   return f.needsCategoryTree || k === 'store' || f.productCategoryForm;
 }
 
+/**
+ * هل نحمّل شجرة place_categories لهذا النوع؟
+ * يعتمد على أعلام السجل (needsPlaceCategoryTree) أو على وجود حقل store_type
+ * في تعريفات الخصائص — حتى لا تبقى القوائم فارغة عندما يكون النموذج يعرض التصنيفات
+ * دون أن تُحدَّث أعلام النوع في قاعدة البيانات.
+ */
+export function shouldLoadPlaceCategoryTree(
+  typeName: string,
+  attrDefs?: readonly { key: string }[] | null,
+): boolean {
+  if (needsPlaceCategoryTree(typeName)) return true;
+  return Boolean(attrDefs?.some((d) => d.key === 'store_type'));
+}
+
 export function getPlaceTypeDisplayName(name?: string | null): string {
   const t = String(name ?? '').trim();
   if (!t) {

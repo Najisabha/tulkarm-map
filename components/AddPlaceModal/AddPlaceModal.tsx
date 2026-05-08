@@ -10,9 +10,8 @@ import {
 import { api, PlaceType } from '../../api/client';
 import { categoryService } from '../../services/categoryService';
 import { PlaceKind } from '../../types/place';
-import { ensureAndFetchAttributeDefinitions } from '../../utils/admin/ensurePlaceTypeAttrDefs';
+import { fetchPlaceTypeAttributeDefinitions } from '../../utils/admin/ensurePlaceTypeAttrDefs';
 import { parseAttrUiOptions } from '../../utils/admin/categoryAdminHelpers';
-import { getPlaceAttrDefsForType } from '../../utils/placeFormAttrDefs';
 import { validatePlaceForm } from '../../utils/placeFormValidation';
 import {
   getAddPlaceModalPhotoLabel,
@@ -20,8 +19,8 @@ import {
   getPlaceTypePluralLabel,
   getPlaceTypeProductCategoryFieldLabels,
   isDisallowedComplexUnitChildTypeName,
-  needsPlaceCategoryTree,
   normalizePlaceTypeKind,
+  shouldLoadPlaceCategoryTree,
   resolveCanonicalPlaceTypeKey,
   usesPlacePhoneAsStoreNumberField,
   usesProductCategoryFieldsForPlaceType,
@@ -218,13 +217,14 @@ export function AddPlaceModal({
               phoneNumber: overrides.phoneNumber ?? fs.phoneNumber,
             }));
             void (async () => {
+              let defs: AttributeDefinition[] = [];
               try {
-                const defs = await ensureAndFetchAttributeDefinitions(match.id, match.name);
+                defs = await fetchPlaceTypeAttributeDefinitions(match.id);
                 setAttrDefs(defs);
               } catch {
-                setAttrDefs(getPlaceAttrDefsForType(match.name));
+                setAttrDefs([]);
               }
-              if (needsPlaceCategoryTree(match.name)) {
+              if (shouldLoadPlaceCategoryTree(match.name, defs)) {
                 void loadPlaceCategoriesTree(match.id);
               }
               setStep('form');
@@ -258,13 +258,14 @@ export function AddPlaceModal({
     setSubCategories([]);
     setShowMainCategoryList(false);
     setShowSubCategoryList(false);
+    let defs: AttributeDefinition[] = [];
     try {
-      const defs = await ensureAndFetchAttributeDefinitions(type.id, type.name);
+      defs = await fetchPlaceTypeAttributeDefinitions(type.id);
       setAttrDefs(defs);
     } catch {
-      setAttrDefs(getPlaceAttrDefsForType(type.name));
+      setAttrDefs([]);
     }
-    if (needsPlaceCategoryTree(type.name)) {
+    if (shouldLoadPlaceCategoryTree(type.name, defs)) {
       void loadPlaceCategoriesTree(type.id);
     }
     setStep('form');

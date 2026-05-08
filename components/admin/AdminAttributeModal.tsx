@@ -13,6 +13,15 @@ interface AttrFormState {
   maxPhotos: string;
 }
 
+/** مفاتيح الحقول المعرّفة مسبقاً (تطابق ATTR_UI_ROLE_KEYS في الإدارة) */
+const PRESET_KEY_BY_ROLE: Record<string, string> = {
+  place_location: 'place_location',
+  place_name: 'place_name',
+  place_description: 'place_description',
+  place_phone: 'place_phone',
+  place_photos: 'place_photos',
+};
+
 interface AdminAttributeModalProps {
   visible: boolean;
   isEditing: boolean;
@@ -38,6 +47,8 @@ export function AdminAttributeModal({
     { value: 'place_phone', label: 'الهاتف' },
     { value: 'place_photos', label: 'الصور' },
   ];
+  /** لا يُسمح بالتحويل إلى ديناميكي جديد؛ يبقى مفعّلاً فقط عند تعديل خاصية ديناميكية قائمة */
+  const roleOptionDisabled = (value: string) => value === 'dynamic' && form.uiRole !== 'dynamic';
   const isDynamic = form.uiRole === 'dynamic';
   const isPhotosRole = form.uiRole === 'place_photos';
 
@@ -49,32 +60,41 @@ export function AdminAttributeModal({
 
           <Text style={styles.formLabel}>نوع الحقل</Text>
           <View style={styles.valueTypeRow}>
-            {ROLE_OPTIONS.map((rt) => (
-              <TouchableOpacity
-                key={rt.value}
-                style={[
-                  styles.valueTypeChip,
-                  form.uiRole === rt.value && styles.valueTypeChipActive,
-                ]}
-                onPress={() => onChange({ uiRole: rt.value })}
-              >
-                <Text
+            {ROLE_OPTIONS.map((rt) => {
+              const disabled = roleOptionDisabled(rt.value);
+              const active = form.uiRole === rt.value;
+              return (
+                <TouchableOpacity
+                  key={rt.value}
+                  disabled={disabled}
                   style={[
-                    styles.valueTypeChipText,
-                    form.uiRole === rt.value && styles.valueTypeChipTextActive,
+                    styles.valueTypeChip,
+                    active && styles.valueTypeChipActive,
+                    disabled && styles.valueTypeChipDisabled,
                   ]}
+                  onPress={() => {
+                    if (!disabled) onChange({ uiRole: rt.value });
+                  }}
                 >
-                  {rt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  <Text
+                    style={[
+                      styles.valueTypeChipText,
+                      active && styles.valueTypeChipTextActive,
+                      disabled && !active && styles.valueTypeChipTextDisabled,
+                    ]}
+                  >
+                    {rt.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           <Text style={styles.formLabel}>المفتاح (key) *</Text>
           <TextInput
             style={[styles.formInput, { marginBottom: 12 }]}
             placeholder="phone"
-            value={form.key}
+            value={isDynamic ? form.key : (PRESET_KEY_BY_ROLE[form.uiRole] ?? '')}
             onChangeText={(t) => onChange({ key: t.replace(/\s/g, '_').toLowerCase() })}
             textAlign="left"
             autoCapitalize="none"

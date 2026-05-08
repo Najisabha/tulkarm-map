@@ -85,7 +85,9 @@ export function StoreDetailSheet({
   const floorsCountNum = floorsCount ? parseInt(String(floorsCount), 10) : 0;
   const unitsPerFloorNum = unitsPerFloor ? parseInt(String(unitsPerFloor), 10) : 0;
   const phoneForCall =
-    store.phone || firstAttr('phone', 'phone_number', 'store_number', 'raqm') || null;
+    store.phone ||
+    firstAttr('phone', 'phone_number', 'place_phone', 'store_number', 'raqm') ||
+    null;
 
   const renderCallButton = (number: string) => (
     <TouchableOpacity

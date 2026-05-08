@@ -335,26 +335,6 @@ export function PlaceForm({
       );
       })}
 
-      {/* fallback: لو غابت خصائص أساسية من الإدارة */}
-      {!attrDefs.some((def) => (parseAttrUiOptions(def.options).uiRole ?? 'dynamic') === 'place_location') && (
-        <LocationPicker latitude={latitude} longitude={longitude} />
-      )}
-      {!attrDefs.some((def) => (parseAttrUiOptions(def.options).uiRole ?? 'dynamic') === 'place_name') && (
-        <>
-          <View style={styles.labelRow}>
-            <Text style={styles.label}>{typeLabel === 'منزل' ? 'اسم صاحب المنزل' : `اسم ${typeLabel}`}</Text>
-            <Text style={styles.asterisk}> *</Text>
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder={typeLabel === 'منزل' ? 'اسم صاحب المنزل' : `اسم ${typeLabel}`}
-            placeholderTextColor="#9CA3AF"
-            value={formState.name}
-            onChangeText={(v) => onChange({ name: v })}
-            textAlign="right"
-          />
-        </>
-      )}
       {kind === 'complex' && (
         <>
           <View style={styles.complexRow}>
@@ -389,22 +369,6 @@ export function PlaceForm({
           )}
         </>
       )}
-      {showPhotos &&
-        !attrDefs.some((def) => (parseAttrUiOptions(def.options).uiRole ?? 'dynamic') === 'place_photos') && (
-          <>
-            <View style={styles.labelRow}>
-              <Text style={styles.label}>
-                {photoLabel} ({formState.photos.length}/{maxPhotos})
-              </Text>
-            </View>
-            <ReusableImagePicker
-              photos={formState.photos}
-              maxPhotos={maxPhotos}
-              label={`إضافة ${photoLabel}`}
-              onPhotosChange={(photos) => onChange({ photos })}
-            />
-          </>
-        )}
     </>
   );
 }

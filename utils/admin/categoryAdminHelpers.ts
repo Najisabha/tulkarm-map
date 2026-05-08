@@ -33,7 +33,17 @@ export interface AttrUiOptions {
 }
 
 export function parseAttrUiOptions(options: unknown): AttrUiOptions {
-  if (!options || typeof options !== 'object') return {};
+  if (options == null) return {};
+  if (typeof options === 'string') {
+    const s = options.trim();
+    if (!s) return {};
+    try {
+      return parseAttrUiOptions(JSON.parse(s) as unknown);
+    } catch {
+      return {};
+    }
+  }
+  if (typeof options !== 'object') return {};
   const raw = options as Record<string, unknown>;
   const roleRaw = String(raw.uiRole ?? '').trim();
   const uiRole: AttrUiRole | undefined =
@@ -52,6 +62,18 @@ export function parseAttrUiOptions(options: unknown): AttrUiOptions {
     sortOrder: Number.isFinite(sortOrderRaw) ? sortOrderRaw : undefined,
     maxPhotos: Number.isFinite(maxPhotosRaw) ? maxPhotosRaw : undefined,
   };
+}
+
+/** ترتيب تعريفات الخصائص كما في الإدارة (sortOrder ثم المفتاح). */
+export function sortAttributeDefinitions<T extends { key: string; options?: unknown }>(defs: T[]): T[] {
+  return [...defs].sort((a, b) => {
+    const ao = parseAttrUiOptions(a.options);
+    const bo = parseAttrUiOptions(b.options);
+    const ad = ao.sortOrder ?? 9999;
+    const bd = bo.sortOrder ?? 9999;
+    if (ad !== bd) return ad - bd;
+    return a.key.localeCompare(b.key);
+  });
 }
 
 export const VALUE_TYPES = [

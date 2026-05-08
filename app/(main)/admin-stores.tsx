@@ -27,10 +27,9 @@ import { useAuth } from '../../context/AuthContext';
 import { useCategories } from '../../context/CategoryContext';
 import { Store, useStores } from '../../context/StoreContext';
 import { useAdminStoresFilters } from '../../hooks/admin/useAdminStoresFilters';
-import { parseAttrUiOptions } from '../../utils/admin/categoryAdminHelpers';
-import { needsPlaceCategoryTree, usesPlacePhoneAsStoreNumberField } from '../../utils/placeTypeLabels';
-import { ensureAndFetchAttributeDefinitions } from '../../utils/admin/ensurePlaceTypeAttrDefs';
-import { getPlaceAttrDefsForType } from '../../utils/placeFormAttrDefs';
+import { parseAttrUiOptions, sortAttributeDefinitions } from '../../utils/admin/categoryAdminHelpers';
+import { shouldLoadPlaceCategoryTree, usesPlacePhoneAsStoreNumberField } from '../../utils/placeTypeLabels';
+import { fetchPlaceTypeAttributeDefinitions } from '../../utils/admin/ensurePlaceTypeAttrDefs';
 import {
   catColor,
   catEmoji,
@@ -155,16 +154,14 @@ export default function AdminStoresScreen() {
     let defs: AttrDef[] = [];
     if (cat?.id) {
       try {
-        defs = await ensureAndFetchAttributeDefinitions(cat.id, catName);
+        defs = await fetchPlaceTypeAttributeDefinitions(cat.id);
       } catch {
-        defs = getPlaceAttrDefsForType(catName);
+        defs = [];
       }
-    } else {
-      defs = getPlaceAttrDefsForType(catName);
     }
     if (isEdit) setEditAttrDefs(defs);
     else setAttrDefs(defs);
-    if (needsPlaceCategoryTree(catName) && cat?.id) {
+    if (shouldLoadPlaceCategoryTree(catName, defs) && cat?.id) {
       setLoadingAddPcTree(!isEdit);
       setLoadingEditPcTree(!!isEdit);
       try {
@@ -244,17 +241,19 @@ export default function AdminStoresScreen() {
     resetForm();
     if (defaultCategory) {
       const cat = categories.find((c) => c.name === defaultCategory);
+      let defs: AttrDef[] = [];
       if (cat?.id) {
         try {
-          const defs = await ensureAndFetchAttributeDefinitions(cat.id, defaultCategory);
+          defs = await fetchPlaceTypeAttributeDefinitions(cat.id);
           setAttrDefs(defs);
         } catch {
-          setAttrDefs(getPlaceAttrDefsForType(defaultCategory));
+          defs = [];
+          setAttrDefs([]);
         }
       } else {
-        setAttrDefs(getPlaceAttrDefsForType(defaultCategory));
+        setAttrDefs([]);
       }
-      if (needsPlaceCategoryTree(defaultCategory)) {
+      if (shouldLoadPlaceCategoryTree(defaultCategory, defs)) {
         const catForTree = categories.find((c) => c.name === defaultCategory);
         if (catForTree?.id) {
           setLoadingAddPcTree(true);
@@ -299,7 +298,7 @@ export default function AdminStoresScreen() {
     setSaving(true);
     try {
       const unifiedPhone = usesPlacePhoneAsStoreNumberField(form.category);
-      const treeMode = needsPlaceCategoryTree(form.category);
+      const treeMode = shouldLoadPlaceCategoryTree(form.category, attrDefs);
       const reservedKeys = new Set(
         attrDefs
           .filter((d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') !== 'dynamic')
@@ -316,13 +315,20 @@ export default function AdminStoresScreen() {
           const def = attrDefs.find((d) => d.key === key);
           return { key, value: value.trim(), value_type: def?.value_type || 'string' };
         });
+      const phoneDef = attrDefs.find(
+        (d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === 'place_phone',
+      );
       await api.createPlaceFromAdmin({
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         type_id: cat.id,
         latitude: lat,
         longitude: lng,
-        phone_number: unifiedPhone ? form.dynamicAttrs['store_number']?.trim() || undefined : undefined,
+        phone_number: unifiedPhone
+          ? form.dynamicAttrs['store_number']?.trim() || undefined
+          : phoneDef
+            ? form.dynamicAttrs[phoneDef.key]?.trim() || undefined
+            : undefined,
         main_category_id: treeMode ? addPcCategoryIds.mainId ?? undefined : undefined,
         sub_category_id: treeMode ? addPcCategoryIds.subId ?? undefined : undefined,
         attributes: attributes.length ? attributes : undefined,
@@ -365,7 +371,17 @@ export default function AdminStoresScreen() {
       fullPlace = null;
     }
 
-    const unifiedPhone = usesPlacePhoneAsStoreNumberField(store.category);
+    if (fullPlace?.attributes?.length) {
+      for (const attr of fullPlace.attributes) {
+        existingAttrs[attr.key] = String(attr.value ?? '');
+      }
+    }
+
+    const typeDisplayName = fullPlace?.type_name ?? store.category;
+    const placeTypeId =
+      fullPlace?.type_id ?? store.type_id ?? categories.find((c) => c.name === typeDisplayName)?.id ?? null;
+
+    const unifiedPhone = usesPlacePhoneAsStoreNumberField(typeDisplayName);
     if (unifiedPhone && !existingAttrs['store_number'] && fullPlace?.phone_number) {
       existingAttrs['store_number'] = fullPlace.phone_number;
     }
@@ -373,10 +389,29 @@ export default function AdminStoresScreen() {
     let mainIdResolved: string | null = fullPlace?.main_category_id ?? null;
     let subIdResolved: string | null = fullPlace?.sub_category_id ?? null;
 
-    if (needsPlaceCategoryTree(store.category) && store.type_id) {
+    let defsForEdit: AttrDef[] = [];
+    if (placeTypeId) {
+      try {
+        defsForEdit = await fetchPlaceTypeAttributeDefinitions(placeTypeId);
+      } catch {
+        defsForEdit = [];
+      }
+    }
+    if (defsForEdit.length === 0) {
+      const inferredSrc = fullPlace?.attributes ?? store.attributes;
+      defsForEdit = (inferredSrc || []).map((a) => ({
+        id: `inferred-${a.key}`,
+        key: a.key,
+        label: ATTR_LABELS[a.key] || a.key.replaceAll('_', ' '),
+        value_type: a.value_type || 'string',
+        is_required: false,
+      }));
+    }
+
+    if (shouldLoadPlaceCategoryTree(typeDisplayName, defsForEdit) && placeTypeId) {
       setLoadingEditPcTree(true);
       try {
-        const { mains, map } = await fetchPlaceCategoryTreeData(store.type_id);
+        const { mains, map } = await fetchPlaceCategoryTreeData(placeTypeId);
         setEditPcMainCategories(mains);
         setEditPcMainToSubs(map);
 
@@ -449,36 +484,25 @@ export default function AdminStoresScreen() {
       setEditPcCategoryIds({ mainId: null, subId: null });
     }
 
+    if (!unifiedPhone && fullPlace?.phone_number) {
+      const phoneKey =
+        defsForEdit.find((d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === 'place_phone')?.key ??
+        'place_phone';
+      if (!String(existingAttrs[phoneKey] ?? '').trim()) {
+        existingAttrs[phoneKey] = fullPlace.phone_number;
+      }
+    }
+
     setEditForm({
-      name: store.name,
-      description: store.description,
-      category: store.category,
-      lat: String(store.latitude),
-      lng: String(store.longitude),
+      name: fullPlace?.name ?? store.name,
+      description: fullPlace?.description ?? store.description ?? '',
+      category: typeDisplayName,
+      lat: String(fullPlace?.latitude ?? store.latitude),
+      lng: String(fullPlace?.longitude ?? store.longitude),
       dynamicAttrs: existingAttrs,
     });
 
-    const catForAttrs = categories.find((c) => c.name === store.category);
-    let defsFromApi: AttrDef[] = [];
-    if (catForAttrs?.id) {
-      try {
-        defsFromApi = await ensureAndFetchAttributeDefinitions(catForAttrs.id, store.category);
-      } catch {
-        defsFromApi = [];
-      }
-    }
-    if (defsFromApi.length > 0) {
-      setEditAttrDefs(defsFromApi);
-    } else {
-      const inferredDefs: AttrDef[] = (store.attributes || []).map((a) => ({
-        id: `inferred-${a.key}`,
-        key: a.key,
-        label: ATTR_LABELS[a.key] || a.key.replaceAll('_', ' '),
-        value_type: a.value_type || 'string',
-        is_required: false,
-      }));
-      setEditAttrDefs(inferredDefs.length > 0 ? inferredDefs : getPlaceAttrDefsForType(store.category));
-    }
+    setEditAttrDefs(defsForEdit);
   };
 
   const handleAddPcMainSelect = (name: string, id: string, color: string) => {
@@ -577,7 +601,7 @@ export default function AdminStoresScreen() {
       Alert.alert('\u062A\u0646\u0628\u064A\u0647', '\u064A\u0631\u062C\u0649 \u0625\u062F\u062E\u0627\u0644 \u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A \u0635\u062D\u064A\u062D\u0629');
       return;
     }
-    const treeModeEdit = needsPlaceCategoryTree(editForm.category);
+    const treeModeEdit = shouldLoadPlaceCategoryTree(editForm.category, editAttrDefs);
     const hasMainCategorySelection =
       !!editPcCategoryIds.mainId || !!editForm.dynamicAttrs['store_type']?.trim();
     if (treeModeEdit && !hasMainCategorySelection) {
@@ -619,6 +643,13 @@ export default function AdminStoresScreen() {
 
       if (unifiedPhone) {
         payload.phone_number = editForm.dynamicAttrs['store_number']?.trim() || null;
+      } else {
+        const phoneDef = editAttrDefs.find(
+          (d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === 'place_phone',
+        );
+        if (phoneDef) {
+          payload.phone_number = editForm.dynamicAttrs[phoneDef.key]?.trim() || null;
+        }
       }
 
       if (treeModeEdit) {
@@ -718,10 +749,27 @@ export default function AdminStoresScreen() {
       onOpenSub: () => void;
       onCloseSub: () => void;
       onSubSelect: (name: string) => void;
-    } | null
+    } | null,
+    core: {
+      name: string;
+      description: string;
+      lat: string;
+      lng: string;
+      onNameChange: (t: string) => void;
+      onDescriptionChange: (t: string) => void;
+      onLatChange: (t: string) => void;
+      onLngChange: (t: string) => void;
+    },
+    formVariant: 'add' | 'edit',
+    editPhotos?: {
+      images: EditableImage[];
+      onAdd: () => void;
+      onRemove: (img: EditableImage) => void;
+      saving: boolean;
+    },
   ) => {
-    if (defs.length === 0) return null;
-    const useTree = Boolean(treeCtx && needsPlaceCategoryTree(treeCtx.categoryName));
+    const sorted = sortAttributeDefinitions(defs);
+    const useTree = Boolean(treeCtx && shouldLoadPlaceCategoryTree(treeCtx.categoryName, defs));
     const mainLab = defs.find((d) => d.key === 'store_type')?.label ?? 'التصنيف الرئيسي';
     const subLab = defs.find((d) => d.key === 'store_category')?.label ?? 'التصنيف الفرعي';
     const hasStoreTypeField = defs.some((d) => d.key === 'store_type');
@@ -753,8 +801,125 @@ export default function AdminStoresScreen() {
             />
           </View>
         ) : null}
-        {defs.map((def) => {
-          const uiRole = parseAttrUiOptions(def.options).uiRole ?? 'dynamic';
+        {sorted.map((def) => {
+          const ui = parseAttrUiOptions(def.options);
+          const uiRole = ui.uiRole ?? 'dynamic';
+
+          if (uiRole === 'place_name') {
+            return (
+              <View key={def.id} style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  {def.label}
+                  {def.is_required !== false ? ' *' : ''}
+                </Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={core.name}
+                  onChangeText={core.onNameChange}
+                  textAlign="right"
+                />
+              </View>
+            );
+          }
+          if (uiRole === 'place_description') {
+            return (
+              <View key={def.id} style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  {def.label}
+                  {def.is_required ? ' *' : ''}
+                </Text>
+                <TextInput
+                  style={[styles.formInput, styles.formTextarea]}
+                  value={core.description}
+                  onChangeText={core.onDescriptionChange}
+                  multiline
+                  textAlign="right"
+                />
+              </View>
+            );
+          }
+          if (uiRole === 'place_location') {
+            return (
+              <View key={def.id} style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  {def.label}
+                  {def.is_required ? ' *' : ''}
+                </Text>
+                <View style={styles.coordsRow}>
+                  <TextInput
+                    style={[styles.formInput, styles.coordInput]}
+                    placeholder={'\u062E\u0637 \u0627\u0644\u0639\u0631\u0636'}
+                    value={core.lat}
+                    onChangeText={core.onLatChange}
+                    keyboardType="decimal-pad"
+                    textAlign="center"
+                  />
+                  <TextInput
+                    style={[styles.formInput, styles.coordInput]}
+                    placeholder={'\u062E\u0637 \u0627\u0644\u0637\u0648\u0644'}
+                    value={core.lng}
+                    onChangeText={core.onLngChange}
+                    keyboardType="decimal-pad"
+                    textAlign="center"
+                  />
+                </View>
+              </View>
+            );
+          }
+          if (uiRole === 'place_phone') {
+            return (
+              <View key={def.id} style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  {def.label}
+                  {def.is_required ? ' *' : ''}
+                </Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder={'\u0645\u062B\u0627\u0644: 059xxxxxxx'}
+                  value={values[def.key] || ''}
+                  onChangeText={(t) => onChange(def.key, t)}
+                  keyboardType="phone-pad"
+                  textAlign="right"
+                />
+              </View>
+            );
+          }
+          if (uiRole === 'place_photos') {
+            if (formVariant === 'add' || !editPhotos) return null;
+            return (
+              <View key={def.id} style={styles.formGroup}>
+                <Text style={styles.formLabel}>
+                  {def.label} ({editPhotos.images.length})
+                </Text>
+                {editPhotos.images.length > 0 ? (
+                  <View style={styles.photosWrap}>
+                    {editPhotos.images.map((img, idx) => (
+                      <View key={`${img.image_url}-${idx}`} style={styles.photoItemWrap}>
+                        <Image source={{ uri: img.image_url }} style={styles.photoThumb} />
+                        <TouchableOpacity
+                          style={styles.photoDeleteBtn}
+                          onPress={() => void editPhotos.onRemove(img)}
+                          disabled={editPhotos.saving}
+                        >
+                          <Text style={styles.photoDeleteBtnText}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.noPhotosText}>لا توجد صور محفوظة لهذا المكان</Text>
+                )}
+                <TouchableOpacity
+                  style={[styles.addPhotoBtn, editPhotos.saving && styles.submitBtnDisabled]}
+                  onPress={() => void editPhotos.onAdd()}
+                  disabled={editPhotos.saving}
+                >
+                  <Text style={styles.addPhotoBtnText}>📷 إضافة صورة</Text>
+                </TouchableOpacity>
+              </View>
+            );
+          }
+
           if (uiRole !== 'dynamic') return null;
           if (def.key === 'store_category' && useTree) {
             return null;
@@ -820,9 +985,6 @@ export default function AdminStoresScreen() {
       </>
     );
   };
-
-  const getUiFieldDef = (defs: AttrDef[], role: string) =>
-    defs.find((d) => (parseAttrUiOptions(d.options).uiRole ?? 'dynamic') === role) ?? null;
 
   return (
     <View style={styles.container}>
@@ -1002,20 +1164,6 @@ export default function AdminStoresScreen() {
           </View>
           <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
             <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>
-                {getUiFieldDef(attrDefs, 'place_name')?.label || '\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646'}
-                {getUiFieldDef(attrDefs, 'place_name')?.is_required !== false ? ' *' : ''}
-              </Text>
-              <TextInput style={styles.formInput} placeholder={'\u0645\u062B\u0627\u0644: \u0645\u0637\u0639\u0645 \u0627\u0644\u0632\u064A\u062A\u0648\u0646'} value={form.name} onChangeText={(t) => setForm((p) => ({ ...p, name: t }))} textAlign="right" />
-            </View>
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>
-                {getUiFieldDef(attrDefs, 'place_description')?.label || '\u0627\u0644\u0648\u0635\u0641'}
-                {getUiFieldDef(attrDefs, 'place_description')?.is_required ? ' *' : ''}
-              </Text>
-              <TextInput style={[styles.formInput, styles.formTextarea]} placeholder={'\u0648\u0635\u0641 \u0645\u062E\u062A\u0635\u0631 (\u0627\u062E\u062A\u064A\u0627\u0631\u064A)'} value={form.description} onChangeText={(t) => setForm((p) => ({ ...p, description: t }))} multiline textAlign="right" />
-            </View>
-            <View style={styles.formGroup}>
               <Text style={styles.formLabel}>{'\u0627\u0644\u0641\u0626\u0629'}</Text>
               <View style={styles.chipsWrap}>
                 {[...categories].sort((a, b) => a.name.localeCompare(b.name, 'ar')).map((cat) => (
@@ -1029,7 +1177,7 @@ export default function AdminStoresScreen() {
               attrDefs,
               form.dynamicAttrs,
               (key, value) => setForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, [key]: value } })),
-              needsPlaceCategoryTree(form.category)
+              shouldLoadPlaceCategoryTree(form.category, attrDefs)
                 ? {
                     mode: 'add',
                     categoryName: form.category,
@@ -1046,15 +1194,19 @@ export default function AdminStoresScreen() {
                     onCloseSub: () => setAddPcShowSubList(false),
                     onSubSelect: handleAddPcSubSelect,
                   }
-                : null
+                : null,
+              {
+                name: form.name,
+                description: form.description,
+                lat: form.lat,
+                lng: form.lng,
+                onNameChange: (t) => setForm((p) => ({ ...p, name: t })),
+                onDescriptionChange: (t) => setForm((p) => ({ ...p, description: t })),
+                onLatChange: (t) => setForm((p) => ({ ...p, lat: t })),
+                onLngChange: (t) => setForm((p) => ({ ...p, lng: t })),
+              },
+              'add',
             )}
-            <View style={styles.formGroup}>
-              <Text style={styles.formLabel}>{getUiFieldDef(attrDefs, 'place_location')?.label || '\u0627\u0644\u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A'}</Text>
-              <View style={styles.coordsRow}>
-                <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0639\u0631\u0636'} value={form.lat} onChangeText={(t) => setForm((p) => ({ ...p, lat: t }))} keyboardType="decimal-pad" textAlign="center" />
-                <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0637\u0648\u0644'} value={form.lng} onChangeText={(t) => setForm((p) => ({ ...p, lng: t }))} keyboardType="decimal-pad" textAlign="center" />
-              </View>
-            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
@@ -1073,20 +1225,6 @@ export default function AdminStoresScreen() {
           </View>
           {editingStore && (
             <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>
-                  {getUiFieldDef(editAttrDefs, 'place_name')?.label || '\u0627\u0633\u0645 \u0627\u0644\u0645\u0643\u0627\u0646'}
-                  {getUiFieldDef(editAttrDefs, 'place_name')?.is_required !== false ? ' *' : ''}
-                </Text>
-                <TextInput style={styles.formInput} value={editForm.name} onChangeText={(t) => setEditForm((p) => ({ ...p, name: t }))} textAlign="right" />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>
-                  {getUiFieldDef(editAttrDefs, 'place_description')?.label || '\u0627\u0644\u0648\u0635\u0641'}
-                  {getUiFieldDef(editAttrDefs, 'place_description')?.is_required ? ' *' : ''}
-                </Text>
-                <TextInput style={[styles.formInput, styles.formTextarea]} value={editForm.description} onChangeText={(t) => setEditForm((p) => ({ ...p, description: t }))} multiline textAlign="right" />
-              </View>
               <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>{'\u0627\u0644\u0641\u0626\u0629'}</Text>
                 {editingIsComplex ? (
@@ -1125,7 +1263,7 @@ export default function AdminStoresScreen() {
                 editAttrDefs,
                 editForm.dynamicAttrs,
                 (key, value) => setEditForm((p) => ({ ...p, dynamicAttrs: { ...p.dynamicAttrs, [key]: value } })),
-                needsPlaceCategoryTree(editForm.category)
+                shouldLoadPlaceCategoryTree(editForm.category, editAttrDefs)
                   ? {
                       mode: 'edit',
                       categoryName: editForm.category,
@@ -1142,39 +1280,25 @@ export default function AdminStoresScreen() {
                       onCloseSub: () => setEditPcShowSubList(false),
                       onSubSelect: handleEditPcSubSelect,
                     }
-                  : null
+                  : null,
+                {
+                  name: editForm.name,
+                  description: editForm.description,
+                  lat: editForm.lat,
+                  lng: editForm.lng,
+                  onNameChange: (t) => setEditForm((p) => ({ ...p, name: t })),
+                  onDescriptionChange: (t) => setEditForm((p) => ({ ...p, description: t })),
+                  onLatChange: (t) => setEditForm((p) => ({ ...p, lat: t })),
+                  onLngChange: (t) => setEditForm((p) => ({ ...p, lng: t })),
+                },
+                'edit',
+                {
+                  images: editImages,
+                  onAdd: handleAddEditImage,
+                  onRemove: handleRemoveEditImage,
+                  saving,
+                },
               )}
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>الصور الحالية ({editImages.length})</Text>
-                {editImages.length > 0 ? (
-                  <View style={styles.photosWrap}>
-                    {editImages.map((img, idx) => (
-                      <View key={`${img.image_url}-${idx}`} style={styles.photoItemWrap}>
-                        <Image source={{ uri: img.image_url }} style={styles.photoThumb} />
-                        <TouchableOpacity
-                          style={styles.photoDeleteBtn}
-                          onPress={() => void handleRemoveEditImage(img)}
-                          disabled={saving}
-                        >
-                          <Text style={styles.photoDeleteBtnText}>✕</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </View>
-                ) : (
-                  <Text style={styles.noPhotosText}>لا توجد صور محفوظة لهذا المكان</Text>
-                )}
-                <TouchableOpacity style={[styles.addPhotoBtn, saving && styles.submitBtnDisabled]} onPress={() => void handleAddEditImage()} disabled={saving}>
-                  <Text style={styles.addPhotoBtnText}>📷 إضافة صورة</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>{getUiFieldDef(editAttrDefs, 'place_location')?.label || '\u0627\u0644\u0625\u062D\u062F\u0627\u062B\u064A\u0627\u062A'}</Text>
-                <View style={styles.coordsRow}>
-                  <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0639\u0631\u0636'} value={editForm.lat} onChangeText={(t) => setEditForm((p) => ({ ...p, lat: t }))} keyboardType="decimal-pad" textAlign="center" />
-                  <TextInput style={[styles.formInput, styles.coordInput]} placeholder={'\u062E\u0637 \u0627\u0644\u0637\u0648\u0644'} value={editForm.lng} onChangeText={(t) => setEditForm((p) => ({ ...p, lng: t }))} keyboardType="decimal-pad" textAlign="center" />
-                </View>
-              </View>
 
               {canManageUnits && (
                 <TouchableOpacity
