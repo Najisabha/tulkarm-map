@@ -17,6 +17,21 @@ if (typeof document !== 'undefined') {
     document.head.appendChild(link);
   }
 }
+// Pulse / glow animation for the user-location dot
+if (typeof document !== 'undefined') {
+  const pid = 'ul-pulse-css';
+  if (!document.getElementById(pid)) {
+    const s = document.createElement('style');
+    s.id = pid;
+    s.textContent = `
+      @keyframes ulRing{0%{transform:translate(-50%,-50%) scale(1);opacity:.55}100%{transform:translate(-50%,-50%) scale(3.5);opacity:0}}
+      @keyframes ulRing2{0%{transform:translate(-50%,-50%) scale(1);opacity:.3}100%{transform:translate(-50%,-50%) scale(4.5);opacity:0}}
+      @keyframes ulGlow{0%,100%{box-shadow:0 0 6px 2px rgba(46,134,171,.4),0 2px 6px rgba(0,0,0,.25)}50%{box-shadow:0 0 14px 5px rgba(46,134,171,.75),0 2px 6px rgba(0,0,0,.25)}}
+    `;
+    document.head.appendChild(s);
+  }
+}
+
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
@@ -169,13 +184,13 @@ function LeafletMapViewInner({
             position={[userLocation.lat, userLocation.lng]}
             icon={L.divIcon({
               className: 'user-location-marker',
-              html: `<div style="
-                width: 20px; height: 20px; border-radius: 50%;
-                background: #2E86AB; border: 3px solid white;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-              "></div>`,
-              iconSize: [20, 20],
-              iconAnchor: [10, 10],
+              html: `<div style="position:relative;width:22px;height:22px;overflow:visible;">
+                <div style="position:absolute;top:50%;left:50%;width:22px;height:22px;border-radius:50%;background:rgba(46,134,171,0.35);animation:ulRing 2s ease-out infinite;pointer-events:none;"></div>
+                <div style="position:absolute;top:50%;left:50%;width:22px;height:22px;border-radius:50%;background:rgba(46,134,171,0.2);animation:ulRing2 2s ease-out infinite 0.65s;pointer-events:none;"></div>
+                <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:50%;background:#2E86AB;border:3px solid white;animation:ulGlow 2s ease-in-out infinite;z-index:1;"></div>
+              </div>`,
+              iconSize: [22, 22],
+              iconAnchor: [11, 11],
             })}
           />
         )}
@@ -282,17 +297,30 @@ const GoogleMapViewInner = React.forwardRef<
             position={{ lat: userLocation.lat, lng: userLocation.lng }}
             mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
           >
-            <div
-              style={{
-                width: 20,
-                height: 20,
-                borderRadius: '50%',
-                background: '#2E86AB',
-                border: '3px solid white',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
-                transform: 'translate(-50%, -50%)',
-              }}
-            />
+            <div style={{ position: 'relative', width: 0, height: 0 }}>
+              <div style={{
+                position: 'absolute', top: 0, left: 0,
+                width: 22, height: 22, borderRadius: '50%',
+                background: 'rgba(46,134,171,0.35)',
+                animation: 'ulRing 2s ease-out infinite',
+                pointerEvents: 'none' as const,
+              }} />
+              <div style={{
+                position: 'absolute', top: 0, left: 0,
+                width: 22, height: 22, borderRadius: '50%',
+                background: 'rgba(46,134,171,0.2)',
+                animation: 'ulRing2 2s ease-out infinite 0.65s',
+                pointerEvents: 'none' as const,
+              }} />
+              <div style={{
+                position: 'absolute', top: 0, left: 0,
+                width: 18, height: 18, borderRadius: '50%',
+                background: '#2E86AB', border: '3px solid white',
+                transform: 'translate(-50%,-50%)',
+                animation: 'ulGlow 2s ease-in-out infinite',
+                zIndex: 1,
+              }} />
+            </div>
           </OverlayView>
         )}
       </GoogleMap>
