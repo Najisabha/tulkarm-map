@@ -868,6 +868,7 @@ server/
         └── response.js             # success / paginated
 ```
 
+
 ---
 
 ## سير عمل إضافة مكان
