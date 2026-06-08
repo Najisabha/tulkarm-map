@@ -2,6 +2,7 @@
  * categoryService — خدمة التصنيفات الرئيسية والفرعية للأماكن.
  */
 
+
 import { api } from '../api/client';
 import { STATIC_PLACE_CATEGORIES_FALLBACK } from '../constants/placeCategoriesFallback';
 import type { PlaceCategoryTreeItem } from '../types/placeCategories';
